@@ -90,12 +90,15 @@ var _ = Describe("ZSet", func() {
 		It("returns weight for existing key", func() {
 			z := zset.New()
 			z.Insert(StringElem("a"), 5)
-			Expect(z.LookupByKey("a")).To(Equal(zset.Weight(5)))
+			v, ok := z.LookupByKey("a")
+			Expect(ok).To(BeTrue())
+			Expect(v.Weight).To(Equal(zset.Weight(5)))
 		})
 
 		It("returns 0 for absent key", func() {
 			z := zset.New()
-			Expect(z.LookupByKey("missing")).To(Equal(zset.Weight(0)))
+			_, ok := z.LookupByKey("a")
+			Expect(ok).To(BeFalse())
 		})
 	})
 
@@ -106,7 +109,7 @@ var _ = Describe("ZSet", func() {
 			z.Insert(StringElem("b"), 2)
 
 			seen := make(map[string]zset.Weight)
-			z.Iter(func(elem zset.Element, weight zset.Weight) bool {
+			z.Iter(func(elem zset.Document, weight zset.Weight) bool {
 				seen[string(elem.(StringElem))] = weight
 				return true
 			})
@@ -121,7 +124,7 @@ var _ = Describe("ZSet", func() {
 			z.Insert(StringElem("c"), 3)
 
 			count := 0
-			z.Iter(func(elem zset.Element, weight zset.Weight) bool {
+			z.Iter(func(elem zset.Document, weight zset.Weight) bool {
 				count++
 				return count < 2
 			})

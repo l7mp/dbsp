@@ -31,7 +31,7 @@ type StringElem string
 func (s StringElem) Key() string                 { return string(s) }
 func (s StringElem) PrimaryKey() (string, error) { return string(s), nil }
 
-func zsetOf(elem zset.Element, weight zset.Weight) zset.ZSet {
+func zsetOf(elem zset.Document, weight zset.Weight) zset.ZSet {
 	z := zset.New()
 	z.Insert(elem, weight)
 	return z
@@ -87,7 +87,7 @@ var _ = Describe("Operators", func() {
 
 	Describe("Select", func() {
 		It("filters elements by predicate", func() {
-			predicate := expr.Func(func(e zset.Element) (any, error) {
+			predicate := expr.Func(func(e zset.Document) (any, error) {
 				return e.(Record).Value > 5, nil
 			})
 			op := operator.NewSelect("gt5", predicate)
@@ -108,7 +108,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("preserves weights", func() {
-			predicate := expr.Func(func(e zset.Element) (any, error) {
+			predicate := expr.Func(func(e zset.Document) (any, error) {
 				return true, nil
 			})
 			op := operator.NewSelect("all", predicate)
@@ -124,7 +124,7 @@ var _ = Describe("Operators", func() {
 
 	Describe("Project", func() {
 		It("transforms elements", func() {
-			projection := expr.Func(func(e zset.Element) (any, error) {
+			projection := expr.Func(func(e zset.Document) (any, error) {
 				r := e.(Record)
 				return Record{ID: r.ID, Value: r.Value * 2}, nil
 			})
@@ -141,7 +141,7 @@ var _ = Describe("Operators", func() {
 			Expect(result.Size()).To(Equal(1))
 
 			var found Record
-			result.Iter(func(elem zset.Element, weight zset.Weight) bool {
+			result.Iter(func(elem zset.Document, weight zset.Weight) bool {
 				found = elem.(Record)
 				return false
 			})
@@ -149,7 +149,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("skips nil results", func() {
-			projection := expr.Func(func(e zset.Element) (any, error) {
+			projection := expr.Func(func(e zset.Document) (any, error) {
 				if e.(Record).Value > 5 {
 					return e, nil
 				}
@@ -198,7 +198,7 @@ var _ = Describe("Operators", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var weight zset.Weight
-			result.Iter(func(elem zset.Element, w zset.Weight) bool {
+			result.Iter(func(elem zset.Document, w zset.Weight) bool {
 				weight = w
 				return false
 			})
@@ -214,7 +214,7 @@ var _ = Describe("Operators", func() {
 			result, err := op.Apply(left, right)
 			Expect(err).NotTo(HaveOccurred())
 
-			result.Iter(func(elem zset.Element, weight zset.Weight) bool {
+			result.Iter(func(elem zset.Document, weight zset.Weight) bool {
 				pair := elem.(*operator.Pair)
 				Expect(pair.Left().(StringElem)).To(Equal(StringElem("a")))
 				Expect(pair.Right().(StringElem)).To(Equal(StringElem("b")))
@@ -248,19 +248,19 @@ var _ = Describe("Operators", func() {
 	Describe("Group", func() {
 		It("aggregates by key", func() {
 			// Group by first letter of ID, sum values.
-			keyExpr := expr.Func(func(e zset.Element) (any, error) {
+			keyExpr := expr.Func(func(e zset.Document) (any, error) {
 				return string(e.(Record).ID[0]), nil
 			})
-			zeroExpr := expr.Func(func(e zset.Element) (any, error) {
+			zeroExpr := expr.Func(func(e zset.Document) (any, error) {
 				return 0, nil
 			})
-			foldExpr := expr.Func(func(e zset.Element) (any, error) {
+			foldExpr := expr.Func(func(e zset.Document) (any, error) {
 				fi := e.(operator.FoldInput)
 				acc := fi.Acc().(int)
 				rec := fi.Elem().(Record)
 				return acc + rec.Value*int(fi.Weight()), nil
 			})
-			outputExpr := expr.Func(func(e zset.Element) (any, error) {
+			outputExpr := expr.Func(func(e zset.Document) (any, error) {
 				go_ := e.(operator.GroupOutput)
 				key := go_.GroupKey().(string)
 				sum := go_.Acc().(int)
@@ -287,7 +287,7 @@ var _ = Describe("Operators", func() {
 			Expect(result.Lookup(Record{ID: "b"})).To(Equal(zset.Weight(1)))
 
 			// Verify actual values.
-			result.Iter(func(elem zset.Element, weight zset.Weight) bool {
+			result.Iter(func(elem zset.Document, weight zset.Weight) bool {
 				r := elem.(Record)
 				if r.ID == "a" {
 					Expect(r.Value).To(Equal(30))
@@ -301,10 +301,10 @@ var _ = Describe("Operators", func() {
 
 	Describe("Unwind", func() {
 		It("flattens arrays", func() {
-			pathExpr := expr.Func(func(e zset.Element) (any, error) {
+			pathExpr := expr.Func(func(e zset.Document) (any, error) {
 				return e.(ArrayRecord).Values, nil
 			})
-			outputExpr := expr.Func(func(e zset.Element) (any, error) {
+			outputExpr := expr.Func(func(e zset.Document) (any, error) {
 				ui := e.(operator.UnwindInput)
 				orig := ui.Elem().(ArrayRecord)
 				// Use index to create unique IDs.
@@ -325,10 +325,10 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("preserves weights", func() {
-			pathExpr := expr.Func(func(e zset.Element) (any, error) {
+			pathExpr := expr.Func(func(e zset.Document) (any, error) {
 				return e.(ArrayRecord).Values, nil
 			})
-			outputExpr := expr.Func(func(e zset.Element) (any, error) {
+			outputExpr := expr.Func(func(e zset.Document) (any, error) {
 				ui := e.(operator.UnwindInput)
 				orig := ui.Elem().(ArrayRecord)
 				return Record{ID: orig.ID, Value: ui.Element().(int)}, nil
@@ -343,7 +343,7 @@ var _ = Describe("Operators", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var weight zset.Weight
-			result.Iter(func(elem zset.Element, w zset.Weight) bool {
+			result.Iter(func(elem zset.Document, w zset.Weight) bool {
 				weight = w
 				return false
 			})
@@ -351,10 +351,10 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("handles nil arrays", func() {
-			pathExpr := expr.Func(func(e zset.Element) (any, error) {
+			pathExpr := expr.Func(func(e zset.Document) (any, error) {
 				return nil, nil
 			})
-			outputExpr := expr.Func(func(e zset.Element) (any, error) {
+			outputExpr := expr.Func(func(e zset.Document) (any, error) {
 				return nil, nil
 			})
 

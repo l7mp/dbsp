@@ -27,7 +27,7 @@ func (o *Distinct) Linearity() Linearity { return NonLinear }
 // Apply implements Operator.
 func (o *Distinct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
-	inputs[0].Iter(func(elem zset.Element, weight zset.Weight) bool {
+	inputs[0].Iter(func(elem zset.Document, weight zset.Weight) bool {
 		if weight > 0 {
 			result.Insert(elem, 1)
 		}
@@ -39,7 +39,7 @@ func (o *Distinct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 // FoldInput is passed to the fold expression.
 type FoldInput struct {
 	acc    any
-	elem   zset.Element
+	elem   zset.Document
 	weight zset.Weight
 }
 
@@ -53,7 +53,7 @@ func (f FoldInput) PrimaryKey() (string, error) { return "", nil }
 func (f FoldInput) Acc() any { return f.acc }
 
 // Elem returns the element being folded.
-func (f FoldInput) Elem() zset.Element { return f.elem }
+func (f FoldInput) Elem() zset.Document { return f.elem }
 
 // Weight returns the element's weight.
 func (f FoldInput) Weight() zset.Weight { return f.weight }
@@ -110,7 +110,7 @@ func (o *Group) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	groups := make(map[any]any) // key -> accumulator.
 
 	var err error
-	inputs[0].Iter(func(elem zset.Element, weight zset.Weight) bool {
+	inputs[0].Iter(func(elem zset.Document, weight zset.Weight) bool {
 		keyVal, e := o.keyExpr.Evaluate(elem)
 		if e != nil {
 			err = e
@@ -147,7 +147,7 @@ func (o *Group) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 		if e != nil {
 			return zset.ZSet{}, e
 		}
-		if outElem, ok := outVal.(zset.Element); ok {
+		if outElem, ok := outVal.(zset.Document); ok {
 			result.Insert(outElem, 1)
 		}
 	}

@@ -72,7 +72,7 @@ func (o *Select) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 	var evalErr error
 
-	inputs[0].Iter(func(elem zset.Element, weight zset.Weight) bool {
+	inputs[0].Iter(func(elem zset.Document, weight zset.Weight) bool {
 		val, err := o.predicate.Evaluate(elem)
 		if err != nil {
 			evalErr = err
@@ -115,7 +115,7 @@ func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 	var evalErr error
 
-	inputs[0].Iter(func(elem zset.Element, weight zset.Weight) bool {
+	inputs[0].Iter(func(elem zset.Document, weight zset.Weight) bool {
 		val, err := o.projection.Evaluate(elem)
 		if err != nil {
 			evalErr = err
@@ -124,7 +124,7 @@ func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 		if val == nil {
 			return true
 		}
-		newElem, ok := val.(zset.Element)
+		newElem, ok := val.(zset.Document)
 		if !ok {
 			evalErr = fmt.Errorf("projection must return zset.Element, got %T", val)
 			return false

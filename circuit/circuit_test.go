@@ -251,7 +251,7 @@ var _ = Describe("Circuit", func() {
 	Describe("Patterns", func() {
 		Describe("Join", func() {
 			It("creates a join circuit", func() {
-				predicate := expr.Func(func(e zset.Element) (any, error) {
+				predicate := expr.Func(func(e zset.Document) (any, error) {
 					return true, nil
 				})
 				c := circuit.Join("test-join", predicate)

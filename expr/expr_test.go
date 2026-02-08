@@ -24,7 +24,7 @@ func (s StringElem) PrimaryKey() (string, error) { return string(s), nil }
 var _ = Describe("Expression", func() {
 	Describe("Func", func() {
 		It("wraps a function as Expression", func() {
-			fn := expr.Func(func(elem zset.Element) (any, error) {
+			fn := expr.Func(func(elem zset.Document) (any, error) {
 				return string(elem.(StringElem)) + "!", nil
 			})
 
@@ -35,7 +35,7 @@ var _ = Describe("Expression", func() {
 
 		It("propagates errors", func() {
 			expectedErr := errors.New("test error")
-			fn := expr.Func(func(elem zset.Element) (any, error) {
+			fn := expr.Func(func(elem zset.Document) (any, error) {
 				return nil, expectedErr
 			})
 
@@ -44,7 +44,7 @@ var _ = Describe("Expression", func() {
 		})
 
 		It("handles nil element", func() {
-			fn := expr.Func(func(elem zset.Element) (any, error) {
+			fn := expr.Func(func(elem zset.Document) (any, error) {
 				if elem == nil {
 					return "nil", nil
 				}

@@ -4,13 +4,13 @@ import "github.com/l7mp/dbsp/zset"
 
 // Pair is the result of Cartesian product.
 type Pair struct {
-	left  zset.Element
-	right zset.Element
+	left  zset.Document
+	right zset.Document
 	key   string
 }
 
 // NewPair creates a new Pair from two elements.
-func NewPair(left, right zset.Element) *Pair {
+func NewPair(left, right zset.Document) *Pair {
 	return &Pair{
 		left:  left,
 		right: right,
@@ -18,17 +18,17 @@ func NewPair(left, right zset.Element) *Pair {
 	}
 }
 
-// Key implements zset.Element.
+// Key implements zset.Document.
 func (p *Pair) Key() string { return p.key }
 
-// PrimaryKey implements zset.Element (defaults to Key).
+// PrimaryKey implements zset.Document (defaults to Key).
 func (p *Pair) PrimaryKey() (string, error) { return p.key, nil }
 
 // Left returns the left element.
-func (p *Pair) Left() zset.Element { return p.left }
+func (p *Pair) Left() zset.Document { return p.left }
 
 // Right returns the right element.
-func (p *Pair) Right() zset.Element { return p.right }
+func (p *Pair) Right() zset.Document { return p.right }
 
 // CartesianProduct computes A x B.
 type CartesianProduct struct {
@@ -54,8 +54,8 @@ func (o *CartesianProduct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	left, right := inputs[0], inputs[1]
 	result := zset.New()
 
-	left.Iter(func(l zset.Element, lw zset.Weight) bool {
-		right.Iter(func(r zset.Element, rw zset.Weight) bool {
+	left.Iter(func(l zset.Document, lw zset.Weight) bool {
+		right.Iter(func(r zset.Document, rw zset.Weight) bool {
 			result.Insert(NewPair(l, r), lw*rw)
 			return true
 		})

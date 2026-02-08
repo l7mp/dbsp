@@ -142,7 +142,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 
 			// Join: Reach × Edge where reach.id == edge.from.
 			c.AddNode(circuit.Op("product", operator.NewCartesianProduct("×")))
-			c.AddNode(circuit.Op("select", operator.NewSelect("σ", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("select", operator.NewSelect("σ", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				node := pair.Left().(Node)
 				edge := pair.Right().(GEdge)
@@ -150,7 +150,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			}))))
 
 			// Project: extract edge.To as new Node.
-			c.AddNode(circuit.Op("project", operator.NewProject("π", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("project", operator.NewProject("π", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				edge := pair.Right().(GEdge)
 				return Node{ID: edge.To}, nil
@@ -245,7 +245,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 
 			// Join: Edge × Path where edge.to == path.from.
 			c.AddNode(circuit.Op("product", operator.NewCartesianProduct("×")))
-			c.AddNode(circuit.Op("select", operator.NewSelect("σ", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("select", operator.NewSelect("σ", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				edge := pair.Left().(GEdge)
 				path := pair.Right().(Path)
@@ -253,7 +253,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			}))))
 
 			// Project: create Path{edge.from, path.to}.
-			c.AddNode(circuit.Op("project", operator.NewProject("π", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("project", operator.NewProject("π", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				edge := pair.Left().(GEdge)
 				path := pair.Right().(Path)
@@ -261,7 +261,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			}))))
 
 			// Convert edges to paths (for base case).
-			c.AddNode(circuit.Op("edge_to_path", operator.NewProject("e2p", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("edge_to_path", operator.NewProject("e2p", expr.Func(func(e zset.Document) (any, error) {
 				edge := e.(GEdge)
 				return Path{From: edge.From, To: edge.To}, nil
 			}))))
@@ -355,7 +355,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 
 			// Join: Dist × Edge where dist.node == edge.from.
 			c.AddNode(circuit.Op("product", operator.NewCartesianProduct("×")))
-			c.AddNode(circuit.Op("select", operator.NewSelect("σ", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("select", operator.NewSelect("σ", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				dist := pair.Left().(Dist)
 				edge := pair.Right().(GEdge)
@@ -363,7 +363,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			}))))
 
 			// Project: create Dist{edge.to, dist.distance+1}.
-			c.AddNode(circuit.Op("project", operator.NewProject("π", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("project", operator.NewProject("π", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				dist := pair.Left().(Dist)
 				edge := pair.Right().(GEdge)
@@ -454,13 +454,13 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			c.AddNode(circuit.Delay("delay"))
 
 			c.AddNode(circuit.Op("product", operator.NewCartesianProduct("×")))
-			c.AddNode(circuit.Op("select", operator.NewSelect("σ", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("select", operator.NewSelect("σ", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				node := pair.Left().(Node)
 				edge := pair.Right().(GEdge)
 				return node.ID == edge.From, nil
 			}))))
-			c.AddNode(circuit.Op("project", operator.NewProject("π", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("project", operator.NewProject("π", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				edge := pair.Right().(GEdge)
 				return Node{ID: edge.To}, nil
@@ -546,13 +546,13 @@ var _ = Describe("Fixed-Point Circuits", func() {
 
 			// A depends on B: B ⋈ Edge_BA -> π_to.
 			c.AddNode(circuit.Op("product_ba", operator.NewCartesianProduct("×")))
-			c.AddNode(circuit.Op("select_ba", operator.NewSelect("σ", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("select_ba", operator.NewSelect("σ", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				node := pair.Left().(Node)
 				edge := pair.Right().(GEdge)
 				return node.ID == edge.From, nil
 			}))))
-			c.AddNode(circuit.Op("project_ba", operator.NewProject("π", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("project_ba", operator.NewProject("π", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				edge := pair.Right().(GEdge)
 				return Node{ID: edge.To}, nil
@@ -561,13 +561,13 @@ var _ = Describe("Fixed-Point Circuits", func() {
 
 			// B depends on A: A ⋈ Edge_AB -> π_to.
 			c.AddNode(circuit.Op("product_ab", operator.NewCartesianProduct("×")))
-			c.AddNode(circuit.Op("select_ab", operator.NewSelect("σ", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("select_ab", operator.NewSelect("σ", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				node := pair.Left().(Node)
 				edge := pair.Right().(GEdge)
 				return node.ID == edge.From, nil
 			}))))
-			c.AddNode(circuit.Op("project_ab", operator.NewProject("π", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("project_ab", operator.NewProject("π", expr.Func(func(e zset.Document) (any, error) {
 				pair := e.(*operator.Pair)
 				edge := pair.Right().(GEdge)
 				return Node{ID: edge.To}, nil

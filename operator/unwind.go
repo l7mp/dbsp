@@ -9,19 +9,19 @@ import (
 
 // UnwindInput is passed to the output expression.
 type UnwindInput struct {
-	elem    zset.Element
+	elem    zset.Document
 	element any
 	index   int
 }
 
-// Key implements zset.Element (returns empty, used for expression evaluation).
+// Key implements zset.Document (returns empty, used for expression evaluation).
 func (u UnwindInput) Key() string { return "" }
 
-// PrimaryKey implements zset.Element (returns empty, used for expression evaluation).
+// PrimaryKey implements zset.Document (returns empty, used for expression evaluation).
 func (u UnwindInput) PrimaryKey() (string, error) { return "", nil }
 
 // Elem returns the original element.
-func (u UnwindInput) Elem() zset.Element { return u.elem }
+func (u UnwindInput) Elem() zset.Document { return u.elem }
 
 // Element returns the array element being unwound.
 func (u UnwindInput) Element() any { return u.element }
@@ -55,7 +55,7 @@ func (o *Unwind) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 	var err error
 
-	inputs[0].Iter(func(elem zset.Element, weight zset.Weight) bool {
+	inputs[0].Iter(func(elem zset.Document, weight zset.Weight) bool {
 		arrayVal, e := o.pathExpr.Evaluate(elem)
 		if e != nil {
 			err = e
@@ -77,7 +77,7 @@ func (o *Unwind) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 				err = e
 				return false
 			}
-			if outElem, ok := outVal.(zset.Element); ok {
+			if outElem, ok := outVal.(zset.Document); ok {
 				result.Insert(outElem, weight)
 			}
 		}

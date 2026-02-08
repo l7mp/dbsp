@@ -168,7 +168,7 @@ func RowOf(pairs ...any) zset.ZSet {
 
 // Col creates an expression that extracts a column value from a Row.
 func Col(name string) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		row, ok := e.(Row)
 		if !ok {
 			return nil, fmt.Errorf("expected Row, got %T", e)
@@ -180,7 +180,7 @@ func Col(name string) expr.Expression {
 // SelectWhere creates a predicate expression for filtering rows.
 // The predicate function receives the Row and returns true to keep it.
 func SelectWhere(pred func(Row) bool) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		row, ok := e.(Row)
 		if !ok {
 			return false, fmt.Errorf("expected Row, got %T", e)
@@ -192,7 +192,7 @@ func SelectWhere(pred func(Row) bool) expr.Expression {
 // ProjectTo creates a projection expression that transforms a Row.
 // The project function receives the input Row and returns the output Row.
 func ProjectTo(proj func(Row) Row) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		row, ok := e.(Row)
 		if !ok {
 			return nil, fmt.Errorf("expected Row, got %T", e)
@@ -203,7 +203,7 @@ func ProjectTo(proj func(Row) Row) expr.Expression {
 
 // ProjectCols creates a projection expression that keeps only specified columns.
 func ProjectCols(names ...string) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		row, ok := e.(Row)
 		if !ok {
 			return nil, fmt.Errorf("expected Row, got %T", e)
@@ -217,7 +217,7 @@ func ProjectCols(names ...string) expr.Expression {
 // JoinOn creates a join predicate that compares columns from left and right rows.
 // Example: JoinOn("R.id", "S.id") creates predicate for R.id = S.id.
 func JoinOn(leftCol, rightCol string) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		pair, ok := e.(*operator.Pair)
 		if !ok {
 			return false, fmt.Errorf("expected Pair, got %T", e)
@@ -236,7 +236,7 @@ func JoinOn(leftCol, rightCol string) expr.Expression {
 
 // JoinPred creates a join predicate with custom comparison logic.
 func JoinPred(pred func(left, right Row) bool) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		pair, ok := e.(*operator.Pair)
 		if !ok {
 			return false, fmt.Errorf("expected Pair, got %T", e)
@@ -255,7 +255,7 @@ func JoinPred(pred func(left, right Row) bool) expr.Expression {
 
 // JoinProject creates a projection for join results (Pairs).
 func JoinProject(proj func(left, right Row) Row) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		pair, ok := e.(*operator.Pair)
 		if !ok {
 			return nil, fmt.Errorf("expected Pair, got %T", e)
@@ -275,7 +275,7 @@ func JoinProject(proj func(left, right Row) Row) expr.Expression {
 // FlattenPair creates a projection that merges left and right rows.
 // If there are column name conflicts, right columns are prefixed.
 func FlattenPair(leftPrefix, rightPrefix string) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		pair, ok := e.(*operator.Pair)
 		if !ok {
 			return nil, fmt.Errorf("expected Pair, got %T", e)
@@ -304,7 +304,7 @@ func FlattenPair(leftPrefix, rightPrefix string) expr.Expression {
 
 // GroupKey creates a key expression for GROUP BY.
 func GroupKey(cols ...string) expr.Expression {
-	return expr.Func(func(e zset.Element) (any, error) {
+	return expr.Func(func(e zset.Document) (any, error) {
 		row, ok := e.(Row)
 		if !ok {
 			return nil, fmt.Errorf("expected Row, got %T", e)
@@ -327,15 +327,15 @@ func GroupKey(cols ...string) expr.Expression {
 // CountAgg creates aggregation expressions for COUNT(*).
 // Returns (zeroExpr, foldExpr, outputExpr) for use with operator.NewGroup.
 func CountAgg(groupCols ...string) (zero, fold, output expr.Expression) {
-	zero = expr.Func(func(e zset.Element) (any, error) {
+	zero = expr.Func(func(e zset.Document) (any, error) {
 		return int64(0), nil
 	})
-	fold = expr.Func(func(e zset.Element) (any, error) {
+	fold = expr.Func(func(e zset.Document) (any, error) {
 		fi := e.(operator.FoldInput)
 		acc := fi.Acc().(int64)
 		return acc + int64(fi.Weight()), nil
 	})
-	output = expr.Func(func(e zset.Element) (any, error) {
+	output = expr.Func(func(e zset.Document) (any, error) {
 		go_ := e.(operator.GroupOutput)
 		count := go_.Acc().(int64)
 		// Build output row with group key + count.
@@ -350,17 +350,17 @@ func CountAgg(groupCols ...string) (zero, fold, output expr.Expression) {
 
 // SumAgg creates aggregation expressions for SUM(col).
 func SumAgg(sumCol string, groupCols ...string) (zero, fold, output expr.Expression) {
-	zero = expr.Func(func(e zset.Element) (any, error) {
+	zero = expr.Func(func(e zset.Document) (any, error) {
 		return int64(0), nil
 	})
-	fold = expr.Func(func(e zset.Element) (any, error) {
+	fold = expr.Func(func(e zset.Document) (any, error) {
 		fi := e.(operator.FoldInput)
 		acc := fi.Acc().(int64)
 		row := fi.Elem().(Row)
 		val := int64(row.GetInt(sumCol))
 		return acc + val*int64(fi.Weight()), nil
 	})
-	output = expr.Func(func(e zset.Element) (any, error) {
+	output = expr.Func(func(e zset.Document) (any, error) {
 		go_ := e.(operator.GroupOutput)
 		sum := go_.Acc().(int64)
 		if len(groupCols) == 1 {

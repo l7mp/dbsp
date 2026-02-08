@@ -1,78 +1,72 @@
 // Package zset implements Z-sets (weighted multisets) for DBSP.
 package zset
 
-// Element is the interface that Z-set elements must implement.
-type Element interface {
-	// Key returns a string identifier for equality checking.
-	// Two elements are equal iff their keys are equal.
-	// This is based on full content (like a hash of all fields).
+// Document is the interface that Z-set elements must implement.
+type Document interface {
+	// Key returns a string identifier for equality checking.  Two elements are equal iff their
+	// keys are equal.  This is based on full content (like a hash of all fields).
 	Key() string
 
-	// PrimaryKey returns the primary key for the element, like in SQL.
-	// Multiple elements with different Key() values may share the same
-	// PrimaryKey() if they represent different versions of the same entity.
-	// For example, Record{ID:"a", Value:1} and Record{ID:"a", Value:2}
-	// have different Key() but the same PrimaryKey() "a".
-	// Returns an error if the primary key is unavailable (e.g., lost during
-	// schemaless processing).
+	// PrimaryKey returns the primary key for the element, like in SQL.  Multiple elements with
+	// different Key() values may share the same PrimaryKey().  Returns an error if the primary
+	// key is unavailable (e.g., lost during schemaless processing).
 	PrimaryKey() (string, error)
 }
 
 // Weight is multiplicity in a Z-set.
 type Weight int64
 
-// ZSet is a Z-set over Elements.
+// ZSet is a Z-set over Elements. ZSet is not thread-safe.
 type ZSet struct {
-	entries map[string]*entry
+	entries map[string]*Value
 }
 
-type entry struct {
-	elem   Element
-	weight Weight
+type Value struct {
+	Document Document
+	Weight   Weight
 }
 
 // New creates an empty Z-set.
 func New() ZSet {
-	return ZSet{entries: make(map[string]*entry)}
+	return ZSet{entries: make(map[string]*Value)}
 }
 
 // Insert adds an element with given weight.
 // Weights are summed; zero-weight entries are removed.
-func (z ZSet) Insert(elem Element, weight Weight) {
+func (z ZSet) Insert(elem Document, weight Weight) {
 	if weight == 0 {
 		return
 	}
 	key := elem.Key()
 	if e, exists := z.entries[key]; exists {
-		e.weight += weight
-		if e.weight == 0 {
+		e.Weight += weight
+		if e.Weight == 0 {
 			delete(z.entries, key)
 		}
 	} else {
-		z.entries[key] = &entry{elem: elem, weight: weight}
+		z.entries[key] = &Value{Document: elem, Weight: weight}
 	}
+}
+
+// LookupByKey returns the value for a key and a boolean to indicate whether the key is present in
+// the zset.
+func (z ZSet) LookupByKey(key string) (v *Value, ok bool) {
+	v, ok = z.entries[key]
+	return
 }
 
 // Lookup returns the weight for an element (0 if absent).
-func (z ZSet) Lookup(elem Element) Weight {
+func (z ZSet) Lookup(elem Document) Weight {
 	if e, exists := z.entries[elem.Key()]; exists {
-		return e.weight
-	}
-	return 0
-}
-
-// LookupByKey returns the weight for a key (0 if absent).
-func (z ZSet) LookupByKey(key string) Weight {
-	if e, exists := z.entries[key]; exists {
-		return e.weight
+		return e.Weight
 	}
 	return 0
 }
 
 // Iter iterates over all (element, weight) pairs.
-func (z ZSet) Iter(fn func(elem Element, weight Weight) bool) {
+func (z ZSet) Iter(fn func(elem Document, weight Weight) bool) {
 	for _, e := range z.entries {
-		if !fn(e.elem, e.weight) {
+		if !fn(e.Document, e.Weight) {
 			return
 		}
 	}
@@ -81,7 +75,7 @@ func (z ZSet) Iter(fn func(elem Element, weight Weight) bool) {
 // Add returns z + other.
 func (z ZSet) Add(other ZSet) ZSet {
 	result := z.Clone()
-	other.Iter(func(elem Element, weight Weight) bool {
+	other.Iter(func(elem Document, weight Weight) bool {
 		result.Insert(elem, weight)
 		return true
 	})
@@ -92,7 +86,7 @@ func (z ZSet) Add(other ZSet) ZSet {
 func (z ZSet) Negate() ZSet {
 	result := New()
 	for key, e := range z.entries {
-		result.entries[key] = &entry{elem: e.elem, weight: -e.weight}
+		result.entries[key] = &Value{Document: e.Document, Weight: -e.Weight}
 	}
 	return result
 }
@@ -106,7 +100,7 @@ func (z ZSet) Subtract(other ZSet) ZSet {
 func (z ZSet) Clone() ZSet {
 	result := New()
 	for key, e := range z.entries {
-		result.entries[key] = &entry{elem: e.elem, weight: e.weight}
+		result.entries[key] = &Value{Document: e.Document, Weight: e.Weight}
 	}
 	return result
 }
@@ -122,7 +116,7 @@ func (z ZSet) Equal(other ZSet) bool {
 		return false
 	}
 	for key, e := range z.entries {
-		if oe, exists := other.entries[key]; !exists || oe.weight != e.weight {
+		if oe, exists := other.entries[key]; !exists || oe.Weight != e.Weight {
 			return false
 		}
 	}
@@ -134,20 +128,11 @@ func (z ZSet) Size() int {
 	return len(z.entries)
 }
 
-// Entries returns a slice of all entries for inspection (testing).
-func (z ZSet) Entries() []struct {
-	Elem   Element
-	Weight Weight
-} {
-	result := make([]struct {
-		Elem   Element
-		Weight Weight
-	}, 0, len(z.entries))
+// Entries returns a slice of all entries for inspection.
+func (z ZSet) Entries() []Value {
+	result := make([]Value, 0, len(z.entries))
 	for _, e := range z.entries {
-		result = append(result, struct {
-			Elem   Element
-			Weight Weight
-		}{Elem: e.elem, Weight: e.weight})
+		result = append(result, Value{Document: e.Document, Weight: e.Weight})
 	}
 	return result
 }

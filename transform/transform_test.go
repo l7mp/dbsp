@@ -24,7 +24,7 @@ var _ = Describe("Incrementalize", func() {
 			// in -> select -> out.
 			c := circuit.New("linear-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("sel", operator.NewSelect("σ", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("sel", operator.NewSelect("σ", expr.Func(func(e zset.Document) (any, error) {
 				return true, nil
 			}))))
 			c.AddNode(circuit.Output("out"))
@@ -192,7 +192,7 @@ var _ = Describe("Incrementalize", func() {
 
 	Describe("Complex circuits", func() {
 		It("incrementalizes Join (bilinear + linear composition)", func() {
-			predicate := expr.Func(func(e zset.Element) (any, error) {
+			predicate := expr.Func(func(e zset.Document) (any, error) {
 				return true, nil
 			})
 			c := circuit.Join("join-test", predicate)

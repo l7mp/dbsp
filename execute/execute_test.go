@@ -28,7 +28,7 @@ type Record struct {
 func (r Record) Key() string                 { return r.ID }
 func (r Record) PrimaryKey() (string, error) { return r.ID, nil }
 
-func zsetOf(elem zset.Element, weight zset.Weight) zset.ZSet {
+func zsetOf(elem zset.Document, weight zset.Weight) zset.ZSet {
 	z := zset.New()
 	z.Insert(elem, weight)
 	return z
@@ -40,7 +40,7 @@ var _ = Describe("Executor", func() {
 			// in -> select (value > 5) -> out.
 			c := circuit.New("simple")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("sel", operator.NewSelect("σ", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("sel", operator.NewSelect("σ", expr.Func(func(e zset.Document) (any, error) {
 				return e.(Record).Value > 5, nil
 			}))))
 			c.AddNode(circuit.Output("out"))
@@ -270,7 +270,7 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 		It("Select: normal vs incremental", func() {
 			c := circuit.New("select-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("sel", operator.NewSelect("gt5", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("sel", operator.NewSelect("gt5", expr.Func(func(e zset.Document) (any, error) {
 				return e.(Record).Value > 5, nil
 			}))))
 			c.AddNode(circuit.Output("out"))
@@ -288,7 +288,7 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 		It("Project: normal vs incremental", func() {
 			c := circuit.New("project-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("proj", operator.NewProject("double", expr.Func(func(e zset.Element) (any, error) {
+			c.AddNode(circuit.Op("proj", operator.NewProject("double", expr.Func(func(e zset.Document) (any, error) {
 				r := e.(Record)
 				return Record{ID: r.ID, Value: r.Value * 2}, nil
 			}))))
@@ -324,7 +324,7 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 		})
 
 		It("Join: normal vs incremental", func() {
-			predicate := expr.Func(func(e zset.Element) (any, error) {
+			predicate := expr.Func(func(e zset.Document) (any, error) {
 				p := e.(*operator.Pair)
 				left := p.Left().(Record)
 				right := p.Right().(Record)
