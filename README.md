@@ -56,17 +56,6 @@ output, _ := exec.Execute(map[string]zset.ZSet{"in": delta})
 - **Circuits**: Directed graphs with feedback loops via delay (z⁻¹) nodes.
 - **Incrementalization**: Transforms circuit C to C^Δ where `D(C(∫Δs)) = C^Δ(Δs)`.
 
-## Running Tests
-
-```bash
-go test ./...
-```
-
-## Documentation
-
-- `doc/dbsp-summary.md` - DBSP theory overview
-- `dbsp-implementation-plan.md` - Implementation details
-
 ## License
 
 MIT License - see [LICENSE](LICENSE) file.
