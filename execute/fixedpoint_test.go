@@ -17,17 +17,17 @@ import (
 // Node represents a graph node.
 type Node struct{ ID string }
 
-func (n Node) Key() any { return n.ID }
+func (n Node) Key() string { return n.ID }
 
 // GEdge represents a directed graph edge (G prefix to avoid conflict with circuit.Edge).
 type GEdge struct{ From, To string }
 
-func (e GEdge) Key() any { return e.From + "->" + e.To }
+func (e GEdge) Key() string { return e.From + "->" + e.To }
 
 // Path represents a path from one node to another.
 type Path struct{ From, To string }
 
-func (p Path) Key() any { return p.From + "->" + p.To }
+func (p Path) Key() string { return p.From + "->" + p.To }
 
 // Dist represents distance from source to a node.
 type Dist struct {
@@ -35,7 +35,7 @@ type Dist struct {
 	Distance int
 }
 
-func (d Dist) Key() any { return d.Node }
+func (d Dist) Key() string { return d.Node }
 
 // Helper to create a Z-set with one element.
 func zsetOfNode(id string) zset.ZSet {

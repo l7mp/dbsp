@@ -3,9 +3,9 @@ package zset
 
 // Element is the interface that Z-set elements must implement.
 type Element interface {
-	// Key returns a comparable identifier for equality checking.
+	// Key returns a string identifier for equality checking.
 	// Two elements are equal iff their keys are equal.
-	Key() any
+	Key() string
 }
 
 // Weight is multiplicity in a Z-set.
@@ -13,7 +13,7 @@ type Weight int64
 
 // ZSet is a Z-set over Elements.
 type ZSet struct {
-	entries map[any]*entry
+	entries map[string]*entry
 }
 
 type entry struct {
@@ -23,7 +23,7 @@ type entry struct {
 
 // New creates an empty Z-set.
 func New() ZSet {
-	return ZSet{entries: make(map[any]*entry)}
+	return ZSet{entries: make(map[string]*entry)}
 }
 
 // Insert adds an element with given weight.
@@ -52,7 +52,7 @@ func (z ZSet) Lookup(elem Element) Weight {
 }
 
 // LookupByKey returns the weight for a key (0 if absent).
-func (z ZSet) LookupByKey(key any) Weight {
+func (z ZSet) LookupByKey(key string) Weight {
 	if e, exists := z.entries[key]; exists {
 		return e.weight
 	}

@@ -6,7 +6,7 @@ import "github.com/l7mp/dbsp/zset"
 type Pair struct {
 	left  zset.Element
 	right zset.Element
-	key   any
+	key   string
 }
 
 // NewPair creates a new Pair from two elements.
@@ -14,12 +14,12 @@ func NewPair(left, right zset.Element) *Pair {
 	return &Pair{
 		left:  left,
 		right: right,
-		key:   [2]any{left.Key(), right.Key()},
+		key:   "(" + left.Key() + "," + right.Key() + ")",
 	}
 }
 
 // Key implements zset.Element.
-func (p *Pair) Key() any { return p.key }
+func (p *Pair) Key() string { return p.key }
 
 // Left returns the left element.
 func (p *Pair) Left() zset.Element { return p.left }

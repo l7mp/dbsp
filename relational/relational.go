@@ -45,7 +45,7 @@ func RowFrom(cols map[string]any) Row {
 
 // Key returns a composite key based on all column values.
 // Columns are sorted by name for deterministic key generation.
-func (r Row) Key() any {
+func (r Row) Key() string {
 	if len(r.cols) == 0 {
 		return ""
 	}

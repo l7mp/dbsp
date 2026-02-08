@@ -23,11 +23,11 @@ type Record struct {
 	Value int
 }
 
-func (r Record) Key() any { return r.ID }
+func (r Record) Key() string { return r.ID }
 
 type StringElem string
 
-func (s StringElem) Key() any { return string(s) }
+func (s StringElem) Key() string { return string(s) }
 
 func zsetOf(elem zset.Element, weight zset.Weight) zset.ZSet {
 	z := zset.New()
@@ -216,7 +216,7 @@ var _ = Describe("Operators", func() {
 				pair := elem.(*operator.Pair)
 				Expect(pair.Left().(StringElem)).To(Equal(StringElem("a")))
 				Expect(pair.Right().(StringElem)).To(Equal(StringElem("b")))
-				Expect(pair.Key()).To(Equal([2]any{"a", "b"}))
+				Expect(pair.Key()).To(Equal("(a,b)"))
 				return false
 			})
 		})
@@ -374,4 +374,4 @@ type ArrayRecord struct {
 	Values []any
 }
 
-func (r ArrayRecord) Key() any { return r.ID }
+func (r ArrayRecord) Key() string { return r.ID }
