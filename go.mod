@@ -5,8 +5,11 @@ go 1.24.0
 toolchain go1.24.9
 
 require (
+	github.com/google/btree v1.1.3
+	github.com/google/orderedcode v0.0.1
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
+	github.com/xwb1989/sqlparser v0.0.0-20180606152119-120387863bf2
 	gonum.org/v1/gonum v0.17.0
 )
 
