@@ -23,11 +23,13 @@ type Record struct {
 	Value int
 }
 
-func (r Record) Key() string { return r.ID }
+func (r Record) Key() string                 { return r.ID }
+func (r Record) PrimaryKey() (string, error) { return r.ID, nil }
 
 type StringElem string
 
-func (s StringElem) Key() string { return string(s) }
+func (s StringElem) Key() string                 { return string(s) }
+func (s StringElem) PrimaryKey() (string, error) { return string(s), nil }
 
 func zsetOf(elem zset.Element, weight zset.Weight) zset.ZSet {
 	z := zset.New()
@@ -374,4 +376,5 @@ type ArrayRecord struct {
 	Values []any
 }
 
-func (r ArrayRecord) Key() string { return r.ID }
+func (r ArrayRecord) Key() string                 { return r.ID }
+func (r ArrayRecord) PrimaryKey() (string, error) { return r.ID, nil }

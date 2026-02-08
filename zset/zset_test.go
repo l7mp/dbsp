@@ -17,14 +17,16 @@ func TestZSet(t *testing.T) {
 // Test element types.
 type StringElem string
 
-func (s StringElem) Key() string { return string(s) }
+func (s StringElem) Key() string                 { return string(s) }
+func (s StringElem) PrimaryKey() (string, error) { return string(s), nil }
 
 type Record struct {
 	ID    string
 	Value int
 }
 
-func (r Record) Key() string { return r.ID }
+func (r Record) Key() string                 { return r.ID }
+func (r Record) PrimaryKey() (string, error) { return r.ID, nil }
 
 var _ = Describe("ZSet", func() {
 	Describe("New", func() {

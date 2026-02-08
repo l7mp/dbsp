@@ -68,6 +68,13 @@ func (r Row) Key() string {
 	return key
 }
 
+// PrimaryKey returns the primary key for the row.
+// By default, it returns the same as Key() (all columns).
+// For SQL-like primary key behavior, use a Row with only PK columns.
+func (r Row) PrimaryKey() (string, error) {
+	return r.Key(), nil
+}
+
 // Get returns the value of a column.
 func (r Row) Get(name string) any {
 	return r.cols[name]

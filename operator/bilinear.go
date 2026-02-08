@@ -21,6 +21,9 @@ func NewPair(left, right zset.Element) *Pair {
 // Key implements zset.Element.
 func (p *Pair) Key() string { return p.key }
 
+// PrimaryKey implements zset.Element (defaults to Key).
+func (p *Pair) PrimaryKey() (string, error) { return p.key, nil }
+
 // Left returns the left element.
 func (p *Pair) Left() zset.Element { return p.left }
 

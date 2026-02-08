@@ -17,6 +17,9 @@ type UnwindInput struct {
 // Key implements zset.Element (returns empty, used for expression evaluation).
 func (u UnwindInput) Key() string { return "" }
 
+// PrimaryKey implements zset.Element (returns empty, used for expression evaluation).
+func (u UnwindInput) PrimaryKey() (string, error) { return "", nil }
+
 // Elem returns the original element.
 func (u UnwindInput) Elem() zset.Element { return u.elem }
 

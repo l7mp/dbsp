@@ -18,7 +18,8 @@ func TestExpr(t *testing.T) {
 
 type StringElem string
 
-func (s StringElem) Key() string { return string(s) }
+func (s StringElem) Key() string                 { return string(s) }
+func (s StringElem) PrimaryKey() (string, error) { return string(s), nil }
 
 var _ = Describe("Expression", func() {
 	Describe("Func", func() {

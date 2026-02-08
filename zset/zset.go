@@ -5,7 +5,17 @@ package zset
 type Element interface {
 	// Key returns a string identifier for equality checking.
 	// Two elements are equal iff their keys are equal.
+	// This is based on full content (like a hash of all fields).
 	Key() string
+
+	// PrimaryKey returns the primary key for the element, like in SQL.
+	// Multiple elements with different Key() values may share the same
+	// PrimaryKey() if they represent different versions of the same entity.
+	// For example, Record{ID:"a", Value:1} and Record{ID:"a", Value:2}
+	// have different Key() but the same PrimaryKey() "a".
+	// Returns an error if the primary key is unavailable (e.g., lost during
+	// schemaless processing).
+	PrimaryKey() (string, error)
 }
 
 // Weight is multiplicity in a Z-set.

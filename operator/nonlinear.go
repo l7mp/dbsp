@@ -46,6 +46,9 @@ type FoldInput struct {
 // Key implements zset.Element (returns empty, used for expression evaluation).
 func (f FoldInput) Key() string { return "" }
 
+// PrimaryKey implements zset.Element (returns empty, used for expression evaluation).
+func (f FoldInput) PrimaryKey() (string, error) { return "", nil }
+
 // Acc returns the current accumulator value.
 func (f FoldInput) Acc() any { return f.acc }
 
@@ -63,6 +66,9 @@ type GroupOutput struct {
 
 // Key implements zset.Element (returns empty, used for expression evaluation).
 func (g GroupOutput) Key() string { return "" }
+
+// PrimaryKey implements zset.Element (returns empty, used for expression evaluation).
+func (g GroupOutput) PrimaryKey() (string, error) { return "", nil }
 
 // GroupKey returns the grouping key.
 func (g GroupOutput) GroupKey() any { return g.groupKey }

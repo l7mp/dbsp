@@ -25,7 +25,8 @@ type Record struct {
 	Value int
 }
 
-func (r Record) Key() string { return r.ID }
+func (r Record) Key() string                 { return r.ID }
+func (r Record) PrimaryKey() (string, error) { return r.ID, nil }
 
 func zsetOf(elem zset.Element, weight zset.Weight) zset.ZSet {
 	z := zset.New()
