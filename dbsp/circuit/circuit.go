@@ -1,0 +1,266 @@
+package circuit
+
+import (
+	"fmt"
+
+	"gonum.org/v1/gonum/graph/simple"
+	"gonum.org/v1/gonum/graph/topo"
+)
+
+// New creates a new empty circuit.
+func New(name string) *Circuit {
+	return &Circuit{
+		name:     name,
+		nodes:    make(map[string]*Node),
+		edges:    make([]*Edge, 0),
+		graph:    simple.NewDirectedGraph(),
+		nodeToID: make(map[string]int64),
+		idToNode: make(map[int64]string),
+	}
+}
+
+// Name returns the circuit's name.
+func (c *Circuit) Name() string { return c.name }
+
+// AddNode adds a node to the circuit.
+func (c *Circuit) AddNode(n *Node) error {
+	if _, exists := c.nodes[n.ID]; exists {
+		return fmt.Errorf("node %s already exists", n.ID)
+	}
+	c.nodes[n.ID] = n
+
+	gn := c.graph.NewNode()
+	c.graph.AddNode(gn)
+	c.nodeToID[n.ID] = gn.ID()
+	c.idToNode[gn.ID()] = n.ID
+
+	return nil
+}
+
+// AddEdge adds an edge to the circuit.
+func (c *Circuit) AddEdge(e *Edge) error {
+	if _, exists := c.nodes[e.From]; !exists {
+		return fmt.Errorf("source node %s not found", e.From)
+	}
+	if _, exists := c.nodes[e.To]; !exists {
+		return fmt.Errorf("target node %s not found", e.To)
+	}
+	c.edges = append(c.edges, e)
+
+	c.graph.SetEdge(c.graph.NewEdge(
+		c.graph.Node(c.nodeToID[e.From]),
+		c.graph.Node(c.nodeToID[e.To]),
+	))
+
+	return nil
+}
+
+// Node returns a node by ID.
+func (c *Circuit) Node(id string) *Node {
+	return c.nodes[id]
+}
+
+// Nodes returns all nodes.
+func (c *Circuit) Nodes() []*Node {
+	result := make([]*Node, 0, len(c.nodes))
+	for _, n := range c.nodes {
+		result = append(result, n)
+	}
+	return result
+}
+
+// Edges returns all edges.
+func (c *Circuit) Edges() []*Edge {
+	return c.edges
+}
+
+// EdgesTo returns all edges to a node.
+func (c *Circuit) EdgesTo(nodeID string) []*Edge {
+	var result []*Edge
+	for _, e := range c.edges {
+		if e.To == nodeID {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+// EdgesFrom returns all edges from a node.
+func (c *Circuit) EdgesFrom(nodeID string) []*Edge {
+	var result []*Edge
+	for _, e := range c.edges {
+		if e.From == nodeID {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+// Inputs returns all input nodes.
+func (c *Circuit) Inputs() []*Node {
+	var result []*Node
+	for _, n := range c.nodes {
+		if n.Kind == NodeInput {
+			result = append(result, n)
+		}
+	}
+	return result
+}
+
+// Outputs returns all output nodes.
+func (c *Circuit) Outputs() []*Node {
+	var result []*Node
+	for _, n := range c.nodes {
+		if n.Kind == NodeOutput {
+			result = append(result, n)
+		}
+	}
+	return result
+}
+
+// Clone creates a copy of the circuit.
+func (c *Circuit) Clone() *Circuit {
+	clone := New(c.name)
+	for _, n := range c.nodes {
+		clone.AddNode(&Node{ID: n.ID, Kind: n.Kind, Operator: n.Operator})
+	}
+	for _, e := range c.edges {
+		clone.AddEdge(&Edge{From: e.From, To: e.To, Port: e.Port})
+	}
+	return clone
+}
+
+// FindSCCs returns all strongly connected components.
+func (c *Circuit) FindSCCs() [][]string {
+	sccs := topo.TarjanSCC(c.graph)
+	result := make([][]string, len(sccs))
+	for i, scc := range sccs {
+		nodeIDs := make([]string, len(scc))
+		for j, gn := range scc {
+			nodeIDs[j] = c.idToNode[gn.ID()]
+		}
+		result[i] = nodeIDs
+	}
+	return result
+}
+
+// RemoveNode removes a node and all edges connected to it.
+func (c *Circuit) RemoveNode(id string) error {
+	if _, exists := c.nodes[id]; !exists {
+		return fmt.Errorf("node %s not found", id)
+	}
+
+	// Remove all edges to/from this node.
+	filtered := make([]*Edge, 0, len(c.edges))
+	for _, e := range c.edges {
+		if e.From != id && e.To != id {
+			filtered = append(filtered, e)
+		}
+	}
+	c.edges = filtered
+
+	// Remove from gonum graph (also removes gonum edges).
+	gonumID := c.nodeToID[id]
+	c.graph.RemoveNode(gonumID)
+
+	// Clean up maps.
+	delete(c.nodes, id)
+	delete(c.idToNode, gonumID)
+	delete(c.nodeToID, id)
+
+	return nil
+}
+
+// RemoveEdge removes a specific edge identified by from, to, and port.
+func (c *Circuit) RemoveEdge(from, to string, port int) error {
+	for i, e := range c.edges {
+		if e.From == from && e.To == to && e.Port == port {
+			c.edges = append(c.edges[:i], c.edges[i+1:]...)
+			// Only remove the gonum edge if no other logical edges remain
+			// between these two nodes (gonum does not support parallel edges).
+			hasOther := false
+			for _, e2 := range c.edges {
+				if e2.From == from && e2.To == to {
+					hasOther = true
+					break
+				}
+			}
+			if !hasOther {
+				c.graph.RemoveEdge(c.nodeToID[from], c.nodeToID[to])
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("edge %s -> %s (port %d) not found", from, to, port)
+}
+
+// BypassNode removes a node and reconnects its incoming edges to all of its
+// outgoing edges. All incoming edges must originate from the same source node.
+// The port numbers on outgoing edges are preserved.
+func (c *Circuit) BypassNode(id string) error {
+	if _, exists := c.nodes[id]; !exists {
+		return fmt.Errorf("node %s not found", id)
+	}
+
+	inEdges := c.EdgesTo(id)
+	if len(inEdges) == 0 {
+		return fmt.Errorf("bypass requires at least 1 incoming edge, node %s has 0", id)
+	}
+	source := inEdges[0].From
+	for _, e := range inEdges[1:] {
+		if e.From != source {
+			return fmt.Errorf("bypass requires all incoming edges from same source, node %s has edges from %s and %s", id, source, e.From)
+		}
+	}
+
+	// Reconnect: all edges FROM this node now come FROM the source instead.
+	outEdges := c.EdgesFrom(id)
+	for _, e := range outEdges {
+		e.From = source
+		// Add new gonum edge from source to target.
+		c.graph.SetEdge(c.graph.NewEdge(
+			c.graph.Node(c.nodeToID[source]),
+			c.graph.Node(c.nodeToID[e.To]),
+		))
+	}
+
+	// Remove the incoming edge(s) and the node.
+	filtered := make([]*Edge, 0, len(c.edges))
+	for _, e := range c.edges {
+		if e.To == id {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	c.edges = filtered
+
+	// Remove node from gonum graph and maps.
+	gonumID := c.nodeToID[id]
+	c.graph.RemoveNode(gonumID)
+	delete(c.nodes, id)
+	delete(c.idToNode, gonumID)
+	delete(c.nodeToID, id)
+
+	return nil
+}
+
+// Validate checks if the circuit is well-formed.
+// A circuit is well-formed if every cycle contains at least one delay node.
+func (c *Circuit) Validate() []error {
+	var errs []error
+	for _, scc := range c.FindSCCs() {
+		if len(scc) > 1 {
+			hasDelay := false
+			for _, id := range scc {
+				if c.nodes[id].Kind == NodeDelay {
+					hasDelay = true
+					break
+				}
+			}
+			if !hasDelay {
+				errs = append(errs, fmt.Errorf("cycle %v has no delay", scc))
+			}
+		}
+	}
+	return errs
+}
