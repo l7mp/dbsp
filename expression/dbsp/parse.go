@@ -16,14 +16,9 @@ func NewParser() *Parser {
 	return &Parser{registry: DefaultRegistry}
 }
 
-// NewParserWithRegistry creates a parser with a custom registry.
-func NewParserWithRegistry(r *Registry) *Parser {
+// WithRegistry adds a registry to a parser.
+func (p *Parser) WithRegistry(r *Registry) *Parser {
 	return &Parser{registry: r}
-}
-
-// Parse parses JSON into an expression tree using the default registry.
-func Parse(data []byte) (Expr, error) {
-	return NewParser().Parse(data)
 }
 
 // Parse parses JSON into an expression tree.

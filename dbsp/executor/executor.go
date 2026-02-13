@@ -56,6 +56,10 @@ type Executor struct {
 	logger   logr.Logger
 }
 
+// ObserverFunc receives callbacks during execution.
+// Values and State are snapshots at the time of the callback.
+type ObserverFunc func(node *circuit.Node, values map[string]zset.ZSet, state *State, schedule []string, position int)
+
 // New creates a new executor for the given circuit.
 func New(c *circuit.Circuit, log logr.Logger) (*Executor, error) {
 	if errs := c.Validate(); len(errs) > 0 {
@@ -79,6 +83,11 @@ func New(c *circuit.Circuit, log logr.Logger) (*Executor, error) {
 
 // Execute runs one step of the circuit with the given inputs.
 func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, error) {
+	return e.ExecuteWithObserver(inputs, nil)
+}
+
+// ExecuteWithObserver runs one step of the circuit with optional callbacks.
+func (e *Executor) ExecuteWithObserver(inputs map[string]zset.ZSet, observer ObserverFunc) (map[string]zset.ZSet, error) {
 	values := make(map[string]zset.ZSet)
 	maps.Copy(values, inputs)
 
@@ -88,7 +97,7 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 
 	// Phase 1: Set delay outputs to their stored (previous) values.
 	// This makes delay outputs available before their inputs are computed.
-	for _, nodeID := range e.schedule {
+	for position, nodeID := range e.schedule {
 		node := e.circuit.Node(nodeID)
 		if node.Kind == circuit.NodeDelay {
 			prev, exists := e.state.Delays[nodeID]
@@ -96,6 +105,7 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 				prev = zset.New()
 			}
 			values[nodeID] = prev
+			e.observe(observer, node, values, position)
 			if e.logger.V(2).Enabled() {
 				e.logger.V(2).Info("delay output", "node", nodeID, "value", prev.String())
 			}
@@ -103,7 +113,7 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 	}
 
 	// Phase 2: Process all non-delay nodes in schedule order.
-	for _, nodeID := range e.schedule {
+	for position, nodeID := range e.schedule {
 		node := e.circuit.Node(nodeID)
 
 		switch node.Kind {
@@ -111,12 +121,14 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 			if _, exists := values[nodeID]; !exists {
 				values[nodeID] = zset.New()
 			}
+			e.observe(observer, node, values, position)
 			if e.logger.V(2).Enabled() {
 				e.logger.V(2).Info("node value", "node", nodeID, "kind", node.Kind.String(), "value", values[nodeID].String())
 			}
 
 		case circuit.NodeOutput:
 			values[nodeID] = e.getInput(nodeID, values, 0)
+			e.observe(observer, node, values, position)
 			if e.logger.V(2).Enabled() {
 				e.logger.V(2).Info("node value", "node", nodeID, "kind", node.Kind.String(), "value", values[nodeID].String())
 			}
@@ -140,6 +152,7 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 				return nil, fmt.Errorf("node %s: %w", nodeID, err)
 			}
 			values[nodeID] = result
+			e.observe(observer, node, values, position)
 			if e.logger.V(2).Enabled() {
 				e.logger.V(2).Info(
 					"operator result",
@@ -164,6 +177,7 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 			acc = acc.Add(in)
 			e.state.Integrators[nodeID] = acc
 			values[nodeID] = acc
+			e.observe(observer, node, values, position)
 			if e.logger.V(2).Enabled() {
 				e.logger.V(2).Info("node value", "node", nodeID, "kind", node.Kind.String(), "input", in.String(), "value", acc.String())
 			}
@@ -177,6 +191,7 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 			}
 			values[nodeID] = in.Subtract(prev)
 			e.state.Differentiators[nodeID] = in.Clone()
+			e.observe(observer, node, values, position)
 			if e.logger.V(2).Enabled() {
 				e.logger.V(2).Info("node value", "node", nodeID, "kind", node.Kind.String(), "input", in.String(), "value", values[nodeID].String())
 			}
@@ -189,6 +204,7 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 				values[nodeID] = e.getInput(nodeID, values, 0)
 				e.state.Delta0Fired[nodeID] = true
 			}
+			e.observe(observer, node, values, position)
 			if e.logger.V(2).Enabled() {
 				e.logger.V(2).Info("node value", "node", nodeID, "kind", node.Kind.String(), "value", values[nodeID].String())
 			}
@@ -221,6 +237,14 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 	}
 
 	return outputs, nil
+}
+
+func (e *Executor) observe(observer ObserverFunc, node *circuit.Node, values map[string]zset.ZSet, position int) {
+	if observer == nil {
+		return
+	}
+	snapshotValues := maps.Clone(values)
+	observer(node, snapshotValues, e.state.Clone(), e.schedule, position)
 }
 
 // getInput returns the input value at the given port for a node.

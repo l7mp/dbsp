@@ -66,6 +66,16 @@ type Expr interface {
 	Args() Args
 }
 
+// NewLiteralExpr creates a literal expression with the given operator.
+func NewLiteralExpr(op Operator, value any) Expr {
+	return &literalExpr{op: op, value: value}
+}
+
+// NewOpExpr creates an expression with the given operator and arguments.
+func NewOpExpr(op Operator, args Args) Expr {
+	return &opExpr{op: op, args: args}
+}
+
 // literalExpr is an expression that holds a literal value.
 type literalExpr struct {
 	op    Operator
@@ -105,6 +115,11 @@ type Expression struct {
 	logger logr.Logger
 }
 
+// NewExpression wraps a DBSP expression root with a default logger.
+func NewExpression(root Expr) *Expression {
+	return &Expression{root: root, logger: logr.Discard()}
+}
+
 // Compile parses JSON and returns an Expression using the default registry.
 func Compile(data []byte) (*Expression, error) {
 	return CompileWithRegistry(data, DefaultRegistry)
@@ -117,7 +132,7 @@ func CompileString(s string) (*Expression, error) {
 
 // CompileWithRegistry parses JSON using a custom registry.
 func CompileWithRegistry(data []byte, registry *Registry) (*Expression, error) {
-	parser := NewParserWithRegistry(registry)
+	parser := NewParser().WithRegistry(registry)
 	root, err := parser.Parse(data)
 	if err != nil {
 		return nil, err
