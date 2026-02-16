@@ -19,6 +19,7 @@ func (s StringElem) Concat(other datamodel.Document) datamodel.Document {
 	return s
 }
 func (s StringElem) Copy() datamodel.Document       { return s }
+func (s StringElem) New() datamodel.Document        { return StringElem("") }
 func (s StringElem) GetField(_ string) (any, error) { return string(s), nil }
 func (s StringElem) SetField(_ string, _ any) error { return nil }
 
@@ -35,6 +36,7 @@ func (r Record) Concat(other datamodel.Document) datamodel.Document {
 	return Record{ID: r.ID + "," + other.Hash(), Value: r.Value}
 }
 func (r Record) Copy() datamodel.Document { return r }
+func (r Record) New() datamodel.Document  { return Record{} }
 
 func (r Record) GetField(key string) (any, error) {
 	switch key {
@@ -51,6 +53,9 @@ func (r Record) SetField(key string, value any) error {
 	// Record is immutable (value receiver), so SetField is a no-op.
 	// For mutable records, use *Record or a different type.
 	return nil
+}
+func (r Record) Fields() []string {
+	return []string{"id", "value"}
 }
 
 // ArrayRecord is a test document with an array field for Unwind testing.
@@ -71,6 +76,9 @@ func (r ArrayRecord) Copy() datamodel.Document {
 	copy(values, r.Values)
 	return ArrayRecord{ID: r.ID, Values: values}
 }
+func (r ArrayRecord) New() datamodel.Document {
+	return ArrayRecord{}
+}
 
 func (r ArrayRecord) GetField(key string) (any, error) {
 	switch key {
@@ -87,14 +95,17 @@ func (r ArrayRecord) SetField(key string, value any) error {
 	// ArrayRecord is immutable (value receiver), so SetField is a no-op.
 	return nil
 }
+func (r ArrayRecord) Fields() []string {
+	return []string{"id", "values"}
+}
 
 // MutableRecord is a mutable test document with pointer receiver.
 type MutableRecord struct {
-	Fields map[string]any
+	FieldMap map[string]any
 }
 
 func NewMutableRecord(fields map[string]any) *MutableRecord {
-	return &MutableRecord{Fields: fields}
+	return &MutableRecord{FieldMap: fields}
 }
 
 func (r *MutableRecord) Hash() string { return r.String() }
@@ -103,32 +114,35 @@ func (r *MutableRecord) PrimaryKey() (string, error) {
 }
 
 func (r *MutableRecord) String() string {
-	return fmt.Sprintf("%v", r.Fields)
+	return fmt.Sprintf("%v", r.FieldMap)
 }
 
 func (r *MutableRecord) Concat(other datamodel.Document) datamodel.Document {
 	newFields := make(map[string]any)
-	for k, v := range r.Fields {
+	for k, v := range r.FieldMap {
 		newFields[k] = v
 	}
 	if or, ok := other.(*MutableRecord); ok {
-		for k, v := range or.Fields {
+		for k, v := range or.FieldMap {
 			newFields[k] = v
 		}
 	}
-	return &MutableRecord{Fields: newFields}
+	return &MutableRecord{FieldMap: newFields}
 }
 
 func (r *MutableRecord) Copy() datamodel.Document {
-	newFields := make(map[string]any, len(r.Fields))
-	for k, v := range r.Fields {
+	newFields := make(map[string]any, len(r.FieldMap))
+	for k, v := range r.FieldMap {
 		newFields[k] = v
 	}
-	return &MutableRecord{Fields: newFields}
+	return &MutableRecord{FieldMap: newFields}
+}
+func (r *MutableRecord) New() datamodel.Document {
+	return &MutableRecord{FieldMap: make(map[string]any)}
 }
 
 func (r *MutableRecord) GetField(key string) (any, error) {
-	v, ok := r.Fields[key]
+	v, ok := r.FieldMap[key]
 	if !ok {
 		return nil, datamodel.ErrFieldNotFound
 	}
@@ -136,6 +150,6 @@ func (r *MutableRecord) GetField(key string) (any, error) {
 }
 
 func (r *MutableRecord) SetField(key string, value any) error {
-	r.Fields[key] = value
+	r.FieldMap[key] = value
 	return nil
 }

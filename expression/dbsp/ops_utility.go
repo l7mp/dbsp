@@ -6,78 +6,68 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
+
+	"github.com/l7mp/dbsp/expression"
 )
 
-// NoopOp implements @noop - returns nil.
-type NoopOp struct{}
+// noopExpr implements @noop - returns nil.
+type noopExpr struct{}
 
-func (o *NoopOp) Name() string { return "@noop" }
-
-func (o *NoopOp) Evaluate(ctx *Context, args Args) (any, error) {
-	ctx.Logger().V(8).Info("eval", "op", o.Name())
+func (e *noopExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	ctx.Logger().V(8).Info("eval", "op", "@noop")
 	return nil, nil
 }
 
-// ArgOp implements @arg - returns the current subject from context.
-// In @map/@filter, this is the current iteration element.
-// Future: may also be used to modify operator behavior (hash length, rnd algorithm, etc.).
-type ArgOp struct{}
+func (e *noopExpr) String() string { return "@noop" }
 
-func (o *ArgOp) Name() string { return "@arg" }
+// argExpr implements @arg - returns the current subject from context.
+type argExpr struct{}
 
-func (o *ArgOp) Evaluate(ctx *Context, args Args) (any, error) {
+func (e *argExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	subject := ctx.Subject()
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", subject)
+	ctx.Logger().V(8).Info("eval", "op", "@arg", "result", subject)
 	return subject, nil
 }
 
-// HashOp implements @hash - creates a deterministic hash of the argument.
-type HashOp struct{}
+func (e *argExpr) String() string { return "@arg" }
 
-func (o *HashOp) Name() string { return "@hash" }
+// hashExpr implements @hash - creates a deterministic hash of the argument.
+type hashExpr struct{ operand Expression }
 
-func (o *HashOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *hashExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Serialize to JSON for consistent hashing.
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, fmt.Errorf("@hash: cannot serialize value: %w", err)
 	}
 
 	hash := sha256.Sum256(data)
-	result := hex.EncodeToString(hash[:8]) // First 8 bytes = 16 hex chars.
+	result := hex.EncodeToString(hash[:8])
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@hash", "result", result)
 	return result, nil
 }
 
-// RndOp implements @rnd - returns a random number in [min, max].
-// Arguments: [min, max]
-type RndOp struct{}
+func (e *hashExpr) String() string { return fmt.Sprintf("@hash(%v)", e.operand) }
 
-func (o *RndOp) Name() string { return "@rnd" }
+// rndExpr implements @rnd - returns a random number in [min, max].
+type rndExpr struct{ min, max Expression }
 
-func (o *RndOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@rnd: expected [min, max] arguments")
-	}
-
-	minVal, err := listArgs.Elements[0].Eval(ctx)
+func (e *rndExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	minVal, err := e.min.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@rnd: min: %w", err)
 	}
 
-	maxVal, err := listArgs.Elements[1].Eval(ctx)
+	maxVal, err := e.max.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@rnd: max: %w", err)
 	}
 
-	// Check if both are int.
 	if IsInt(minVal) && IsInt(maxVal) {
 		minInt, _ := AsInt(minVal)
 		maxInt, _ := AsInt(maxVal)
@@ -85,11 +75,10 @@ func (o *RndOp) Evaluate(ctx *Context, args Args) (any, error) {
 			return nil, fmt.Errorf("@rnd: min > max")
 		}
 		result := minInt + rand.Int64N(maxInt-minInt+1)
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "min", minInt, "max", maxInt, "result", result)
+		ctx.Logger().V(8).Info("eval", "op", "@rnd", "min", minInt, "max", maxInt, "result", result)
 		return result, nil
 	}
 
-	// Otherwise use float.
 	minFloat, err := AsFloat(minVal)
 	if err != nil {
 		return nil, fmt.Errorf("@rnd: min: %w", err)
@@ -103,24 +92,19 @@ func (o *RndOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	result := minFloat + rand.Float64()*(maxFloat-minFloat)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "min", minFloat, "max", maxFloat, "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@rnd", "min", minFloat, "max", maxFloat, "result", result)
 	return result, nil
 }
 
-// ConcatOp implements @concat - concatenates strings.
-type ConcatOp struct{}
+func (e *rndExpr) String() string { return fmt.Sprintf("@rnd(%v, %v)", e.min, e.max) }
 
-func (o *ConcatOp) Name() string { return "@concat" }
+// concatExpr implements @concat - concatenates strings.
+type concatExpr struct{ args []Expression }
 
-func (o *ConcatOp) Evaluate(ctx *Context, args Args) (any, error) {
-	elements, err := getElements(args, o.Name())
-	if err != nil {
-		return nil, err
-	}
-
+func (e *concatExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	var result string
-	for i, elem := range elements {
-		v, err := elem.Eval(ctx)
+	for i, elem := range e.args {
+		v, err := elem.Evaluate(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("@concat[%d]: %w", i, err)
 		}
@@ -131,56 +115,54 @@ func (o *ConcatOp) Evaluate(ctx *Context, args Args) (any, error) {
 		result += s
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@concat", "result", result)
 	return result, nil
 }
 
-// AbsOp implements @abs - returns the absolute value.
-type AbsOp struct{}
+func (e *concatExpr) String() string { return fmt.Sprintf("@concat(%v)", e.args) }
 
-func (o *AbsOp) Name() string { return "@abs" }
+// absExpr implements @abs - returns the absolute value.
+type absExpr struct{ operand Expression }
 
-func (o *AbsOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *absExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check for int types first.
 	switch v := value.(type) {
 	case int:
 		if v < 0 {
 			v = -v
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", v)
+		ctx.Logger().V(8).Info("eval", "op", "@abs", "result", v)
 		return int64(v), nil
 	case int64:
 		if v < 0 {
 			v = -v
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", v)
+		ctx.Logger().V(8).Info("eval", "op", "@abs", "result", v)
 		return v, nil
 	case float64:
 		if v < 0 {
 			v = -v
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", v)
+		ctx.Logger().V(8).Info("eval", "op", "@abs", "result", v)
 		return v, nil
 	case float32:
 		if v < 0 {
 			v = -v
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", v)
+		ctx.Logger().V(8).Info("eval", "op", "@abs", "result", v)
 		return float64(v), nil
 	}
 
-	// For other numeric types, try conversion.
 	if IsInt(value) {
 		i, _ := AsInt(value)
 		if i < 0 {
 			i = -i
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", i)
+		ctx.Logger().V(8).Info("eval", "op", "@abs", "result", i)
 		return i, nil
 	}
 
@@ -191,17 +173,17 @@ func (o *AbsOp) Evaluate(ctx *Context, args Args) (any, error) {
 	if f < 0 {
 		f = -f
 	}
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", f)
+	ctx.Logger().V(8).Info("eval", "op", "@abs", "result", f)
 	return f, nil
 }
 
-// FloorOp implements @floor - rounds down to nearest integer.
-type FloorOp struct{}
+func (e *absExpr) String() string { return fmt.Sprintf("@abs(%v)", e.operand) }
 
-func (o *FloorOp) Name() string { return "@floor" }
+// floorExpr implements @floor - rounds down to nearest integer.
+type floorExpr struct{ operand Expression }
 
-func (o *FloorOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *floorExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -215,17 +197,17 @@ func (o *FloorOp) Evaluate(ctx *Context, args Args) (any, error) {
 	if f < 0 && f != float64(result) {
 		result--
 	}
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@floor", "result", result)
 	return result, nil
 }
 
-// CeilOp implements @ceil - rounds up to nearest integer.
-type CeilOp struct{}
+func (e *floorExpr) String() string { return fmt.Sprintf("@floor(%v)", e.operand) }
 
-func (o *CeilOp) Name() string { return "@ceil" }
+// ceilExpr implements @ceil - rounds up to nearest integer.
+type ceilExpr struct{ operand Expression }
 
-func (o *CeilOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *ceilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -239,34 +221,82 @@ func (o *CeilOp) Evaluate(ctx *Context, args Args) (any, error) {
 	if f > 0 && f != float64(result) {
 		result++
 	}
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@ceil", "result", result)
 	return result, nil
 }
 
-// IsNilOp implements @isnil - checks if a value is nil.
-type IsNilOp struct{}
+func (e *ceilExpr) String() string { return fmt.Sprintf("@ceil(%v)", e.operand) }
 
-func (o *IsNilOp) Name() string { return "@isnil" }
+// isNilExpr implements @isnil - checks if a value is nil.
+type isNilExpr struct{ operand Expression }
 
-func (o *IsNilOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *isNilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	result := value == nil
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@isnil", "result", result)
 	return result, nil
 }
 
+func (e *isNilExpr) String() string { return fmt.Sprintf("@isnil(%v)", e.operand) }
+
 func init() {
-	MustRegister("@noop", func() Operator { return &NoopOp{} })
-	MustRegister("@arg", func() Operator { return &ArgOp{} })
-	MustRegister("@hash", func() Operator { return &HashOp{} })
-	MustRegister("@rnd", func() Operator { return &RndOp{} })
-	MustRegister("@concat", func() Operator { return &ConcatOp{} })
-	MustRegister("@abs", func() Operator { return &AbsOp{} })
-	MustRegister("@floor", func() Operator { return &FloorOp{} })
-	MustRegister("@ceil", func() Operator { return &CeilOp{} })
-	MustRegister("@isnil", func() Operator { return &IsNilOp{} })
+	MustRegister("@noop", func(args any) (Expression, error) {
+		return &noopExpr{}, nil
+	})
+	MustRegister("@arg", func(args any) (Expression, error) {
+		return &argExpr{}, nil
+	})
+	MustRegister("@hash", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@hash: %w", err)
+		}
+		return &hashExpr{operand: operand}, nil
+	})
+	MustRegister("@rnd", func(args any) (Expression, error) {
+		left, right, err := asBinaryExprs(args, "@rnd")
+		if err != nil {
+			return nil, err
+		}
+		return &rndExpr{min: left, max: right}, nil
+	})
+	MustRegister("@concat", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@concat: %w", err)
+		}
+		return &concatExpr{args: list}, nil
+	})
+	MustRegister("@abs", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@abs: %w", err)
+		}
+		return &absExpr{operand: operand}, nil
+	})
+	MustRegister("@floor", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@floor: %w", err)
+		}
+		return &floorExpr{operand: operand}, nil
+	})
+	MustRegister("@ceil", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@ceil: %w", err)
+		}
+		return &ceilExpr{operand: operand}, nil
+	})
+	MustRegister("@isnil", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@isnil: %w", err)
+		}
+		return &isNilExpr{operand: operand}, nil
+	})
 }

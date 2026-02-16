@@ -3,109 +3,96 @@ package dbsp
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/l7mp/dbsp/expression"
 )
 
-// EqOp implements @eq (equality).
-type EqOp struct{}
+// eqExpr implements @eq (equality).
+type eqExpr struct{ left, right Expression }
 
-func (o *EqOp) Name() string { return "@eq" }
-
-func (o *EqOp) Evaluate(ctx *Context, args Args) (any, error) {
-	elements, err := getBinaryElements(args, o.Name())
+func (e *eqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	aVal, err := e.left.Evaluate(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("@eq: left operand: %w", err)
 	}
 
-	aVal, err := elements[0].Eval(ctx)
+	bVal, err := e.right.Evaluate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s: left operand: %w", o.Name(), err)
-	}
-
-	bVal, err := elements[1].Eval(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%s: right operand: %w", o.Name(), err)
+		return nil, fmt.Errorf("@eq: right operand: %w", err)
 	}
 
 	result := deepEqual(aVal, bVal)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "a", aVal, "b", bVal, "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@eq", "a", aVal, "b", bVal, "result", result)
 	return result, nil
 }
 
-// NeqOp implements @neq (not equal).
-type NeqOp struct{}
+func (e *eqExpr) String() string { return fmt.Sprintf("@eq(%v, %v)", e.left, e.right) }
 
-func (o *NeqOp) Name() string { return "@neq" }
+// neqExpr implements @neq (not equal).
+type neqExpr struct{ left, right Expression }
 
-func (o *NeqOp) Evaluate(ctx *Context, args Args) (any, error) {
-	elements, err := getBinaryElements(args, o.Name())
+func (e *neqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	aVal, err := e.left.Evaluate(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("@neq: left operand: %w", err)
 	}
 
-	aVal, err := elements[0].Eval(ctx)
+	bVal, err := e.right.Evaluate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s: left operand: %w", o.Name(), err)
-	}
-
-	bVal, err := elements[1].Eval(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%s: right operand: %w", o.Name(), err)
+		return nil, fmt.Errorf("@neq: right operand: %w", err)
 	}
 
 	result := !deepEqual(aVal, bVal)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "a", aVal, "b", bVal, "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@neq", "a", aVal, "b", bVal, "result", result)
 	return result, nil
 }
 
-// GtOp implements @gt (greater than).
-type GtOp struct{}
+func (e *neqExpr) String() string { return fmt.Sprintf("@neq(%v, %v)", e.left, e.right) }
 
-func (o *GtOp) Name() string { return "@gt" }
+// gtExpr implements @gt (greater than).
+type gtExpr struct{ left, right Expression }
 
-func (o *GtOp) Evaluate(ctx *Context, args Args) (any, error) {
-	return compareNumeric(ctx, args, o.Name(), func(cmp int) bool { return cmp > 0 })
+func (e *gtExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	return compareNumeric(ctx, e.left, e.right, "@gt", func(cmp int) bool { return cmp > 0 })
 }
 
-// GteOp implements @gte (greater than or equal).
-type GteOp struct{}
+func (e *gtExpr) String() string { return fmt.Sprintf("@gt(%v, %v)", e.left, e.right) }
 
-func (o *GteOp) Name() string { return "@gte" }
+// gteExpr implements @gte (greater than or equal).
+type gteExpr struct{ left, right Expression }
 
-func (o *GteOp) Evaluate(ctx *Context, args Args) (any, error) {
-	return compareNumeric(ctx, args, o.Name(), func(cmp int) bool { return cmp >= 0 })
+func (e *gteExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	return compareNumeric(ctx, e.left, e.right, "@gte", func(cmp int) bool { return cmp >= 0 })
 }
 
-// LtOp implements @lt (less than).
-type LtOp struct{}
+func (e *gteExpr) String() string { return fmt.Sprintf("@gte(%v, %v)", e.left, e.right) }
 
-func (o *LtOp) Name() string { return "@lt" }
+// ltExpr implements @lt (less than).
+type ltExpr struct{ left, right Expression }
 
-func (o *LtOp) Evaluate(ctx *Context, args Args) (any, error) {
-	return compareNumeric(ctx, args, o.Name(), func(cmp int) bool { return cmp < 0 })
+func (e *ltExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	return compareNumeric(ctx, e.left, e.right, "@lt", func(cmp int) bool { return cmp < 0 })
 }
 
-// LteOp implements @lte (less than or equal).
-type LteOp struct{}
+func (e *ltExpr) String() string { return fmt.Sprintf("@lt(%v, %v)", e.left, e.right) }
 
-func (o *LteOp) Name() string { return "@lte" }
+// lteExpr implements @lte (less than or equal).
+type lteExpr struct{ left, right Expression }
 
-func (o *LteOp) Evaluate(ctx *Context, args Args) (any, error) {
-	return compareNumeric(ctx, args, o.Name(), func(cmp int) bool { return cmp <= 0 })
+func (e *lteExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	return compareNumeric(ctx, e.left, e.right, "@lte", func(cmp int) bool { return cmp <= 0 })
 }
+
+func (e *lteExpr) String() string { return fmt.Sprintf("@lte(%v, %v)", e.left, e.right) }
 
 // compareNumeric compares two numeric values.
-func compareNumeric(ctx *Context, args Args, opName string, cmpFn func(int) bool) (any, error) {
-	elements, err := getBinaryElements(args, opName)
-	if err != nil {
-		return nil, err
-	}
-
-	aVal, err := elements[0].Eval(ctx)
+func compareNumeric(ctx *expression.EvalContext, left, right Expression, opName string, cmpFn func(int) bool) (any, error) {
+	aVal, err := left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s: left operand: %w", opName, err)
 	}
 
-	bVal, err := elements[1].Eval(ctx)
+	bVal, err := right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s: right operand: %w", opName, err)
 	}
@@ -187,10 +174,19 @@ func deepEqual(a, b any) bool {
 }
 
 func init() {
-	MustRegister("@eq", func() Operator { return &EqOp{} })
-	MustRegister("@neq", func() Operator { return &NeqOp{} })
-	MustRegister("@gt", func() Operator { return &GtOp{} })
-	MustRegister("@gte", func() Operator { return &GteOp{} })
-	MustRegister("@lt", func() Operator { return &LtOp{} })
-	MustRegister("@lte", func() Operator { return &LteOp{} })
+	registerBinaryOp := func(name string, factory func(left, right Expression) Expression) {
+		MustRegister(name, func(args any) (Expression, error) {
+			left, right, err := asBinaryExprs(args, name)
+			if err != nil {
+				return nil, err
+			}
+			return factory(left, right), nil
+		})
+	}
+	registerBinaryOp("@eq", func(l, r Expression) Expression { return &eqExpr{left: l, right: r} })
+	registerBinaryOp("@neq", func(l, r Expression) Expression { return &neqExpr{left: l, right: r} })
+	registerBinaryOp("@gt", func(l, r Expression) Expression { return &gtExpr{left: l, right: r} })
+	registerBinaryOp("@gte", func(l, r Expression) Expression { return &gteExpr{left: l, right: r} })
+	registerBinaryOp("@lt", func(l, r Expression) Expression { return &ltExpr{left: l, right: r} })
+	registerBinaryOp("@lte", func(l, r Expression) Expression { return &lteExpr{left: l, right: r} })
 }

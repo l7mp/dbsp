@@ -29,6 +29,9 @@ type Document interface {
 	// Copy returns a deep copy of the document when possible.
 	Copy() Document
 
+	// New returns a new empty document of the same type.
+	New() Document
+
 	// GetField returns the value for a field name.
 	// It may return ErrFieldNotFound when the field is missing.
 	GetField(key string) (any, error)

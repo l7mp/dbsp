@@ -4,21 +4,15 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/l7mp/dbsp/expression"
 )
 
-// RegexpOp implements @regexp - regex pattern matching.
-// Arguments: [pattern, string] - returns true if string matches pattern.
-type RegexpOp struct{}
+// regexpExpr implements @regexp - regex pattern matching.
+type regexpExpr struct{ pattern, str Expression }
 
-func (o *RegexpOp) Name() string { return "@regexp" }
-
-func (o *RegexpOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@regexp: expected [pattern, string] arguments")
-	}
-
-	patternVal, err := listArgs.Elements[0].Eval(ctx)
+func (e *regexpExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	patternVal, err := e.pattern.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@regexp: pattern: %w", err)
 	}
@@ -27,7 +21,7 @@ func (o *RegexpOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@regexp: pattern must be string: %w", err)
 	}
 
-	strVal, err := listArgs.Elements[1].Eval(ctx)
+	strVal, err := e.str.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@regexp: string: %w", err)
 	}
@@ -42,87 +36,79 @@ func (o *RegexpOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	result := re.MatchString(str)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "pattern", pattern, "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@regexp", "pattern", pattern, "result", result)
 	return result, nil
 }
 
-// UpperOp implements @upper - converts string to uppercase.
-type UpperOp struct{}
+func (e *regexpExpr) String() string { return fmt.Sprintf("@regexp(%v, %v)", e.pattern, e.str) }
 
-func (o *UpperOp) Name() string { return "@upper" }
+// upperExpr implements @upper - converts string to uppercase.
+type upperExpr struct{ operand Expression }
 
-func (o *UpperOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *upperExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
-
 	s, err := AsString(value)
 	if err != nil {
 		return nil, fmt.Errorf("@upper: %w", err)
 	}
-
 	result := strings.ToUpper(s)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@upper", "result", result)
 	return result, nil
 }
 
-// LowerOp implements @lower - converts string to lowercase.
-type LowerOp struct{}
+func (e *upperExpr) String() string { return fmt.Sprintf("@upper(%v)", e.operand) }
 
-func (o *LowerOp) Name() string { return "@lower" }
+// lowerExpr implements @lower - converts string to lowercase.
+type lowerExpr struct{ operand Expression }
 
-func (o *LowerOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *lowerExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
-
 	s, err := AsString(value)
 	if err != nil {
 		return nil, fmt.Errorf("@lower: %w", err)
 	}
-
 	result := strings.ToLower(s)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@lower", "result", result)
 	return result, nil
 }
 
-// TrimOp implements @trim - removes leading and trailing whitespace.
-type TrimOp struct{}
+func (e *lowerExpr) String() string { return fmt.Sprintf("@lower(%v)", e.operand) }
 
-func (o *TrimOp) Name() string { return "@trim" }
+// trimExpr implements @trim - removes leading and trailing whitespace.
+type trimExpr struct{ operand Expression }
 
-func (o *TrimOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *trimExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
-
 	s, err := AsString(value)
 	if err != nil {
 		return nil, fmt.Errorf("@trim: %w", err)
 	}
-
 	result := strings.TrimSpace(s)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@trim", "result", result)
 	return result, nil
 }
 
-// SubstringOp implements @substring - extracts a substring.
-// Arguments: [string, start] or [string, start, length]
+func (e *trimExpr) String() string { return fmt.Sprintf("@trim(%v)", e.operand) }
+
+// substringExpr implements @substring - extracts a substring.
 // Start is 1-based (SQL style). If start is negative, counts from end.
-type SubstringOp struct{}
+type substringExpr struct{ args []Expression }
 
-func (o *SubstringOp) Name() string { return "@substring" }
-
-func (o *SubstringOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || (len(listArgs.Elements) != 2 && len(listArgs.Elements) != 3) {
+func (e *substringExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if len(e.args) != 2 && len(e.args) != 3 {
 		return nil, fmt.Errorf("@substring: expected [string, start] or [string, start, length] arguments")
 	}
 
-	strVal, err := listArgs.Elements[0].Eval(ctx)
+	strVal, err := e.args[0].Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@substring: string: %w", err)
 	}
@@ -131,7 +117,7 @@ func (o *SubstringOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@substring: first argument must be string: %w", err)
 	}
 
-	startVal, err := listArgs.Elements[1].Eval(ctx)
+	startVal, err := e.args[1].Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@substring: start: %w", err)
 	}
@@ -140,11 +126,9 @@ func (o *SubstringOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@substring: start must be integer: %w", err)
 	}
 
-	// Convert 1-based to 0-based index.
 	if start > 0 {
 		start--
 	} else if start < 0 {
-		// Negative start counts from end.
 		start = int64(len(s)) + start
 	}
 
@@ -156,8 +140,8 @@ func (o *SubstringOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	var result string
-	if len(listArgs.Elements) == 3 {
-		lengthVal, err := listArgs.Elements[2].Eval(ctx)
+	if len(e.args) == 3 {
+		lengthVal, err := e.args[2].Evaluate(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("@substring: length: %w", err)
 		}
@@ -165,11 +149,9 @@ func (o *SubstringOp) Evaluate(ctx *Context, args Args) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("@substring: length must be integer: %w", err)
 		}
-
 		if length < 0 {
 			length = 0
 		}
-
 		end := start + length
 		if end > int64(len(s)) {
 			end = int64(len(s))
@@ -179,24 +161,21 @@ func (o *SubstringOp) Evaluate(ctx *Context, args Args) (any, error) {
 		result = s[start:]
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@substring", "result", result)
 	return result, nil
 }
 
-// ReplaceOp implements @replace - replaces occurrences of a substring.
-// Arguments: [string, old, new] or [string, old, new, count]
-// If count is omitted or -1, replaces all occurrences.
-type ReplaceOp struct{}
+func (e *substringExpr) String() string { return fmt.Sprintf("@substring(%v)", e.args) }
 
-func (o *ReplaceOp) Name() string { return "@replace" }
+// replaceExpr implements @replace - replaces occurrences of a substring.
+type replaceExpr struct{ args []Expression }
 
-func (o *ReplaceOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || (len(listArgs.Elements) != 3 && len(listArgs.Elements) != 4) {
+func (e *replaceExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if len(e.args) != 3 && len(e.args) != 4 {
 		return nil, fmt.Errorf("@replace: expected [string, old, new] or [string, old, new, count] arguments")
 	}
 
-	strVal, err := listArgs.Elements[0].Eval(ctx)
+	strVal, err := e.args[0].Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@replace: string: %w", err)
 	}
@@ -205,7 +184,7 @@ func (o *ReplaceOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@replace: first argument must be string: %w", err)
 	}
 
-	oldVal, err := listArgs.Elements[1].Eval(ctx)
+	oldVal, err := e.args[1].Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@replace: old: %w", err)
 	}
@@ -214,7 +193,7 @@ func (o *ReplaceOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@replace: old must be string: %w", err)
 	}
 
-	newVal, err := listArgs.Elements[2].Eval(ctx)
+	newVal, err := e.args[2].Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@replace: new: %w", err)
 	}
@@ -223,9 +202,9 @@ func (o *ReplaceOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@replace: new must be string: %w", err)
 	}
 
-	count := -1 // Replace all by default.
-	if len(listArgs.Elements) == 4 {
-		countVal, err := listArgs.Elements[3].Eval(ctx)
+	count := -1
+	if len(e.args) == 4 {
+		countVal, err := e.args[3].Evaluate(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("@replace: count: %w", err)
 		}
@@ -237,23 +216,17 @@ func (o *ReplaceOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	result := strings.Replace(s, old, newStr, count)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@replace", "result", result)
 	return result, nil
 }
 
-// SplitOp implements @split - splits a string into a list.
-// Arguments: [string, separator]
-type SplitOp struct{}
+func (e *replaceExpr) String() string { return fmt.Sprintf("@replace(%v)", e.args) }
 
-func (o *SplitOp) Name() string { return "@split" }
+// splitExpr implements @split - splits a string into a list.
+type splitExpr struct{ str, sep Expression }
 
-func (o *SplitOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@split: expected [string, separator] arguments")
-	}
-
-	strVal, err := listArgs.Elements[0].Eval(ctx)
+func (e *splitExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	strVal, err := e.str.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@split: string: %w", err)
 	}
@@ -262,7 +235,7 @@ func (o *SplitOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@split: first argument must be string: %w", err)
 	}
 
-	sepVal, err := listArgs.Elements[1].Eval(ctx)
+	sepVal, err := e.sep.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@split: separator: %w", err)
 	}
@@ -277,23 +250,17 @@ func (o *SplitOp) Evaluate(ctx *Context, args Args) (any, error) {
 		result[i] = p
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@split", "result", result)
 	return result, nil
 }
 
-// JoinOp implements @join - joins a list into a string.
-// Arguments: [list, separator]
-type JoinOp struct{}
+func (e *splitExpr) String() string { return fmt.Sprintf("@split(%v, %v)", e.str, e.sep) }
 
-func (o *JoinOp) Name() string { return "@join" }
+// joinExpr implements @join - joins a list into a string.
+type joinExpr struct{ list, sep Expression }
 
-func (o *JoinOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@join: expected [list, separator] arguments")
-	}
-
-	listVal, err := listArgs.Elements[0].Eval(ctx)
+func (e *joinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	listVal, err := e.list.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@join: list: %w", err)
 	}
@@ -302,7 +269,7 @@ func (o *JoinOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@join: first argument must be list: %w", err)
 	}
 
-	sepVal, err := listArgs.Elements[1].Eval(ctx)
+	sepVal, err := e.sep.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@join: separator: %w", err)
 	}
@@ -321,22 +288,17 @@ func (o *JoinOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	result := strings.Join(strs, sep)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@join", "result", result)
 	return result, nil
 }
 
-// StartsWithOp implements @startswith - checks if string starts with prefix.
-type StartsWithOp struct{}
+func (e *joinExpr) String() string { return fmt.Sprintf("@join(%v, %v)", e.list, e.sep) }
 
-func (o *StartsWithOp) Name() string { return "@startswith" }
+// startsWithExpr implements @startswith.
+type startsWithExpr struct{ str, prefix Expression }
 
-func (o *StartsWithOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@startswith: expected [string, prefix] arguments")
-	}
-
-	strVal, err := listArgs.Elements[0].Eval(ctx)
+func (e *startsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	strVal, err := e.str.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@startswith: string: %w", err)
 	}
@@ -345,7 +307,7 @@ func (o *StartsWithOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@startswith: first argument must be string: %w", err)
 	}
 
-	prefixVal, err := listArgs.Elements[1].Eval(ctx)
+	prefixVal, err := e.prefix.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@startswith: prefix: %w", err)
 	}
@@ -355,22 +317,19 @@ func (o *StartsWithOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	result := strings.HasPrefix(s, prefix)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@startswith", "result", result)
 	return result, nil
 }
 
-// EndsWithOp implements @endswith - checks if string ends with suffix.
-type EndsWithOp struct{}
+func (e *startsWithExpr) String() string {
+	return fmt.Sprintf("@startswith(%v, %v)", e.str, e.prefix)
+}
 
-func (o *EndsWithOp) Name() string { return "@endswith" }
+// endsWithExpr implements @endswith.
+type endsWithExpr struct{ str, suffix Expression }
 
-func (o *EndsWithOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@endswith: expected [string, suffix] arguments")
-	}
-
-	strVal, err := listArgs.Elements[0].Eval(ctx)
+func (e *endsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	strVal, err := e.str.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@endswith: string: %w", err)
 	}
@@ -379,7 +338,7 @@ func (o *EndsWithOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@endswith: first argument must be string: %w", err)
 	}
 
-	suffixVal, err := listArgs.Elements[1].Eval(ctx)
+	suffixVal, err := e.suffix.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@endswith: suffix: %w", err)
 	}
@@ -389,22 +348,19 @@ func (o *EndsWithOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	result := strings.HasSuffix(s, suffix)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@endswith", "result", result)
 	return result, nil
 }
 
-// ContainsOp implements @contains - checks if string contains substring.
-type ContainsOp struct{}
+func (e *endsWithExpr) String() string {
+	return fmt.Sprintf("@endswith(%v, %v)", e.str, e.suffix)
+}
 
-func (o *ContainsOp) Name() string { return "@contains" }
+// containsExpr implements @contains.
+type containsExpr struct{ str, sub Expression }
 
-func (o *ContainsOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@contains: expected [string, substring] arguments")
-	}
-
-	strVal, err := listArgs.Elements[0].Eval(ctx)
+func (e *containsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	strVal, err := e.str.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@contains: string: %w", err)
 	}
@@ -413,7 +369,7 @@ func (o *ContainsOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@contains: first argument must be string: %w", err)
 	}
 
-	subVal, err := listArgs.Elements[1].Eval(ctx)
+	subVal, err := e.sub.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@contains: substring: %w", err)
 	}
@@ -423,20 +379,56 @@ func (o *ContainsOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	result := strings.Contains(s, sub)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@contains", "result", result)
 	return result, nil
 }
 
+func (e *containsExpr) String() string { return fmt.Sprintf("@contains(%v, %v)", e.str, e.sub) }
+
 func init() {
-	MustRegister("@regexp", func() Operator { return &RegexpOp{} })
-	MustRegister("@upper", func() Operator { return &UpperOp{} })
-	MustRegister("@lower", func() Operator { return &LowerOp{} })
-	MustRegister("@trim", func() Operator { return &TrimOp{} })
-	MustRegister("@substring", func() Operator { return &SubstringOp{} })
-	MustRegister("@replace", func() Operator { return &ReplaceOp{} })
-	MustRegister("@split", func() Operator { return &SplitOp{} })
-	MustRegister("@join", func() Operator { return &JoinOp{} })
-	MustRegister("@startswith", func() Operator { return &StartsWithOp{} })
-	MustRegister("@endswith", func() Operator { return &EndsWithOp{} })
-	MustRegister("@contains", func() Operator { return &ContainsOp{} })
+	registerBinaryStrOp := func(name string, factory func(a, b Expression) Expression) {
+		MustRegister(name, func(args any) (Expression, error) {
+			left, right, err := asBinaryExprs(args, name)
+			if err != nil {
+				return nil, err
+			}
+			return factory(left, right), nil
+		})
+	}
+
+	registerBinaryStrOp("@regexp", func(a, b Expression) Expression { return &regexpExpr{pattern: a, str: b} })
+	registerBinaryStrOp("@split", func(a, b Expression) Expression { return &splitExpr{str: a, sep: b} })
+	registerBinaryStrOp("@join", func(a, b Expression) Expression { return &joinExpr{list: a, sep: b} })
+	registerBinaryStrOp("@startswith", func(a, b Expression) Expression { return &startsWithExpr{str: a, prefix: b} })
+	registerBinaryStrOp("@endswith", func(a, b Expression) Expression { return &endsWithExpr{str: a, suffix: b} })
+	registerBinaryStrOp("@contains", func(a, b Expression) Expression { return &containsExpr{str: a, sub: b} })
+
+	registerUnaryStrOp := func(name string, factory func(operand Expression) Expression) {
+		MustRegister(name, func(args any) (Expression, error) {
+			operand, err := asUnaryExprOrLiteral(args)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			return factory(operand), nil
+		})
+	}
+
+	registerUnaryStrOp("@upper", func(o Expression) Expression { return &upperExpr{operand: o} })
+	registerUnaryStrOp("@lower", func(o Expression) Expression { return &lowerExpr{operand: o} })
+	registerUnaryStrOp("@trim", func(o Expression) Expression { return &trimExpr{operand: o} })
+
+	MustRegister("@substring", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || (len(list) != 2 && len(list) != 3) {
+			return nil, fmt.Errorf("@substring: expected [string, start] or [string, start, length] arguments")
+		}
+		return &substringExpr{args: list}, nil
+	})
+	MustRegister("@replace", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || (len(list) != 3 && len(list) != 4) {
+			return nil, fmt.Errorf("@replace: expected [string, old, new] or [string, old, new, count] arguments")
+		}
+		return &replaceExpr{args: list}, nil
+	})
 }

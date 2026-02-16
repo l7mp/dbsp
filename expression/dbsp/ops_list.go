@@ -1,25 +1,16 @@
 package dbsp
 
-import "fmt"
+import (
+	"fmt"
 
-// MapOp implements @map - iterates over a list, evaluating an expression for each element.
-// The current element is available as the "subject" in the context.
-// Arguments: [mapExpr, listExpr]
-type MapOp struct{}
+	"github.com/l7mp/dbsp/expression"
+)
 
-func (o *MapOp) Name() string { return "@map" }
+// mapExpr implements @map - iterates over a list, evaluating an expression for each element.
+type mapExpr struct{ mapFn, list Expression }
 
-func (o *MapOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@map: expected [expression, list] arguments")
-	}
-
-	// First element is the mapping expression (evaluated per item).
-	mapExpr := listArgs.Elements[0]
-
-	// Second element is the list to iterate (evaluated once).
-	listValue, err := listArgs.Elements[1].Eval(ctx)
+func (e *mapExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	listValue, err := e.list.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@map: failed to evaluate list: %w", err)
 	}
@@ -29,36 +20,27 @@ func (o *MapOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@map: second argument must be a list: %w", err)
 	}
 
-	// Map over the list, passing each element as the subject.
 	result := make([]any, len(list))
 	for i, item := range list {
 		itemCtx := ctx.WithSubject(item)
-		v, err := mapExpr.Eval(itemCtx)
+		v, err := e.mapFn.Evaluate(itemCtx)
 		if err != nil {
 			return nil, fmt.Errorf("@map[%d]: %w", i, err)
 		}
 		result[i] = v
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@map", "result", result)
 	return result, nil
 }
 
-// FilterOp implements @filter - filters a list based on a predicate.
-// Arguments: [predicateExpr, listExpr]
-type FilterOp struct{}
+func (e *mapExpr) String() string { return fmt.Sprintf("@map(%v, %v)", e.mapFn, e.list) }
 
-func (o *FilterOp) Name() string { return "@filter" }
+// filterExpr implements @filter - filters a list based on a predicate.
+type filterExpr struct{ predicate, list Expression }
 
-func (o *FilterOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@filter: expected [predicate, list] arguments")
-	}
-
-	predExpr := listArgs.Elements[0]
-
-	listValue, err := listArgs.Elements[1].Eval(ctx)
+func (e *filterExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	listValue, err := e.list.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@filter: failed to evaluate list: %w", err)
 	}
@@ -71,7 +53,7 @@ func (o *FilterOp) Evaluate(ctx *Context, args Args) (any, error) {
 	result := make([]any, 0, len(list))
 	for i, item := range list {
 		itemCtx := ctx.WithSubject(item)
-		v, err := predExpr.Eval(itemCtx)
+		v, err := e.predicate.Evaluate(itemCtx)
 		if err != nil {
 			return nil, fmt.Errorf("@filter[%d]: %w", i, err)
 		}
@@ -86,28 +68,34 @@ func (o *FilterOp) Evaluate(ctx *Context, args Args) (any, error) {
 		}
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@filter", "result", result)
 	return result, nil
 }
 
-// SumOp implements @sum - sums all elements of a list.
-type SumOp struct{}
+func (e *filterExpr) String() string {
+	return fmt.Sprintf("@filter(%v, %v)", e.predicate, e.list)
+}
 
-func (o *SumOp) Name() string { return "@sum" }
+// sumExpr implements @sum - sums all elements.
+type sumExpr struct{ args []Expression }
 
-func (o *SumOp) Evaluate(ctx *Context, args Args) (any, error) {
-	list, err := o.getList(ctx, args)
-	if err != nil {
-		return nil, err
+func (e *sumExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	// Evaluate all args.
+	values := make([]any, len(e.args))
+	for i, elem := range e.args {
+		v, err := elem.Evaluate(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("@sum[%d]: %w", i, err)
+		}
+		values[i] = v
 	}
 
-	if len(list) == 0 {
+	if len(values) == 0 {
 		return int64(0), nil
 	}
 
-	// Determine if result should be int or float.
 	isFloat := false
-	for _, item := range list {
+	for _, item := range values {
 		if IsFloat(item) {
 			isFloat = true
 			break
@@ -116,61 +104,36 @@ func (o *SumOp) Evaluate(ctx *Context, args Args) (any, error) {
 
 	if isFloat {
 		var sum float64
-		for i, item := range list {
+		for i, item := range values {
 			f, err := AsFloat(item)
 			if err != nil {
 				return nil, fmt.Errorf("@sum[%d]: %w", i, err)
 			}
 			sum += f
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", sum)
+		ctx.Logger().V(8).Info("eval", "op", "@sum", "result", sum)
 		return sum, nil
 	}
 
 	var sum int64
-	for i, item := range list {
+	for i, item := range values {
 		n, err := AsInt(item)
 		if err != nil {
 			return nil, fmt.Errorf("@sum[%d]: %w", i, err)
 		}
 		sum += n
 	}
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", sum)
+	ctx.Logger().V(8).Info("eval", "op", "@sum", "result", sum)
 	return sum, nil
 }
 
-func (o *SumOp) getList(ctx *Context, args Args) ([]any, error) {
-	switch a := args.(type) {
-	case ListArgs:
-		result := make([]any, len(a.Elements))
-		for i, elem := range a.Elements {
-			v, err := elem.Eval(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("@sum[%d]: %w", i, err)
-			}
-			result[i] = v
-		}
-		return result, nil
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return AsList(v)
-	case LiteralArgs:
-		return AsList(a.Value)
-	default:
-		return nil, fmt.Errorf("@sum: unexpected args type %T", args)
-	}
-}
+func (e *sumExpr) String() string { return fmt.Sprintf("@sum(%v)", e.args) }
 
-// LenOp implements @len - returns the length of a list or string.
-type LenOp struct{}
+// lenExpr implements @len - returns the length of a list or string.
+type lenExpr struct{ operand Expression }
 
-func (o *LenOp) Name() string { return "@len" }
-
-func (o *LenOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *lenExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -178,15 +141,15 @@ func (o *LenOp) Evaluate(ctx *Context, args Args) (any, error) {
 	switch v := value.(type) {
 	case string:
 		result := int64(len(v))
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+		ctx.Logger().V(8).Info("eval", "op", "@len", "result", result)
 		return result, nil
 	case []any:
 		result := int64(len(v))
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+		ctx.Logger().V(8).Info("eval", "op", "@len", "result", result)
 		return result, nil
 	case map[string]any:
 		result := int64(len(v))
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+		ctx.Logger().V(8).Info("eval", "op", "@len", "result", result)
 		return result, nil
 	default:
 		list, err := AsList(value)
@@ -194,18 +157,18 @@ func (o *LenOp) Evaluate(ctx *Context, args Args) (any, error) {
 			return nil, fmt.Errorf("@len: cannot get length of %T", value)
 		}
 		result := int64(len(list))
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+		ctx.Logger().V(8).Info("eval", "op", "@len", "result", result)
 		return result, nil
 	}
 }
 
-// MinOp implements @min - returns the minimum value in a list.
-type MinOp struct{}
+func (e *lenExpr) String() string { return fmt.Sprintf("@len(%v)", e.operand) }
 
-func (o *MinOp) Name() string { return "@min" }
+// minExpr implements @min - returns the minimum value in a list.
+type minExpr struct{ args []Expression }
 
-func (o *MinOp) Evaluate(ctx *Context, args Args) (any, error) {
-	list, err := getNumericList(ctx, args, o.Name())
+func (e *minExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	list, err := evaluateNumericList(ctx, e.args, "@min")
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +177,6 @@ func (o *MinOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@min: empty list")
 	}
 
-	// Check if all are int.
 	allInt := true
 	for _, item := range list {
 		if !IsInt(item) {
@@ -231,7 +193,7 @@ func (o *MinOp) Evaluate(ctx *Context, args Args) (any, error) {
 				minVal = v
 			}
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", minVal)
+		ctx.Logger().V(8).Info("eval", "op", "@min", "result", minVal)
 		return minVal, nil
 	}
 
@@ -242,17 +204,17 @@ func (o *MinOp) Evaluate(ctx *Context, args Args) (any, error) {
 			minVal = v
 		}
 	}
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", minVal)
+	ctx.Logger().V(8).Info("eval", "op", "@min", "result", minVal)
 	return minVal, nil
 }
 
-// MaxOp implements @max - returns the maximum value in a list.
-type MaxOp struct{}
+func (e *minExpr) String() string { return fmt.Sprintf("@min(%v)", e.args) }
 
-func (o *MaxOp) Name() string { return "@max" }
+// maxExpr implements @max - returns the maximum value in a list.
+type maxExpr struct{ args []Expression }
 
-func (o *MaxOp) Evaluate(ctx *Context, args Args) (any, error) {
-	list, err := getNumericList(ctx, args, o.Name())
+func (e *maxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	list, err := evaluateNumericList(ctx, e.args, "@max")
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +223,6 @@ func (o *MaxOp) Evaluate(ctx *Context, args Args) (any, error) {
 		return nil, fmt.Errorf("@max: empty list")
 	}
 
-	// Check if all are int.
 	allInt := true
 	for _, item := range list {
 		if !IsInt(item) {
@@ -278,7 +239,7 @@ func (o *MaxOp) Evaluate(ctx *Context, args Args) (any, error) {
 				maxVal = v
 			}
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", maxVal)
+		ctx.Logger().V(8).Info("eval", "op", "@max", "result", maxVal)
 		return maxVal, nil
 	}
 
@@ -289,28 +250,22 @@ func (o *MaxOp) Evaluate(ctx *Context, args Args) (any, error) {
 			maxVal = v
 		}
 	}
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", maxVal)
+	ctx.Logger().V(8).Info("eval", "op", "@max", "result", maxVal)
 	return maxVal, nil
 }
 
-// InOp implements @in - checks if an element is in a list.
-// Arguments: [element, list]
-type InOp struct{}
+func (e *maxExpr) String() string { return fmt.Sprintf("@max(%v)", e.args) }
 
-func (o *InOp) Name() string { return "@in" }
+// inExpr implements @in - checks if an element is in a list.
+type inExpr struct{ element, list Expression }
 
-func (o *InOp) Evaluate(ctx *Context, args Args) (any, error) {
-	listArgs, ok := args.(ListArgs)
-	if !ok || len(listArgs.Elements) != 2 {
-		return nil, fmt.Errorf("@in: expected [element, list] arguments")
-	}
-
-	elemVal, err := listArgs.Elements[0].Eval(ctx)
+func (e *inExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	elemVal, err := e.element.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@in: element: %w", err)
 	}
 
-	listVal, err := listArgs.Elements[1].Eval(ctx)
+	listVal, err := e.list.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@in: list: %w", err)
 	}
@@ -322,22 +277,22 @@ func (o *InOp) Evaluate(ctx *Context, args Args) (any, error) {
 
 	for _, item := range list {
 		if deepEqual(elemVal, item) {
-			ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", true)
+			ctx.Logger().V(8).Info("eval", "op", "@in", "result", true)
 			return true, nil
 		}
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", false)
+	ctx.Logger().V(8).Info("eval", "op", "@in", "result", false)
 	return false, nil
 }
 
-// RangeOp implements @range - creates a range of integers [1..n].
-type RangeOp struct{}
+func (e *inExpr) String() string { return fmt.Sprintf("@in(%v, %v)", e.element, e.list) }
 
-func (o *RangeOp) Name() string { return "@range" }
+// rangeExpr implements @range - creates a range of integers [1..n].
+type rangeExpr struct{ operand Expression }
 
-func (o *RangeOp) Evaluate(ctx *Context, args Args) (any, error) {
-	value, err := evaluateSingleArg(ctx, args, o.Name())
+func (e *rangeExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -356,82 +311,83 @@ func (o *RangeOp) Evaluate(ctx *Context, args Args) (any, error) {
 		result[i] = i + 1
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "n", n, "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@range", "n", n, "result", result)
 	return result, nil
 }
 
-// evaluateSingleArg evaluates a single argument from various argument types.
-func evaluateSingleArg(ctx *Context, args Args, opName string) (any, error) {
-	switch a := args.(type) {
-	case LiteralArgs:
-		return a.Value, nil
-	case UnaryArgs:
-		return a.Operand.Eval(ctx)
-	case ListArgs:
-		if len(a.Elements) != 1 {
-			return nil, fmt.Errorf("%s: expected 1 argument, got %d", opName, len(a.Elements))
-		}
-		return a.Elements[0].Eval(ctx)
-	default:
-		return nil, fmt.Errorf("%s: unexpected args type %T", opName, args)
-	}
-}
+func (e *rangeExpr) String() string { return fmt.Sprintf("@range(%v)", e.operand) }
 
-// getNumericList evaluates arguments and returns a list of numeric values.
-func getNumericList(ctx *Context, args Args, opName string) ([]any, error) {
-	switch a := args.(type) {
-	case ListArgs:
-		result := make([]any, len(a.Elements))
-		for i, elem := range a.Elements {
-			v, err := elem.Eval(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("%s[%d]: %w", opName, i, err)
-			}
-			if !IsNumeric(v) {
-				return nil, fmt.Errorf("%s[%d]: expected numeric, got %T", opName, i, v)
-			}
-			result[i] = v
-		}
-		return result, nil
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
+// evaluateNumericList evaluates a list of expression args and validates they are numeric.
+func evaluateNumericList(ctx *expression.EvalContext, args []Expression, opName string) ([]any, error) {
+	result := make([]any, len(args))
+	for i, elem := range args {
+		v, err := elem.Evaluate(ctx)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s[%d]: %w", opName, i, err)
 		}
-		list, err := AsList(v)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", opName, err)
+		if !IsNumeric(v) {
+			return nil, fmt.Errorf("%s[%d]: expected numeric, got %T", opName, i, v)
 		}
-		// Validate all elements are numeric.
-		for i, item := range list {
-			if !IsNumeric(item) {
-				return nil, fmt.Errorf("%s[%d]: expected numeric, got %T", opName, i, item)
-			}
-		}
-		return list, nil
-	case LiteralArgs:
-		list, err := AsList(a.Value)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", opName, err)
-		}
-		for i, item := range list {
-			if !IsNumeric(item) {
-				return nil, fmt.Errorf("%s[%d]: expected numeric, got %T", opName, i, item)
-			}
-		}
-		return list, nil
-	default:
-		return nil, fmt.Errorf("%s: unexpected args type %T", opName, args)
+		result[i] = v
 	}
+	return result, nil
 }
 
 func init() {
-	MustRegister("@map", func() Operator { return &MapOp{} })
-	MustRegister("@filter", func() Operator { return &FilterOp{} })
-	MustRegister("@sum", func() Operator { return &SumOp{} })
-	MustRegister("@len", func() Operator { return &LenOp{} })
-	MustRegister("@min", func() Operator { return &MinOp{} })
-	MustRegister("@max", func() Operator { return &MaxOp{} })
-	MustRegister("@in", func() Operator { return &InOp{} })
-	MustRegister("@range", func() Operator { return &RangeOp{} })
+	MustRegister("@map", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || len(list) != 2 {
+			return nil, fmt.Errorf("@map: expected [expression, list] arguments")
+		}
+		return &mapExpr{mapFn: list[0], list: list[1]}, nil
+	})
+	MustRegister("@filter", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || len(list) != 2 {
+			return nil, fmt.Errorf("@filter: expected [predicate, list] arguments")
+		}
+		return &filterExpr{predicate: list[0], list: list[1]}, nil
+	})
+	MustRegister("@sum", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@sum: %w", err)
+		}
+		return &sumExpr{args: list}, nil
+	})
+	MustRegister("@len", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@len: %w", err)
+		}
+		return &lenExpr{operand: operand}, nil
+	})
+	MustRegister("@min", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@min: %w", err)
+		}
+		return &minExpr{args: list}, nil
+	})
+	MustRegister("@max", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@max: %w", err)
+		}
+		return &maxExpr{args: list}, nil
+	})
+	MustRegister("@in", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || len(list) != 2 {
+			return nil, fmt.Errorf("@in: expected [element, list] arguments")
+		}
+		return &inExpr{element: list[0], list: list[1]}, nil
+	})
+	MustRegister("@range", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@range: %w", err)
+		}
+		return &rangeExpr{operand: operand}, nil
+	})
 }

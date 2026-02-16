@@ -6,7 +6,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/dbsp/operator"
 	"github.com/l7mp/dbsp/expression"
 )
@@ -387,7 +386,7 @@ var _ = Describe("Circuit", func() {
 	Describe("Patterns", func() {
 		Describe("Join", func() {
 			It("creates a join circuit", func() {
-				predicate := expression.Func(func(e datamodel.Document) (any, error) {
+				predicate := expression.Func(func(ctx *expression.EvalContext) (any, error) {
 					return true, nil
 				})
 				c := Join("test-join", predicate)

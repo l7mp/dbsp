@@ -65,6 +65,15 @@ func (r *Row) Copy() datamodel.Document {
 	return &Row{Table: r.Table, Data: data}
 }
 
+func (r *Row) New() datamodel.Document {
+	cols := make([]Column, len(r.Table.Schema.Columns))
+	copy(cols, r.Table.Schema.Columns)
+	pk := append([]int(nil), r.Table.Schema.PKIndices...)
+	newSchema := &Schema{Columns: cols, PKIndices: pk}
+	newTable := NewTable(r.Table.Name, newSchema)
+	return &Row{Table: newTable, Data: make([]any, len(cols))}
+}
+
 func (r *Row) Concat(other datamodel.Document) datamodel.Document {
 	r2, ok := other.(*Row)
 	if !ok {
@@ -153,6 +162,22 @@ func (r *Row) SetField(field string, value any) error {
 		}
 	}
 	return fmt.Errorf("%w: column %s not found", datamodel.ErrFieldNotFound, field)
+}
+
+// Fields returns column names for this row.
+func (r *Row) Fields() []string {
+	if r.Table == nil || r.Table.Schema == nil {
+		return nil
+	}
+	fields := make([]string, 0, len(r.Table.Schema.Columns))
+	for _, col := range r.Table.Schema.Columns {
+		if col.QualifiedName != "" {
+			fields = append(fields, col.QualifiedName)
+			continue
+		}
+		fields = append(fields, col.Name)
+	}
+	return fields
 }
 
 func (s *Schema) AliasForColumn(name string) (string, bool) {

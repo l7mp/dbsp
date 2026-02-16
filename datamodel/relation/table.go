@@ -68,6 +68,56 @@ func (t *Table) Insert(data []any) error {
 	return nil
 }
 
+// InsertRow inserts a row into the table after claiming it.
+func (t *Table) InsertRow(row *Row) error {
+	claimed, err := t.Claim(row)
+	if err != nil {
+		return err
+	}
+	pk, err := claimed.PrimaryKey()
+	if err != nil {
+		return err
+	}
+	t.store.ReplaceOrInsert(tableItem{pk: pk, row: claimed})
+	return nil
+}
+
+// Delete removes a row by primary key.
+func (t *Table) Delete(pk string) bool {
+	item := t.store.Delete(tableItem{pk: pk})
+	return item != nil
+}
+
+// Update updates a row by primary key using the updater callback.
+func (t *Table) Update(pk string, fn func(row *Row) error) (*Row, error) {
+	item := t.store.Get(tableItem{pk: pk})
+	if item == nil {
+		return nil, errors.New("row not found")
+	}
+	current := item.(tableItem).row
+	if err := fn(current); err != nil {
+		return nil, err
+	}
+	newPk, err := current.PrimaryKey()
+	if err != nil {
+		return nil, err
+	}
+	if newPk != pk {
+		t.store.Delete(tableItem{pk: pk})
+		t.store.ReplaceOrInsert(tableItem{pk: newPk, row: current})
+	}
+	return current, nil
+}
+
+// Lookup returns a row by primary key.
+func (t *Table) Lookup(pk string) (*Row, bool) {
+	item := t.store.Get(tableItem{pk: pk})
+	if item == nil {
+		return nil, false
+	}
+	return item.(tableItem).row, true
+}
+
 // ToZSet converts the Table to a ZSet with weight 1.
 func (t *Table) ToZSet() zset.ZSet {
 	z := zset.New()

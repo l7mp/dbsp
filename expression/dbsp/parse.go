@@ -22,7 +22,7 @@ func (p *Parser) WithRegistry(r *Registry) *Parser {
 }
 
 // Parse parses JSON into an expression tree.
-func (p *Parser) Parse(data []byte) (Expr, error) {
+func (p *Parser) Parse(data []byte) (Expression, error) {
 	var raw any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
@@ -30,36 +30,36 @@ func (p *Parser) Parse(data []byte) (Expr, error) {
 	return p.parseValue(raw)
 }
 
-// parseValue converts a raw JSON value to an Expr.
-func (p *Parser) parseValue(v any) (Expr, error) {
+// parseValue converts a raw JSON value to an Expression.
+func (p *Parser) parseValue(v any) (Expression, error) {
 	switch val := v.(type) {
 	case nil:
-		return p.makeLiteralExpr("@nil", nil)
+		return p.callFactory("@nil", nil)
 
 	case bool:
-		return p.makeLiteralExpr("@bool", val)
+		return p.callFactory("@bool", val)
 
 	case float64:
 		// JSON numbers are float64; check if it's actually an int.
 		if val == float64(int64(val)) {
-			return p.makeLiteralExpr("@int", int64(val))
+			return p.callFactory("@int", int64(val))
 		}
-		return p.makeLiteralExpr("@float", val)
+		return p.callFactory("@float", val)
 
 	case string:
 		// Check for $.field shorthand (document field).
 		if strings.HasPrefix(val, "$.") {
-			return p.makeOpExpr("@get", LiteralArgs{Value: val[2:]})
+			return p.callFactory("@get", val[2:])
 		}
 		// Check for $$.field shorthand (subject field).
 		if strings.HasPrefix(val, "$$.") {
-			return p.makeOpExpr("@getsub", LiteralArgs{Value: val[3:]})
+			return p.callFactory("@getsub", val[3:])
 		}
-		return p.makeLiteralExpr("@string", val)
+		return p.callFactory("@string", val)
 
 	case []any:
 		// Parse as @list with nested expressions.
-		elements := make([]Expr, len(val))
+		elements := make([]Expression, len(val))
 		for i, elem := range val {
 			expr, err := p.parseValue(elem)
 			if err != nil {
@@ -67,7 +67,7 @@ func (p *Parser) parseValue(v any) (Expr, error) {
 			}
 			elements[i] = expr
 		}
-		return p.makeOpExpr("@list", ListArgs{Elements: elements})
+		return p.callFactory("@list", elements)
 
 	case map[string]any:
 		return p.parseMap(val)
@@ -78,7 +78,7 @@ func (p *Parser) parseValue(v any) (Expr, error) {
 }
 
 // parseMap handles JSON objects - either operators or @dict.
-func (p *Parser) parseMap(m map[string]any) (Expr, error) {
+func (p *Parser) parseMap(m map[string]any) (Expression, error) {
 	// Check for operator: single key starting with @.
 	if len(m) == 1 {
 		for key, value := range m {
@@ -89,7 +89,7 @@ func (p *Parser) parseMap(m map[string]any) (Expr, error) {
 	}
 
 	// Otherwise, treat as @dict with nested expressions.
-	entries := make(map[string]Expr)
+	entries := make(map[string]Expression)
 	for key, value := range m {
 		expr, err := p.parseValue(value)
 		if err != nil {
@@ -97,35 +97,35 @@ func (p *Parser) parseMap(m map[string]any) (Expr, error) {
 		}
 		entries[key] = expr
 	}
-	return p.makeOpExpr("@dict", DictArgs{Entries: entries})
+	return p.callFactory("@dict", entries)
 }
 
 // parseOperator parses an operator expression.
-func (p *Parser) parseOperator(name string, rawArgs any) (Expr, error) {
-	factory, ok := p.registry.Get(name)
+func (p *Parser) parseOperator(name string, rawArgs any) (Expression, error) {
+	_, ok := p.registry.Get(name)
 	if !ok {
 		return nil, fmt.Errorf("unknown operator: %s", name)
 	}
 
-	op := factory()
-	args, err := p.parseArgs(rawArgs)
+	args, err := p.prepareArgs(rawArgs)
 	if err != nil {
 		return nil, fmt.Errorf("operator %s: %w", name, err)
 	}
 
-	return &opExpr{op: op, args: args}, nil
+	return p.callFactory(name, args)
 }
 
-// parseArgs parses operator arguments into the appropriate Args type.
-func (p *Parser) parseArgs(rawArgs any) (Args, error) {
+// prepareArgs converts raw JSON args into the appropriate form for the factory:
+// nil, raw value (bool/int64/float64/string), Expression, []Expression, or map[string]Expression.
+func (p *Parser) prepareArgs(rawArgs any) (any, error) {
 	if rawArgs == nil {
-		return LiteralArgs{Value: nil}, nil
+		return nil, nil
 	}
 
 	switch args := rawArgs.(type) {
 	case []any:
 		// List of expressions.
-		elements := make([]Expr, len(args))
+		elements := make([]Expression, len(args))
 		for i, elem := range args {
 			expr, err := p.parseValue(elem)
 			if err != nil {
@@ -133,7 +133,7 @@ func (p *Parser) parseArgs(rawArgs any) (Args, error) {
 			}
 			elements[i] = expr
 		}
-		return ListArgs{Elements: elements}, nil
+		return elements, nil
 
 	case map[string]any:
 		// Check if it's an operator (nested expression) or dict args.
@@ -144,12 +144,12 @@ func (p *Parser) parseArgs(rawArgs any) (Args, error) {
 					if err != nil {
 						return nil, err
 					}
-					return UnaryArgs{Operand: expr}, nil
+					return expr, nil
 				}
 			}
 		}
 		// Treat as dict args.
-		entries := make(map[string]Expr)
+		entries := make(map[string]Expression)
 		for key, value := range args {
 			expr, err := p.parseValue(value)
 			if err != nil {
@@ -157,28 +157,19 @@ func (p *Parser) parseArgs(rawArgs any) (Args, error) {
 			}
 			entries[key] = expr
 		}
-		return DictArgs{Entries: entries}, nil
+		return entries, nil
 
 	default:
-		// Literal value.
-		return LiteralArgs{Value: args}, nil
+		// Literal value (bool, float64, string from JSON).
+		return args, nil
 	}
 }
 
-// makeLiteralExpr creates a literal expression.
-func (p *Parser) makeLiteralExpr(opName string, value any) (Expr, error) {
-	factory, ok := p.registry.Get(opName)
+// callFactory calls the factory for the named operator with the given args.
+func (p *Parser) callFactory(name string, args any) (Expression, error) {
+	factory, ok := p.registry.Get(name)
 	if !ok {
-		return nil, fmt.Errorf("built-in operator %s not registered", opName)
+		return nil, fmt.Errorf("built-in operator %s not registered", name)
 	}
-	return &literalExpr{op: factory(), value: value}, nil
-}
-
-// makeOpExpr creates an operator expression.
-func (p *Parser) makeOpExpr(opName string, args Args) (Expr, error) {
-	factory, ok := p.registry.Get(opName)
-	if !ok {
-		return nil, fmt.Errorf("built-in operator %s not registered", opName)
-	}
-	return &opExpr{op: factory(), args: args}, nil
+	return factory(args)
 }

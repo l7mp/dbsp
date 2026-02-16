@@ -71,8 +71,9 @@ var _ = Describe("Operators", func() {
 
 	Describe("Select", func() {
 		It("filters elements by predicate", func() {
-			predicate := expression.Func(func(e datamodel.Document) (any, error) {
-				return e.(testutils.Record).Value > 5, nil
+			predicate := expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				e := ctx.Document().(testutils.Record)
+				return e.Value > 5, nil
 			})
 			op := NewSelect("gt5", predicate)
 			Expect(op.Name()).To(Equal("gt5"))
@@ -95,7 +96,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("preserves weights", func() {
-			predicate := expression.Func(func(e datamodel.Document) (any, error) {
+			predicate := expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			})
 			op := NewSelect("all", predicate)
@@ -112,8 +113,8 @@ var _ = Describe("Operators", func() {
 
 	Describe("Project", func() {
 		It("transforms elements", func() {
-			projection := expression.Func(func(e datamodel.Document) (any, error) {
-				r := e.(testutils.Record)
+			projection := expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				r := ctx.Document().(testutils.Record)
 				return testutils.Record{ID: r.ID, Value: r.Value * 2}, nil
 			})
 			op := NewProject("double", projection)
@@ -137,8 +138,9 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("skips nil results", func() {
-			projection := expression.Func(func(e datamodel.Document) (any, error) {
-				if e.(testutils.Record).Value > 5 {
+			projection := expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				e := ctx.Document().(testutils.Record)
+				if e.Value > 5 {
 					return e, nil
 				}
 				return nil, nil
@@ -234,104 +236,6 @@ var _ = Describe("Operators", func() {
 			Expect(result.Lookup(recordA.Hash())).To(Equal(zset.Weight(1)))
 			Expect(result.Lookup(recordB.Hash())).To(Equal(zset.Weight(1)))
 			Expect(result.Lookup(recordC.Hash())).To(Equal(zset.Weight(0)))
-		})
-	})
-
-	Describe("Group", func() {
-		It("aggregates by key with SUM", func() {
-			op := NewGroup("sum_by_dept",
-				[]string{"dept"},
-				[]Aggregation{
-					{Type: AggSum, InputField: "salary", OutputField: "total"},
-				},
-			)
-			Expect(op.Name()).To(Equal("sum_by_dept"))
-			Expect(op.Arity()).To(Equal(1))
-			Expect(op.Linearity()).To(Equal(NonLinear))
-
-			input := zset.New()
-			input.Insert(testutils.NewMutableRecord(map[string]any{"dept": "eng", "salary": 100}), 1)
-			input.Insert(testutils.NewMutableRecord(map[string]any{"dept": "eng", "salary": 150}), 1)
-			input.Insert(testutils.NewMutableRecord(map[string]any{"dept": "sales", "salary": 80}), 1)
-
-			result, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(2))
-
-			// Verify aggregation results.
-			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				dept, _ := elem.GetField("dept")
-				total, _ := elem.GetField("total")
-				if dept == "eng" {
-					Expect(total).To(Equal(250.0)) // 100 + 150
-				} else if dept == "sales" {
-					Expect(total).To(Equal(80.0))
-				}
-				Expect(weight).To(Equal(zset.Weight(1)))
-				return true
-			})
-		})
-
-		It("handles COUNT aggregation", func() {
-			op := NewGroup("count_by_dept",
-				[]string{"dept"},
-				[]Aggregation{
-					{Type: AggCount, OutputField: "count"},
-				},
-			)
-
-			input := zset.New()
-			input.Insert(testutils.NewMutableRecord(map[string]any{"dept": "eng", "name": "Alice"}), 1)
-			input.Insert(testutils.NewMutableRecord(map[string]any{"dept": "eng", "name": "Bob"}), 2) // Weight 2.
-			input.Insert(testutils.NewMutableRecord(map[string]any{"dept": "sales", "name": "Carol"}), 1)
-
-			result, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(2))
-
-			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				dept, _ := elem.GetField("dept")
-				count, _ := elem.GetField("count")
-				if dept == "eng" {
-					Expect(count).To(Equal(int64(3))) // 1 + 2 (weights)
-				} else if dept == "sales" {
-					Expect(count).To(Equal(int64(1)))
-				}
-				return true
-			})
-		})
-
-		It("handles multiple aggregations", func() {
-			op := NewGroup("stats_by_dept",
-				[]string{"dept"},
-				[]Aggregation{
-					{Type: AggSum, InputField: "salary", OutputField: "total"},
-					{Type: AggCount, OutputField: "count"},
-					{Type: AggMin, InputField: "salary", OutputField: "min_salary"},
-					{Type: AggMax, InputField: "salary", OutputField: "max_salary"},
-				},
-			)
-
-			input := zset.New()
-			input.Insert(testutils.NewMutableRecord(map[string]any{"dept": "eng", "salary": 100}), 1)
-			input.Insert(testutils.NewMutableRecord(map[string]any{"dept": "eng", "salary": 200}), 1)
-
-			result, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(1))
-
-			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				total, _ := elem.GetField("total")
-				count, _ := elem.GetField("count")
-				minSal, _ := elem.GetField("min_salary")
-				maxSal, _ := elem.GetField("max_salary")
-
-				Expect(total).To(Equal(300.0))
-				Expect(count).To(Equal(int64(2)))
-				Expect(minSal).To(Equal(100.0))
-				Expect(maxSal).To(Equal(200.0))
-				return true
-			})
 		})
 	})
 

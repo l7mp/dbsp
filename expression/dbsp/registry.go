@@ -5,13 +5,15 @@ import (
 	"sync"
 )
 
-// OperatorFactory creates an operator instance.
-type OperatorFactory func() Operator
+// ExpressionFactory creates an expression from parsed arguments.
+// args is one of: nil, a raw value (bool/int64/float64/string),
+// an Expression (single sub-expression), []Expression, or map[string]Expression.
+type ExpressionFactory func(args any) (Expression, error)
 
 // Registry manages operator registration.
 type Registry struct {
 	mu        sync.RWMutex
-	operators map[string]OperatorFactory
+	operators map[string]ExpressionFactory
 }
 
 // DefaultRegistry is the global default registry with built-in operators.
@@ -20,13 +22,13 @@ var DefaultRegistry = NewRegistry()
 // NewRegistry creates a new empty registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		operators: make(map[string]OperatorFactory),
+		operators: make(map[string]ExpressionFactory),
 	}
 }
 
 // Register adds an operator factory to the registry.
 // Returns an error if the operator already exists.
-func (r *Registry) Register(name string, factory OperatorFactory) error {
+func (r *Registry) Register(name string, factory ExpressionFactory) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -41,7 +43,7 @@ func (r *Registry) Register(name string, factory OperatorFactory) error {
 }
 
 // MustRegister registers an operator, panicking on error.
-func (r *Registry) MustRegister(name string, factory OperatorFactory) {
+func (r *Registry) MustRegister(name string, factory ExpressionFactory) {
 	if err := r.Register(name, factory); err != nil {
 		panic(err)
 	}
@@ -49,7 +51,7 @@ func (r *Registry) MustRegister(name string, factory OperatorFactory) {
 
 // Override replaces an existing operator or adds a new one.
 // Unlike Register, this does not error if the operator already exists.
-func (r *Registry) Override(name string, factory OperatorFactory) error {
+func (r *Registry) Override(name string, factory ExpressionFactory) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -61,7 +63,7 @@ func (r *Registry) Override(name string, factory OperatorFactory) error {
 }
 
 // Get returns an operator factory by name.
-func (r *Registry) Get(name string) (OperatorFactory, bool) {
+func (r *Registry) Get(name string) (ExpressionFactory, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	factory, ok := r.operators[name]
@@ -101,16 +103,45 @@ func (r *Registry) Names() []string {
 }
 
 // Register registers an operator with the default registry.
-func Register(name string, factory OperatorFactory) error {
+func Register(name string, factory ExpressionFactory) error {
 	return DefaultRegistry.Register(name, factory)
 }
 
 // MustRegister registers with the default registry, panicking on error.
-func MustRegister(name string, factory OperatorFactory) {
+func MustRegister(name string, factory ExpressionFactory) {
 	DefaultRegistry.MustRegister(name, factory)
 }
 
 // Override replaces an operator in the default registry.
-func Override(name string, factory OperatorFactory) error {
+func Override(name string, factory ExpressionFactory) error {
 	return DefaultRegistry.Override(name, factory)
+}
+
+// AsExprList extracts a []Expression from factory args.
+func AsExprList(args any) ([]Expression, error) {
+	if list, ok := args.([]Expression); ok {
+		return list, nil
+	}
+	return nil, fmt.Errorf("expected []Expression, got %T", args)
+}
+
+// AsSingleExpr extracts a single Expression from factory args.
+func AsSingleExpr(args any) (Expression, error) {
+	if e, ok := args.(Expression); ok {
+		return e, nil
+	}
+	return nil, fmt.Errorf("expected Expression, got %T", args)
+}
+
+// AsLiteral extracts a raw literal value from factory args.
+func AsLiteral(args any) any {
+	return args
+}
+
+// AsExprMap extracts a map[string]Expression from factory args.
+func AsExprMap(args any) (map[string]Expression, error) {
+	if m, ok := args.(map[string]Expression); ok {
+		return m, nil
+	}
+	return nil, fmt.Errorf("expected map[string]Expression, got %T", args)
 }

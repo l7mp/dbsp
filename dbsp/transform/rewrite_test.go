@@ -4,7 +4,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/dbsp/circuit"
 	"github.com/l7mp/dbsp/dbsp/operator"
 	"github.com/l7mp/dbsp/expression"
@@ -175,7 +174,7 @@ var _ = Describe("Rewrite", func() {
 	Describe("DistinctPastLinear", func() {
 		It("pushes distinct past select", func() {
 			// a → Distinct → σ → b  =>  a → σ → Distinct → b.
-			sel := operator.NewSelect("σ", expression.Func(func(e datamodel.Document) (any, error) {
+			sel := operator.NewSelect("σ", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))
 			c := circuit.New("dpl-test")
@@ -197,8 +196,8 @@ var _ = Describe("Rewrite", func() {
 		})
 
 		It("pushes distinct past project", func() {
-			proj := operator.NewProject("π", expression.Func(func(e datamodel.Document) (any, error) {
-				return e, nil
+			proj := operator.NewProject("π", expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				return ctx.Document(), nil
 			}))
 			c := circuit.New("dpl-proj")
 			c.AddNode(circuit.Input("a"))
@@ -229,7 +228,7 @@ var _ = Describe("Rewrite", func() {
 		})
 
 		It("does not match when predecessor is not distinct", func() {
-			sel := operator.NewSelect("σ", expression.Func(func(e datamodel.Document) (any, error) {
+			sel := operator.NewSelect("σ", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))
 			c := circuit.New("dpl-no-match")
@@ -249,7 +248,7 @@ var _ = Describe("Rewrite", func() {
 	Describe("DistinctDistribution", func() {
 		It("removes upstream distinct when separated by select", func() {
 			// a → Distinct → σ → Distinct → b  =>  a → σ → Distinct → b.
-			sel := operator.NewSelect("σ", expression.Func(func(e datamodel.Document) (any, error) {
+			sel := operator.NewSelect("σ", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))
 			c := circuit.New("dd-test")
@@ -293,7 +292,7 @@ var _ = Describe("Rewrite", func() {
 	Describe("SwapDifferentiateLinear", func() {
 		It("swaps D past a unary linear operator", func() {
 			// a → D → σ → b  =>  a → σ → D → b.
-			sel := operator.NewSelect("σ", expression.Func(func(e datamodel.Document) (any, error) {
+			sel := operator.NewSelect("σ", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))
 			c := circuit.New("sdl-test")
@@ -348,7 +347,7 @@ var _ = Describe("Rewrite", func() {
 	Describe("SwapLinearIntegrate", func() {
 		It("swaps unary linear operator past I", func() {
 			// a → σ → I → b  =>  a → I → σ → b.
-			sel := operator.NewSelect("σ", expression.Func(func(e datamodel.Document) (any, error) {
+			sel := operator.NewSelect("σ", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))
 			c := circuit.New("sli-test")
@@ -388,17 +387,17 @@ var _ = Describe("Rewrite", func() {
 		It("consolidates distinct operators in a 6.3.1-style circuit", func() {
 			// σ → π → Distinct → σ → π → Distinct → out.
 			// PreRules should push Distinct downstream and consolidate.
-			sel1 := operator.NewSelect("σ1", expression.Func(func(e datamodel.Document) (any, error) {
+			sel1 := operator.NewSelect("σ1", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))
-			proj1 := operator.NewProject("π1", expression.Func(func(e datamodel.Document) (any, error) {
-				return e, nil
+			proj1 := operator.NewProject("π1", expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				return ctx.Document(), nil
 			}))
-			sel2 := operator.NewSelect("σ2", expression.Func(func(e datamodel.Document) (any, error) {
+			sel2 := operator.NewSelect("σ2", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))
-			proj2 := operator.NewProject("π2", expression.Func(func(e datamodel.Document) (any, error) {
-				return e, nil
+			proj2 := operator.NewProject("π2", expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				return ctx.Document(), nil
 			}))
 
 			c := circuit.New("pipeline")
@@ -438,7 +437,7 @@ var _ = Describe("Rewrite", func() {
 			// Circuit: a → σ → D → I → b.
 			// EliminateID: D → I cancels.
 			// Result: a → σ → b.
-			sel := operator.NewSelect("σ", expression.Func(func(e datamodel.Document) (any, error) {
+			sel := operator.NewSelect("σ", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))
 			c := circuit.New("d-push-cancel")

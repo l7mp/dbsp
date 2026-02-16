@@ -1,269 +1,204 @@
 package dbsp
 
-import "fmt"
+import (
+	"fmt"
 
-// NilOp implements @nil.
-type NilOp struct{}
+	"github.com/l7mp/dbsp/expression"
+)
 
-func (o *NilOp) Name() string { return "@nil" }
+// nilExpr implements @nil.
+type nilExpr struct{}
 
-func (o *NilOp) Evaluate(ctx *Context, args Args) (any, error) {
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", nil)
+func (e *nilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	ctx.Logger().V(8).Info("eval", "op", "@nil", "result", nil)
 	return nil, nil
 }
 
-// BoolOp implements @bool.
-type BoolOp struct{}
+func (e *nilExpr) String() string { return "@nil" }
 
-func (o *BoolOp) Name() string { return "@bool" }
+// boolExpr implements @bool.
+type boolExpr struct{ operand Expression }
 
-func (o *BoolOp) Evaluate(ctx *Context, args Args) (any, error) {
-	var value any
-
-	switch a := args.(type) {
-	case LiteralArgs:
-		value = a.Value
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	case ListArgs:
-		if len(a.Elements) != 1 {
-			return nil, fmt.Errorf("@bool: expected 1 argument, got %d", len(a.Elements))
-		}
-		v, err := a.Elements[0].Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	default:
-		return nil, fmt.Errorf("@bool: unexpected args type %T", args)
+func (e *boolExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if e.operand == nil {
+		return false, nil
 	}
-
+	value, err := e.operand.Evaluate(ctx)
+	if err != nil {
+		return nil, err
+	}
 	b, err := AsBool(value)
 	if err != nil {
 		return nil, fmt.Errorf("@bool: %w", err)
 	}
-
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", b)
+	ctx.Logger().V(8).Info("eval", "op", "@bool", "result", b)
 	return b, nil
 }
 
-// IntOp implements @int.
-type IntOp struct{}
+func (e *boolExpr) String() string { return fmt.Sprintf("@bool(%v)", e.operand) }
 
-func (o *IntOp) Name() string { return "@int" }
+// intExpr implements @int.
+type intExpr struct{ operand Expression }
 
-func (o *IntOp) Evaluate(ctx *Context, args Args) (any, error) {
-	var value any
-
-	switch a := args.(type) {
-	case LiteralArgs:
-		value = a.Value
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	case ListArgs:
-		if len(a.Elements) != 1 {
-			return nil, fmt.Errorf("@int: expected 1 argument, got %d", len(a.Elements))
-		}
-		v, err := a.Elements[0].Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	default:
-		return nil, fmt.Errorf("@int: unexpected args type %T", args)
+func (e *intExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if e.operand == nil {
+		return int64(0), nil
 	}
-
+	value, err := e.operand.Evaluate(ctx)
+	if err != nil {
+		return nil, err
+	}
 	i, err := AsInt(value)
 	if err != nil {
 		return nil, fmt.Errorf("@int: %w", err)
 	}
-
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", i)
+	ctx.Logger().V(8).Info("eval", "op", "@int", "result", i)
 	return i, nil
 }
 
-// FloatOp implements @float.
-type FloatOp struct{}
+func (e *intExpr) String() string { return fmt.Sprintf("@int(%v)", e.operand) }
 
-func (o *FloatOp) Name() string { return "@float" }
+// floatExpr implements @float.
+type floatExpr struct{ operand Expression }
 
-func (o *FloatOp) Evaluate(ctx *Context, args Args) (any, error) {
-	var value any
-
-	switch a := args.(type) {
-	case LiteralArgs:
-		value = a.Value
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	case ListArgs:
-		if len(a.Elements) != 1 {
-			return nil, fmt.Errorf("@float: expected 1 argument, got %d", len(a.Elements))
-		}
-		v, err := a.Elements[0].Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	default:
-		return nil, fmt.Errorf("@float: unexpected args type %T", args)
+func (e *floatExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if e.operand == nil {
+		return float64(0), nil
 	}
-
+	value, err := e.operand.Evaluate(ctx)
+	if err != nil {
+		return nil, err
+	}
 	f, err := AsFloat(value)
 	if err != nil {
 		return nil, fmt.Errorf("@float: %w", err)
 	}
-
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", f)
+	ctx.Logger().V(8).Info("eval", "op", "@float", "result", f)
 	return f, nil
 }
 
-// StringOp implements @string.
-type StringOp struct{}
+func (e *floatExpr) String() string { return fmt.Sprintf("@float(%v)", e.operand) }
 
-func (o *StringOp) Name() string { return "@string" }
+// stringExpr implements @string.
+type stringExpr struct{ operand Expression }
 
-func (o *StringOp) Evaluate(ctx *Context, args Args) (any, error) {
-	var value any
-
-	switch a := args.(type) {
-	case LiteralArgs:
-		value = a.Value
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	case ListArgs:
-		if len(a.Elements) != 1 {
-			return nil, fmt.Errorf("@string: expected 1 argument, got %d", len(a.Elements))
-		}
-		v, err := a.Elements[0].Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	default:
-		return nil, fmt.Errorf("@string: unexpected args type %T", args)
+func (e *stringExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if e.operand == nil {
+		return "", nil
 	}
-
+	value, err := e.operand.Evaluate(ctx)
+	if err != nil {
+		return nil, err
+	}
 	s, err := AsString(value)
 	if err != nil {
 		return nil, fmt.Errorf("@string: %w", err)
 	}
-
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", s)
+	ctx.Logger().V(8).Info("eval", "op", "@string", "result", s)
 	return s, nil
 }
 
-// ListOp implements @list - preserves nested expression structure.
-type ListOp struct{}
+func (e *stringExpr) String() string { return fmt.Sprintf("@string(%v)", e.operand) }
 
-func (o *ListOp) Name() string { return "@list" }
+// listExpr implements @list - evaluates each element expression.
+type listExpr struct{ elements []Expression }
 
-func (o *ListOp) Evaluate(ctx *Context, args Args) (any, error) {
-	switch a := args.(type) {
-	case ListArgs:
-		// Evaluate each element expression.
-		result := make([]any, len(a.Elements))
-		for i, elem := range a.Elements {
-			v, err := elem.Eval(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("@list[%d]: %w", i, err)
-			}
-			result[i] = v
-		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
-		return result, nil
-
-	case UnaryArgs:
-		// Handle nested expression that evaluates to a list.
-		v, err := a.Operand.Eval(ctx)
+func (e *listExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	result := make([]any, len(e.elements))
+	for i, elem := range e.elements {
+		v, err := elem.Evaluate(ctx)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("@list[%d]: %w", i, err)
 		}
-		list, err := AsList(v)
-		if err != nil {
-			return nil, fmt.Errorf("@list: %w", err)
-		}
-		return list, nil
-
-	case LiteralArgs:
-		// Handle literal list.
-		list, err := AsList(a.Value)
-		if err != nil {
-			return nil, fmt.Errorf("@list: %w", err)
-		}
-		return list, nil
-
-	default:
-		return nil, fmt.Errorf("@list: expected ListArgs, got %T", args)
+		result[i] = v
 	}
+	ctx.Logger().V(8).Info("eval", "op", "@list", "result", result)
+	return result, nil
 }
 
-// DictOp implements @dict - preserves document shape while evaluating nested expressions.
-type DictOp struct{}
+func (e *listExpr) String() string { return fmt.Sprintf("@list(%v)", e.elements) }
 
-func (o *DictOp) Name() string { return "@dict" }
+// dictExpr implements @dict - evaluates each value expression, preserving keys.
+type dictExpr struct{ entries map[string]Expression }
 
-func (o *DictOp) Evaluate(ctx *Context, args Args) (any, error) {
-	switch a := args.(type) {
-	case DictArgs:
-		// Evaluate each value expression, preserving keys.
-		result := make(map[string]any, len(a.Entries))
-		for key, expr := range a.Entries {
-			v, err := expr.Eval(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("@dict[%q]: %w", key, err)
-			}
-			result[key] = v
-		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
-		return result, nil
-
-	case UnaryArgs:
-		// Handle nested expression that evaluates to a dict.
-		v, err := a.Operand.Eval(ctx)
+func (e *dictExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	result := make(map[string]any, len(e.entries))
+	for key, expr := range e.entries {
+		v, err := expr.Evaluate(ctx)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("@dict[%q]: %w", key, err)
 		}
-		m, err := AsMap(v)
-		if err != nil {
-			return nil, fmt.Errorf("@dict: %w", err)
-		}
-		return m, nil
-
-	case LiteralArgs:
-		// Handle literal dict.
-		m, err := AsMap(a.Value)
-		if err != nil {
-			return nil, fmt.Errorf("@dict: %w", err)
-		}
-		return m, nil
-
-	default:
-		return nil, fmt.Errorf("@dict: expected DictArgs, got %T", args)
+		result[key] = v
 	}
+	ctx.Logger().V(8).Info("eval", "op", "@dict", "result", result)
+	return result, nil
 }
+
+func (e *dictExpr) String() string { return fmt.Sprintf("@dict(%v)", e.entries) }
+
+// constExpr wraps a literal value as an expression.
+type constExpr struct{ value any }
+
+func (e *constExpr) Evaluate(_ *expression.EvalContext) (any, error) {
+	return e.value, nil
+}
+
+func (e *constExpr) String() string { return fmt.Sprintf("%v", e.value) }
 
 func init() {
-	MustRegister("@nil", func() Operator { return &NilOp{} })
-	MustRegister("@bool", func() Operator { return &BoolOp{} })
-	MustRegister("@int", func() Operator { return &IntOp{} })
-	MustRegister("@float", func() Operator { return &FloatOp{} })
-	MustRegister("@string", func() Operator { return &StringOp{} })
-	MustRegister("@list", func() Operator { return &ListOp{} })
-	MustRegister("@dict", func() Operator { return &DictOp{} })
+	MustRegister("@nil", func(args any) (Expression, error) {
+		return &nilExpr{}, nil
+	})
+	MustRegister("@bool", func(args any) (Expression, error) {
+		// Literal bool value.
+		if b, ok := args.(bool); ok {
+			return &boolExpr{operand: &constExpr{value: b}}, nil
+		}
+		// Sub-expression.
+		if e, ok := args.(Expression); ok {
+			return &boolExpr{operand: e}, nil
+		}
+		if args == nil {
+			return &boolExpr{operand: &constExpr{value: false}}, nil
+		}
+		return nil, fmt.Errorf("@bool: unexpected args type %T", args)
+	})
+	MustRegister("@int", func(args any) (Expression, error) {
+		if e, ok := args.(Expression); ok {
+			return &intExpr{operand: e}, nil
+		}
+		// Literal numeric value.
+		return &intExpr{operand: &constExpr{value: args}}, nil
+	})
+	MustRegister("@float", func(args any) (Expression, error) {
+		if e, ok := args.(Expression); ok {
+			return &floatExpr{operand: e}, nil
+		}
+		return &floatExpr{operand: &constExpr{value: args}}, nil
+	})
+	MustRegister("@string", func(args any) (Expression, error) {
+		if e, ok := args.(Expression); ok {
+			return &stringExpr{operand: e}, nil
+		}
+		return &stringExpr{operand: &constExpr{value: args}}, nil
+	})
+	MustRegister("@list", func(args any) (Expression, error) {
+		if list, ok := args.([]Expression); ok {
+			return &listExpr{elements: list}, nil
+		}
+		if e, ok := args.(Expression); ok {
+			return &listExpr{elements: []Expression{e}}, nil
+		}
+		return &listExpr{elements: nil}, nil
+	})
+	MustRegister("@dict", func(args any) (Expression, error) {
+		if m, ok := args.(map[string]Expression); ok {
+			return &dictExpr{entries: m}, nil
+		}
+		if e, ok := args.(Expression); ok {
+			// Single expression that should evaluate to a map.
+			return &dictExpr{entries: map[string]Expression{"": e}}, nil
+		}
+		return &dictExpr{entries: nil}, nil
+	})
 }

@@ -124,7 +124,7 @@ func (o *Select) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 		if o.weightFn != nil && !o.weightFn(weight) {
 			return true
 		}
-		val, err := o.predicate.Evaluate(elem)
+		val, err := o.predicate.Evaluate(expression.NewContext(elem))
 		if err != nil {
 			evalErr = err
 			return false
@@ -182,7 +182,7 @@ func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	var evalErr error
 
 	inputs[0].Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-		val, err := o.projection.Evaluate(elem)
+		val, err := o.projection.Evaluate(expression.NewContext(elem))
 		if err != nil {
 			evalErr = err
 			return false

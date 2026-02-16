@@ -35,3 +35,30 @@ func (d *Database) GetTable(name string) (*Table, error) {
 	}
 	return table, nil
 }
+
+// Insert inserts a row into a table.
+func (d *Database) Insert(table string, data []any) error {
+	t, err := d.GetTable(table)
+	if err != nil {
+		return err
+	}
+	return t.Insert(data)
+}
+
+// Delete removes a row by primary key from a table.
+func (d *Database) Delete(table string, pk string) (bool, error) {
+	t, err := d.GetTable(table)
+	if err != nil {
+		return false, err
+	}
+	return t.Delete(pk), nil
+}
+
+// Update updates a row by primary key using the updater callback.
+func (d *Database) Update(table string, pk string, fn func(row *Row) error) (*Row, error) {
+	t, err := d.GetTable(table)
+	if err != nil {
+		return nil, err
+	}
+	return t.Update(pk, fn)
+}

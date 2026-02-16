@@ -6,7 +6,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/dbsp/circuit"
 	"github.com/l7mp/dbsp/dbsp/operator"
 	"github.com/l7mp/dbsp/expression"
@@ -23,7 +22,7 @@ var _ = Describe("Incrementalize", func() {
 			// in -> select -> out.
 			c := circuit.New("linear-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("sel", operator.NewSelect("σ", expression.Func(func(e datamodel.Document) (any, error) {
+			c.AddNode(circuit.Op("sel", operator.NewSelect("σ", expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))))
 			c.AddNode(circuit.Output("out"))
@@ -191,7 +190,7 @@ var _ = Describe("Incrementalize", func() {
 
 	Describe("Complex circuits", func() {
 		It("incrementalizes Join (bilinear + linear composition)", func() {
-			predicate := expression.Func(func(e datamodel.Document) (any, error) {
+			predicate := expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			})
 			c := circuit.Join("join-test", predicate)

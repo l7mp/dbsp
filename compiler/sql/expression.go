@@ -8,189 +8,146 @@ import (
 	"github.com/l7mp/dbsp/expression"
 	"github.com/l7mp/dbsp/expression/dbsp"
 	"github.com/xwb1989/sqlparser"
+	"github.com/xwb1989/sqlparser/dependency/querypb"
 )
 
 // CompileExpression compiles a SQL expression AST into a DBSP expression.
 func CompileExpression(expr sqlparser.Expr) (expression.Expression, error) {
-	root, err := compileExpr(expr, nil)
-	if err != nil {
-		return nil, err
-	}
-	return dbsp.NewExpression(root), nil
+	return compileExpr(expr, nil)
 }
 
-// CompileExpressionWithAliases compiles a SQL expression using qualifier aliases.
-func CompileExpressionWithAliases(expr sqlparser.Expr, aliases map[string]string) (expression.Expression, error) {
-	root, err := compileExpr(expr, aliases)
-	if err != nil {
-		return nil, err
-	}
-	return dbsp.NewExpression(root), nil
+// CompilePredicate compiles a SQL predicate using SQL NULL semantics.
+func CompilePredicate(expr sqlparser.Expr, bindVars map[string]*querypb.BindVariable) (expression.Expression, error) {
+	return compilePredicate(expr, bindVars)
 }
 
-// CompilePredicateWithAliases compiles a SQL predicate using SQL NULL semantics.
-func CompilePredicateWithAliases(expr sqlparser.Expr, aliases map[string]string) (expression.Expression, error) {
-	root, err := compilePredicate(expr, aliases)
-	if err != nil {
-		return nil, err
-	}
-	return dbsp.NewExpression(root), nil
-}
-
-func compilePredicate(expr sqlparser.Expr, aliases map[string]string) (dbsp.Expr, error) {
+func compilePredicate(expr sqlparser.Expr, bindVars map[string]*querypb.BindVariable) (dbsp.Expression, error) {
 	switch e := expr.(type) {
 	case *sqlparser.AndExpr:
-		left, err := compilePredicate(e.Left, aliases)
+		left, err := compilePredicate(e.Left, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		right, err := compilePredicate(e.Right, aliases)
+		right, err := compilePredicate(e.Right, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		leftIsNull := dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: left})
-		rightIsNull := dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: right})
-		leftIsFalse := dbsp.NewOpExpr(&dbsp.EqOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{left, boolLiteral(false)}})
-		rightIsFalse := dbsp.NewOpExpr(&dbsp.EqOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{right, boolLiteral(false)}})
-		falseExpr := boolLiteral(false)
-		unknownExpr := dbsp.NewLiteralExpr(&dbsp.NilOp{}, nil)
+		leftIsNull := dbsp.NewIsNull(left)
+		rightIsNull := dbsp.NewIsNull(right)
+		leftIsFalse := dbsp.NewEq(left, dbsp.NewBool(false))
+		rightIsFalse := dbsp.NewEq(right, dbsp.NewBool(false))
+		falseExpr := dbsp.NewBool(false)
+		unknownExpr := dbsp.NewNil()
 
-		falseCase := dbsp.NewOpExpr(&dbsp.OrOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{leftIsFalse, rightIsFalse}})
-		unknownCase := dbsp.NewOpExpr(&dbsp.OrOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{leftIsNull, rightIsNull}})
-		trueCase := dbsp.NewOpExpr(&dbsp.AndOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{left, right}})
+		falseCase := dbsp.NewOr(leftIsFalse, rightIsFalse)
+		unknownCase := dbsp.NewOr(leftIsNull, rightIsNull)
+		trueCase := dbsp.NewAnd(left, right)
 
-		return dbsp.NewOpExpr(&dbsp.CondOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{
+		return dbsp.NewCond(
 			falseCase,
 			falseExpr,
-			dbsp.NewOpExpr(&dbsp.CondOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{
-				unknownCase,
-				unknownExpr,
-				trueCase,
-			}}),
-		}}), nil
+			dbsp.NewCond(unknownCase, unknownExpr, trueCase),
+		), nil
 	case *sqlparser.OrExpr:
-		left, err := compilePredicate(e.Left, aliases)
+		left, err := compilePredicate(e.Left, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		right, err := compilePredicate(e.Right, aliases)
+		right, err := compilePredicate(e.Right, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		leftIsNull := dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: left})
-		rightIsNull := dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: right})
-		leftIsTrue := dbsp.NewOpExpr(&dbsp.EqOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{left, boolLiteral(true)}})
-		rightIsTrue := dbsp.NewOpExpr(&dbsp.EqOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{right, boolLiteral(true)}})
-		trueExpr := boolLiteral(true)
-		unknownExpr := dbsp.NewLiteralExpr(&dbsp.NilOp{}, nil)
+		leftIsNull := dbsp.NewIsNull(left)
+		rightIsNull := dbsp.NewIsNull(right)
+		leftIsTrue := dbsp.NewEq(left, dbsp.NewBool(true))
+		rightIsTrue := dbsp.NewEq(right, dbsp.NewBool(true))
+		trueExpr := dbsp.NewBool(true)
+		unknownExpr := dbsp.NewNil()
 
-		trueCase := dbsp.NewOpExpr(&dbsp.OrOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{leftIsTrue, rightIsTrue}})
-		unknownCase := dbsp.NewOpExpr(&dbsp.OrOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{leftIsNull, rightIsNull}})
-		falseCase := dbsp.NewOpExpr(&dbsp.AndOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{left, right}})
+		trueCase := dbsp.NewOr(leftIsTrue, rightIsTrue)
+		unknownCase := dbsp.NewOr(leftIsNull, rightIsNull)
+		falseCase := dbsp.NewAnd(left, right)
 
-		return dbsp.NewOpExpr(&dbsp.CondOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{
+		return dbsp.NewCond(
 			trueCase,
 			trueExpr,
-			dbsp.NewOpExpr(&dbsp.CondOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{
-				unknownCase,
-				unknownExpr,
-				falseCase,
-			}}),
-		}}), nil
+			dbsp.NewCond(unknownCase, unknownExpr, falseCase),
+		), nil
 	case *sqlparser.NotExpr:
-		inner, err := compilePredicate(e.Expr, aliases)
+		inner, err := compilePredicate(e.Expr, bindVars)
 		if err != nil {
 			return nil, err
 		}
 		return sqlNot(inner), nil
 	case *sqlparser.ComparisonExpr:
-		left, err := compileExpr(e.Left, aliases)
+		left, err := compileExpr(e.Left, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		right, err := compileExpr(e.Right, aliases)
+		right, err := compileExpr(e.Right, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		op, err := comparisonOp(e.Operator)
+		cmp, err := comparisonExpr(e.Operator, left, right)
 		if err != nil {
 			return nil, err
 		}
-		cmp := dbsp.NewOpExpr(op, dbsp.ListArgs{Elements: []dbsp.Expr{left, right}})
 		return compareWithNull(left, right, cmp), nil
 	case *sqlparser.IsExpr:
-		inner, err := compileExpr(e.Expr, aliases)
+		inner, err := compileExpr(e.Expr, bindVars)
 		if err != nil {
 			return nil, err
 		}
 		switch strings.ToLower(e.Operator) {
 		case "is null":
-			return dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: inner}), nil
+			return dbsp.NewIsNull(inner), nil
 		case "is not null":
-			isNull := dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: inner})
-			return dbsp.NewOpExpr(&dbsp.NotOp{}, dbsp.UnaryArgs{Operand: isNull}), nil
+			return dbsp.NewNot(dbsp.NewIsNull(inner)), nil
 		default:
 			return nil, UnimplementedError{Feature: fmt.Sprintf("is expression %q", e.Operator)}
 		}
 	case *sqlparser.ParenExpr:
-		return compilePredicate(e.Expr, aliases)
+		return compilePredicate(e.Expr, bindVars)
 	default:
-		return compileExpr(expr, aliases)
+		return compileExpr(expr, bindVars)
 	}
 }
 
-func compareWithNull(left, right, cmp dbsp.Expr) dbsp.Expr {
-	leftIsNull := dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: left})
-	rightIsNull := dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: right})
-	unknown := dbsp.NewLiteralExpr(&dbsp.NilOp{}, nil)
-	checkNull := dbsp.NewOpExpr(&dbsp.OrOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{leftIsNull, rightIsNull}})
-	return dbsp.NewOpExpr(&dbsp.CondOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{
-		checkNull,
-		unknown,
-		cmp,
-	}})
+func compareWithNull(left, right, cmp dbsp.Expression) dbsp.Expression {
+	leftIsNull := dbsp.NewIsNull(left)
+	rightIsNull := dbsp.NewIsNull(right)
+	checkNull := dbsp.NewOr(leftIsNull, rightIsNull)
+	return dbsp.NewCond(checkNull, dbsp.NewNil(), cmp)
 }
 
-func sqlNot(expr dbsp.Expr) dbsp.Expr {
-	isNull := dbsp.NewOpExpr(&dbsp.IsNullOp{}, dbsp.UnaryArgs{Operand: expr})
-	negated := dbsp.NewOpExpr(&dbsp.NotOp{}, dbsp.UnaryArgs{Operand: expr})
-	return dbsp.NewOpExpr(&dbsp.CondOp{}, dbsp.ListArgs{Elements: []dbsp.Expr{
-		isNull,
-		dbsp.NewLiteralExpr(&dbsp.NilOp{}, nil),
-		negated,
-	}})
+func sqlNot(expr dbsp.Expression) dbsp.Expression {
+	isNull := dbsp.NewIsNull(expr)
+	negated := dbsp.NewNot(expr)
+	return dbsp.NewCond(isNull, dbsp.NewNil(), negated)
 }
 
-func boolLiteral(value bool) dbsp.Expr {
-	return dbsp.NewLiteralExpr(&dbsp.BoolOp{}, value)
-}
-
-func compileExpr(expr sqlparser.Expr, aliases map[string]string) (dbsp.Expr, error) {
+func compileExpr(expr sqlparser.Expr, bindVars map[string]*querypb.BindVariable) (dbsp.Expression, error) {
 	switch e := expr.(type) {
 	case *sqlparser.AndExpr:
-		return compilePredicate(e, aliases)
+		return compilePredicate(e, bindVars)
 	case *sqlparser.OrExpr:
-		return compilePredicate(e, aliases)
+		return compilePredicate(e, bindVars)
 	case *sqlparser.NotExpr:
-		return compilePredicate(e, aliases)
+		return compilePredicate(e, bindVars)
 	case *sqlparser.ComparisonExpr:
-		return compilePredicate(e, aliases)
+		return compilePredicate(e, bindVars)
 	case *sqlparser.BinaryExpr:
-		left, err := compileExpr(e.Left, aliases)
+		left, err := compileExpr(e.Left, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		right, err := compileExpr(e.Right, aliases)
+		right, err := compileExpr(e.Right, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		op, err := binaryOp(e.Operator)
-		if err != nil {
-			return nil, err
-		}
-		return dbsp.NewOpExpr(op, dbsp.ListArgs{Elements: []dbsp.Expr{left, right}}), nil
+		return binaryExpr(e.Operator, left, right)
 	case *sqlparser.UnaryExpr:
-		inner, err := compileExpr(e.Expr, aliases)
+		inner, err := compileExpr(e.Expr, bindVars)
 		if err != nil {
 			return nil, err
 		}
@@ -198,92 +155,141 @@ func compileExpr(expr sqlparser.Expr, aliases map[string]string) (dbsp.Expr, err
 		case sqlparser.PlusStr:
 			return inner, nil
 		case sqlparser.MinusStr:
-			return dbsp.NewOpExpr(&dbsp.NegOp{}, dbsp.UnaryArgs{Operand: inner}), nil
+			return dbsp.NewNeg(inner), nil
 		default:
 			return nil, UnimplementedError{Feature: fmt.Sprintf("unary operator %q", e.Operator)}
 		}
 	case *sqlparser.IsExpr:
-		return compilePredicate(e, aliases)
+		return compilePredicate(e, bindVars)
 	case *sqlparser.SQLVal:
+		if e.Type == sqlparser.ValArg {
+			name := strings.TrimPrefix(string(e.Val), ":")
+			return compileBindVar(name, bindVars)
+		}
 		return compileSQLVal(e)
 	case *sqlparser.NullVal:
-		return dbsp.NewLiteralExpr(&dbsp.NilOp{}, nil), nil
+		return dbsp.NewNil(), nil
 	case sqlparser.BoolVal:
-		return dbsp.NewLiteralExpr(&dbsp.BoolOp{}, bool(e)), nil
+		return dbsp.NewBool(bool(e)), nil
+	case *sqlparser.ValTuple:
+		return nil, UnimplementedError{Feature: "value tuple"}
 	case *sqlparser.ColName:
 		name := e.Name.String()
 		if qualifier := e.Qualifier.Name.String(); qualifier != "" {
-			if aliases != nil {
-				if actual, ok := aliases[qualifier]; ok {
-					qualifier = actual
-				}
-			}
 			name = qualifier + "." + name
 		}
-		return dbsp.NewLiteralExpr(&dbsp.GetOp{}, name), nil
-	case sqlparser.ValTuple:
-		return nil, UnimplementedError{Feature: "value tuple"}
+		return dbsp.NewGet(name), nil
 	case *sqlparser.ParenExpr:
-		return compileExpr(e.Expr, aliases)
+		return compileExpr(e.Expr, bindVars)
 	default:
 		return nil, UnimplementedError{Feature: fmt.Sprintf("expression %T", expr)}
 	}
 }
 
-func compileSQLVal(val *sqlparser.SQLVal) (dbsp.Expr, error) {
+func compileBindVar(name string, bindVars map[string]*querypb.BindVariable) (dbsp.Expression, error) {
+	if name == "" {
+		return nil, UnimplementedError{Feature: "empty bind var"}
+	}
+	if bindVars == nil {
+		return nil, UnimplementedError{Feature: fmt.Sprintf("bind var %q", name)}
+	}
+	bv, ok := bindVars[name]
+	if !ok {
+		return nil, UnimplementedError{Feature: fmt.Sprintf("bind var %q", name)}
+	}
+	return compileBindVariable(name, bv)
+}
+
+func compileBindVariable(name string, bv *querypb.BindVariable) (dbsp.Expression, error) {
+	switch bv.Type {
+	case querypb.Type_NULL_TYPE:
+		return dbsp.NewNil(), nil
+	case querypb.Type_INT64, querypb.Type_INT32, querypb.Type_INT16, querypb.Type_INT24, querypb.Type_INT8:
+		val, err := strconv.ParseInt(string(bv.Value), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("bind var %s int: %w", name, err)
+		}
+		return dbsp.NewInt(val), nil
+	case querypb.Type_UINT64, querypb.Type_UINT32, querypb.Type_UINT16, querypb.Type_UINT24, querypb.Type_UINT8:
+		val, err := strconv.ParseUint(string(bv.Value), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("bind var %s uint: %w", name, err)
+		}
+		return dbsp.NewInt(int64(val)), nil
+	case querypb.Type_FLOAT64, querypb.Type_FLOAT32, querypb.Type_DECIMAL:
+		val, err := strconv.ParseFloat(string(bv.Value), 64)
+		if err != nil {
+			return nil, fmt.Errorf("bind var %s float: %w", name, err)
+		}
+		return dbsp.NewFloat(val), nil
+	case querypb.Type_TEXT, querypb.Type_VARCHAR, querypb.Type_CHAR:
+		return dbsp.NewString(string(bv.Value)), nil
+	default:
+		return nil, UnimplementedError{Feature: fmt.Sprintf("bind var %s type %s", name, bindVarTypeName(bv.Type))}
+	}
+}
+
+func bindVarTypeName(t querypb.Type) string {
+	if name, ok := querypb.Type_name[int32(t)]; ok {
+		return name
+	}
+	return fmt.Sprintf("%d", t)
+}
+
+func compileSQLVal(val *sqlparser.SQLVal) (dbsp.Expression, error) {
 	switch val.Type {
 	case sqlparser.IntVal:
 		i, err := strconv.ParseInt(string(val.Val), 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("int literal: %w", err)
 		}
-		return dbsp.NewLiteralExpr(&dbsp.IntOp{}, i), nil
+		return dbsp.NewInt(i), nil
 	case sqlparser.FloatVal:
 		f, err := strconv.ParseFloat(string(val.Val), 64)
 		if err != nil {
 			return nil, fmt.Errorf("float literal: %w", err)
 		}
-		return dbsp.NewLiteralExpr(&dbsp.FloatOp{}, f), nil
+		return dbsp.NewFloat(f), nil
 	case sqlparser.StrVal, sqlparser.HexVal:
-		return dbsp.NewLiteralExpr(&dbsp.StringOp{}, string(val.Val)), nil
+		return dbsp.NewString(string(val.Val)), nil
 	case sqlparser.BitVal:
 		return nil, UnimplementedError{Feature: "bit literal"}
 	default:
-		return nil, UnimplementedError{Feature: fmt.Sprintf("literal type %v", val.Type)}
+		return nil, UnimplementedError{Feature: fmt.Sprintf("literal type %s", literalTypeName(val.Type))}
 	}
 }
 
-func comparisonOp(op string) (dbsp.Operator, error) {
+func comparisonExpr(op string, left, right dbsp.Expression) (dbsp.Expression, error) {
 	switch op {
 	case sqlparser.EqualStr:
-		return &dbsp.EqOp{}, nil
+		return dbsp.NewEq(left, right), nil
 	case sqlparser.NotEqualStr:
-		return &dbsp.NeqOp{}, nil
+		return dbsp.NewNeq(left, right), nil
 	case sqlparser.GreaterThanStr:
-		return &dbsp.GtOp{}, nil
+		return dbsp.NewGt(left, right), nil
 	case sqlparser.GreaterEqualStr:
-		return &dbsp.GteOp{}, nil
+		return dbsp.NewGte(left, right), nil
 	case sqlparser.LessThanStr:
-		return &dbsp.LtOp{}, nil
+		return dbsp.NewLt(left, right), nil
 	case sqlparser.LessEqualStr:
-		return &dbsp.LteOp{}, nil
+		return dbsp.NewLte(left, right), nil
 	default:
 		return nil, UnimplementedError{Feature: fmt.Sprintf("comparison operator %q", op)}
 	}
 }
 
-func binaryOp(op string) (dbsp.Operator, error) {
+func binaryExpr(op string, left, right dbsp.Expression) (dbsp.Expression, error) {
 	switch op {
 	case sqlparser.PlusStr:
-		return &dbsp.AddOp{}, nil
+		return dbsp.NewAdd(left, right), nil
 	case sqlparser.MinusStr:
-		return &dbsp.SubOp{}, nil
+		return dbsp.NewSub(left, right), nil
 	case sqlparser.MultStr:
-		return &dbsp.MulOp{}, nil
+		return dbsp.NewMul(left, right), nil
 	case sqlparser.DivStr:
-		return &dbsp.DivOp{}, nil
+		return dbsp.NewDiv(left, right), nil
 	case sqlparser.ModStr:
-		return &dbsp.ModOp{}, nil
+		return dbsp.NewMod(left, right), nil
 	default:
 		return nil, UnimplementedError{Feature: fmt.Sprintf("binary operator %q", op)}
 	}

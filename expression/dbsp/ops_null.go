@@ -1,42 +1,33 @@
 package dbsp
 
-import "fmt"
+import (
+	"fmt"
 
-// IsNullOp implements @isnull.
-type IsNullOp struct{}
+	"github.com/l7mp/dbsp/expression"
+)
 
-func (o *IsNullOp) Name() string { return "@isnull" }
+// isNullExpr implements @isnull.
+type isNullExpr struct{ operand Expression }
 
-func (o *IsNullOp) Evaluate(ctx *Context, args Args) (any, error) {
-	var value any
-
-	switch a := args.(type) {
-	case LiteralArgs:
-		value = a.Value
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	case ListArgs:
-		if len(a.Elements) != 1 {
-			return nil, fmt.Errorf("@isnull: expected 1 argument, got %d", len(a.Elements))
-		}
-		v, err := a.Elements[0].Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	default:
-		return nil, fmt.Errorf("@isnull: unexpected args type %T", args)
+func (e *isNullExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	result := value == nil
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@isnull", "result", result)
 	return result, nil
 }
 
+func (e *isNullExpr) String() string { return fmt.Sprintf("@isnull(%v)", e.operand) }
+
 func init() {
-	MustRegister("@isnull", func() Operator { return &IsNullOp{} })
+	MustRegister("@isnull", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@isnull: %w", err)
+		}
+		return &isNullExpr{operand: operand}, nil
+	})
 }

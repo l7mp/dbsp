@@ -1,18 +1,24 @@
 package dbsp
 
-import "time"
+import (
+	"time"
 
-// NowOp implements @now - returns the current UTC timestamp.
-type NowOp struct{}
+	"github.com/l7mp/dbsp/expression"
+)
 
-func (o *NowOp) Name() string { return "@now" }
+// nowExpr implements @now - returns the current UTC timestamp.
+type nowExpr struct{}
 
-func (o *NowOp) Evaluate(ctx *Context, args Args) (any, error) {
+func (e *nowExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	result := time.Now().UTC().Format(time.RFC3339)
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@now", "result", result)
 	return result, nil
 }
 
+func (e *nowExpr) String() string { return "@now" }
+
 func init() {
-	MustRegister("@now", func() Operator { return &NowOp{} })
+	MustRegister("@now", func(args any) (Expression, error) {
+		return &nowExpr{}, nil
+	})
 }

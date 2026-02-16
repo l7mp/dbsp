@@ -1,24 +1,21 @@
 package dbsp
 
-import "fmt"
+import (
+	"fmt"
 
-// AndOp implements @and with short-circuit evaluation.
-type AndOp struct{}
+	"github.com/l7mp/dbsp/expression"
+)
 
-func (o *AndOp) Name() string { return "@and" }
+// andExpr implements @and with short-circuit evaluation.
+type andExpr struct{ args []Expression }
 
-func (o *AndOp) Evaluate(ctx *Context, args Args) (any, error) {
-	elements, err := o.getElements(args)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(elements) == 0 {
+func (e *andExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if len(e.args) == 0 {
 		return true, nil // Empty AND is true.
 	}
 
-	for i, elem := range elements {
-		v, err := elem.Eval(ctx)
+	for i, elem := range e.args {
+		v, err := elem.Evaluate(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("@and[%d]: %w", i, err)
 		}
@@ -29,43 +26,27 @@ func (o *AndOp) Evaluate(ctx *Context, args Args) (any, error) {
 		}
 
 		if !b {
-			ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", false, "short-circuit", i)
+			ctx.Logger().V(8).Info("eval", "op", "@and", "result", false, "short-circuit", i)
 			return false, nil // Short-circuit.
 		}
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", true)
+	ctx.Logger().V(8).Info("eval", "op", "@and", "result", true)
 	return true, nil
 }
 
-func (o *AndOp) getElements(args Args) ([]Expr, error) {
-	switch a := args.(type) {
-	case ListArgs:
-		return a.Elements, nil
-	case UnaryArgs:
-		return []Expr{a.Operand}, nil
-	default:
-		return nil, fmt.Errorf("@and: expected ListArgs or UnaryArgs, got %T", args)
-	}
-}
+func (e *andExpr) String() string { return fmt.Sprintf("@and(%v)", e.args) }
 
-// OrOp implements @or with short-circuit evaluation.
-type OrOp struct{}
+// orExpr implements @or with short-circuit evaluation.
+type orExpr struct{ args []Expression }
 
-func (o *OrOp) Name() string { return "@or" }
-
-func (o *OrOp) Evaluate(ctx *Context, args Args) (any, error) {
-	elements, err := o.getElements(args)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(elements) == 0 {
+func (e *orExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if len(e.args) == 0 {
 		return false, nil // Empty OR is false.
 	}
 
-	for i, elem := range elements {
-		v, err := elem.Eval(ctx)
+	for i, elem := range e.args {
+		v, err := elem.Evaluate(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("@or[%d]: %w", i, err)
 		}
@@ -76,54 +57,24 @@ func (o *OrOp) Evaluate(ctx *Context, args Args) (any, error) {
 		}
 
 		if b {
-			ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", true, "short-circuit", i)
+			ctx.Logger().V(8).Info("eval", "op", "@or", "result", true, "short-circuit", i)
 			return true, nil // Short-circuit.
 		}
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", false)
+	ctx.Logger().V(8).Info("eval", "op", "@or", "result", false)
 	return false, nil
 }
 
-func (o *OrOp) getElements(args Args) ([]Expr, error) {
-	switch a := args.(type) {
-	case ListArgs:
-		return a.Elements, nil
-	case UnaryArgs:
-		return []Expr{a.Operand}, nil
-	default:
-		return nil, fmt.Errorf("@or: expected ListArgs or UnaryArgs, got %T", args)
-	}
-}
+func (e *orExpr) String() string { return fmt.Sprintf("@or(%v)", e.args) }
 
-// NotOp implements @not.
-type NotOp struct{}
+// notExpr implements @not.
+type notExpr struct{ operand Expression }
 
-func (o *NotOp) Name() string { return "@not" }
-
-func (o *NotOp) Evaluate(ctx *Context, args Args) (any, error) {
-	var value any
-
-	switch a := args.(type) {
-	case LiteralArgs:
-		value = a.Value
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	case ListArgs:
-		if len(a.Elements) != 1 {
-			return nil, fmt.Errorf("@not: expected 1 argument, got %d", len(a.Elements))
-		}
-		v, err := a.Elements[0].Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	default:
-		return nil, fmt.Errorf("@not: unexpected args type %T", args)
+func (e *notExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	b, err := AsBool(value)
@@ -132,12 +83,32 @@ func (o *NotOp) Evaluate(ctx *Context, args Args) (any, error) {
 	}
 
 	result := !b
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "result", result)
+	ctx.Logger().V(8).Info("eval", "op", "@not", "result", result)
 	return result, nil
 }
 
+func (e *notExpr) String() string { return fmt.Sprintf("@not(%v)", e.operand) }
+
 func init() {
-	MustRegister("@and", func() Operator { return &AndOp{} })
-	MustRegister("@or", func() Operator { return &OrOp{} })
-	MustRegister("@not", func() Operator { return &NotOp{} })
+	MustRegister("@and", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@and: %w", err)
+		}
+		return &andExpr{args: list}, nil
+	})
+	MustRegister("@or", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@or: %w", err)
+		}
+		return &orExpr{args: list}, nil
+	})
+	MustRegister("@not", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@not: %w", err)
+		}
+		return &notExpr{operand: operand}, nil
+	})
 }

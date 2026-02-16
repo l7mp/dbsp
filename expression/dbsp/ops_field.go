@@ -5,221 +5,180 @@ import (
 	"fmt"
 
 	"github.com/l7mp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/expression"
 )
 
-// GetOp implements @get - retrieves a field from the document.
-// Also accessible via $.field shorthand syntax.
-type GetOp struct{}
+// getExpr implements @get - retrieves a field from the document.
+type getExpr struct{ field Expression }
 
-func (o *GetOp) Name() string { return "@get" }
-
-func (o *GetOp) Evaluate(ctx *Context, args Args) (any, error) {
-	fieldPath, err := getFieldPath(ctx, args, o.Name())
+func (e *getExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	fieldPath, err := evaluateFieldPath(ctx, e.field, "@get")
 	if err != nil {
 		return nil, err
 	}
 
 	doc := ctx.Document()
 	if doc == nil {
-		return nil, fmt.Errorf("%s: no document in context", o.Name())
+		return nil, fmt.Errorf("@get: no document in context")
 	}
 
 	value, err := doc.GetField(fieldPath)
 	if err != nil {
-		// Return the error (including ErrFieldNotFound).
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "error", err)
+		ctx.Logger().V(8).Info("eval", "op", "@get", "field", fieldPath, "error", err)
 		return nil, err
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "result", value)
+	ctx.Logger().V(8).Info("eval", "op", "@get", "field", fieldPath, "result", value)
 	return value, nil
 }
 
-// SetOp implements @set - sets a field on the document (mutates in-place).
-// Arguments: [fieldPath, value]
-type SetOp struct{}
+func (e *getExpr) String() string { return fmt.Sprintf("@get(%v)", e.field) }
 
-func (o *SetOp) Name() string { return "@set" }
+// setExpr implements @set - sets a field on the document (mutates in-place).
+type setExpr struct{ field, value Expression }
 
-func (o *SetOp) Evaluate(ctx *Context, args Args) (any, error) {
-	elements, err := getBinaryElements(args, o.Name())
+func (e *setExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	fieldPathVal, err := e.field.Evaluate(ctx)
 	if err != nil {
-		return nil, err
-	}
-
-	// Evaluate field path.
-	fieldPathVal, err := elements[0].Eval(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%s: field path: %w", o.Name(), err)
+		return nil, fmt.Errorf("@set: field path: %w", err)
 	}
 	fieldPath, err := AsString(fieldPathVal)
 	if err != nil {
-		return nil, fmt.Errorf("%s: field path must be string: %w", o.Name(), err)
+		return nil, fmt.Errorf("@set: field path must be string: %w", err)
 	}
 
-	// Evaluate value.
-	value, err := elements[1].Eval(ctx)
+	value, err := e.value.Evaluate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s: value: %w", o.Name(), err)
+		return nil, fmt.Errorf("@set: value: %w", err)
 	}
 
 	doc := ctx.Document()
 	if doc == nil {
-		return nil, fmt.Errorf("%s: no document in context", o.Name())
+		return nil, fmt.Errorf("@set: no document in context")
 	}
 
 	if err := doc.SetField(fieldPath, value); err != nil {
-		return nil, fmt.Errorf("%s: %w", o.Name(), err)
+		return nil, fmt.Errorf("@set: %w", err)
 	}
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "value", value)
+	ctx.Logger().V(8).Info("eval", "op", "@set", "field", fieldPath, "value", value)
 	return value, nil
 }
 
-// GetSubOp implements @getsub - retrieves a field from the subject.
-// Also accessible via $$.field shorthand syntax.
-type GetSubOp struct{}
+func (e *setExpr) String() string { return fmt.Sprintf("@set(%v, %v)", e.field, e.value) }
 
-func (o *GetSubOp) Name() string { return "@getsub" }
+// getSubExpr implements @getsub - retrieves a field from the subject.
+type getSubExpr struct{ field Expression }
 
-func (o *GetSubOp) Evaluate(ctx *Context, args Args) (any, error) {
-	fieldPath, err := getFieldPath(ctx, args, o.Name())
+func (e *getSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	fieldPath, err := evaluateFieldPath(ctx, e.field, "@getsub")
 	if err != nil {
 		return nil, err
 	}
 
 	subject := ctx.Subject()
 	if subject == nil {
-		return nil, fmt.Errorf("%s: no subject in context", o.Name())
+		return nil, fmt.Errorf("@getsub: no subject in context")
 	}
 
-	// Try to get field from subject.
-	// If subject is a Document, use GetField.
 	if doc, ok := subject.(datamodel.Document); ok {
 		value, err := doc.GetField(fieldPath)
 		if err != nil {
-			ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "error", err)
+			ctx.Logger().V(8).Info("eval", "op", "@getsub", "field", fieldPath, "error", err)
 			return nil, err
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "result", value)
+		ctx.Logger().V(8).Info("eval", "op", "@getsub", "field", fieldPath, "result", value)
 		return value, nil
 	}
 
-	// If subject is a map, get the value.
 	if m, ok := subject.(map[string]any); ok {
 		value, exists := m[fieldPath]
 		if !exists {
-			ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "error", "field not found")
+			ctx.Logger().V(8).Info("eval", "op", "@getsub", "field", fieldPath, "error", "field not found")
 			return nil, datamodel.ErrFieldNotFound
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "result", value)
+		ctx.Logger().V(8).Info("eval", "op", "@getsub", "field", fieldPath, "result", value)
 		return value, nil
 	}
 
-	return nil, fmt.Errorf("%s: subject is not a document or map: %T", o.Name(), subject)
+	return nil, fmt.Errorf("@getsub: subject is not a document or map: %T", subject)
 }
 
-// SetSubOp implements @setsub - sets a field on the subject (mutates in-place).
-// Arguments: [fieldPath, value]
-type SetSubOp struct{}
+func (e *getSubExpr) String() string { return fmt.Sprintf("@getsub(%v)", e.field) }
 
-func (o *SetSubOp) Name() string { return "@setsub" }
+// setSubExpr implements @setsub - sets a field on the subject (mutates in-place).
+type setSubExpr struct{ field, value Expression }
 
-func (o *SetSubOp) Evaluate(ctx *Context, args Args) (any, error) {
-	elements, err := getBinaryElements(args, o.Name())
+func (e *setSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	fieldPathVal, err := e.field.Evaluate(ctx)
 	if err != nil {
-		return nil, err
-	}
-
-	// Evaluate field path.
-	fieldPathVal, err := elements[0].Eval(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%s: field path: %w", o.Name(), err)
+		return nil, fmt.Errorf("@setsub: field path: %w", err)
 	}
 	fieldPath, err := AsString(fieldPathVal)
 	if err != nil {
-		return nil, fmt.Errorf("%s: field path must be string: %w", o.Name(), err)
+		return nil, fmt.Errorf("@setsub: field path must be string: %w", err)
 	}
 
-	// Evaluate value.
-	value, err := elements[1].Eval(ctx)
+	value, err := e.value.Evaluate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s: value: %w", o.Name(), err)
+		return nil, fmt.Errorf("@setsub: value: %w", err)
 	}
 
 	subject := ctx.Subject()
 	if subject == nil {
-		return nil, fmt.Errorf("%s: no subject in context", o.Name())
+		return nil, fmt.Errorf("@setsub: no subject in context")
 	}
 
-	// Try to set field on subject.
 	if doc, ok := subject.(datamodel.Document); ok {
 		if err := doc.SetField(fieldPath, value); err != nil {
-			return nil, fmt.Errorf("%s: %w", o.Name(), err)
+			return nil, fmt.Errorf("@setsub: %w", err)
 		}
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "value", value)
+		ctx.Logger().V(8).Info("eval", "op", "@setsub", "field", fieldPath, "value", value)
 		return value, nil
 	}
 
-	// If subject is a map, set the value.
 	if m, ok := subject.(map[string]any); ok {
 		m[fieldPath] = value
-		ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "value", value)
+		ctx.Logger().V(8).Info("eval", "op", "@setsub", "field", fieldPath, "value", value)
 		return value, nil
 	}
 
-	return nil, fmt.Errorf("%s: subject is not a document or map: %T", o.Name(), subject)
+	return nil, fmt.Errorf("@setsub: subject is not a document or map: %T", subject)
 }
 
-// ExistsOp implements @exists - checks if a field exists in the document.
-type ExistsOp struct{}
+func (e *setSubExpr) String() string {
+	return fmt.Sprintf("@setsub(%v, %v)", e.field, e.value)
+}
 
-func (o *ExistsOp) Name() string { return "@exists" }
+// existsExpr implements @exists - checks if a field exists in the document.
+type existsExpr struct{ field Expression }
 
-func (o *ExistsOp) Evaluate(ctx *Context, args Args) (any, error) {
-	fieldPath, err := getFieldPath(ctx, args, o.Name())
+func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	fieldPath, err := evaluateFieldPath(ctx, e.field, "@exists")
 	if err != nil {
 		return nil, err
 	}
 
 	doc := ctx.Document()
 	if doc == nil {
-		return nil, fmt.Errorf("%s: no document in context", o.Name())
+		return nil, fmt.Errorf("@exists: no document in context")
 	}
 
 	_, fieldErr := doc.GetField(fieldPath)
 	exists := !errors.Is(fieldErr, datamodel.ErrFieldNotFound)
 
-	ctx.Logger().V(8).Info("eval", "op", o.Name(), "field", fieldPath, "result", exists)
+	ctx.Logger().V(8).Info("eval", "op", "@exists", "field", fieldPath, "result", exists)
 	return exists, nil
 }
 
-// getFieldPath extracts the field path from arguments.
-func getFieldPath(ctx *Context, args Args, opName string) (string, error) {
-	var value any
+func (e *existsExpr) String() string { return fmt.Sprintf("@exists(%v)", e.field) }
 
-	switch a := args.(type) {
-	case LiteralArgs:
-		value = a.Value
-	case UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	case ListArgs:
-		if len(a.Elements) != 1 {
-			return "", fmt.Errorf("%s: expected 1 argument, got %d", opName, len(a.Elements))
-		}
-		v, err := a.Elements[0].Eval(ctx)
-		if err != nil {
-			return "", err
-		}
-		value = v
-	default:
-		return "", fmt.Errorf("%s: unexpected args type %T", opName, args)
+// evaluateFieldPath evaluates a field path from an operand expression.
+func evaluateFieldPath(ctx *expression.EvalContext, field Expression, opName string) (string, error) {
+	value, err := field.Evaluate(ctx)
+	if err != nil {
+		return "", err
 	}
-
 	s, err := AsString(value)
 	if err != nil {
 		return "", fmt.Errorf("%s: field path must be string: %w", opName, err)
@@ -228,9 +187,39 @@ func getFieldPath(ctx *Context, args Args, opName string) (string, error) {
 }
 
 func init() {
-	MustRegister("@get", func() Operator { return &GetOp{} })
-	MustRegister("@set", func() Operator { return &SetOp{} })
-	MustRegister("@getsub", func() Operator { return &GetSubOp{} })
-	MustRegister("@setsub", func() Operator { return &SetSubOp{} })
-	MustRegister("@exists", func() Operator { return &ExistsOp{} })
+	MustRegister("@get", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@get: %w", err)
+		}
+		return &getExpr{field: operand}, nil
+	})
+	MustRegister("@set", func(args any) (Expression, error) {
+		left, right, err := asBinaryExprs(args, "@set")
+		if err != nil {
+			return nil, err
+		}
+		return &setExpr{field: left, value: right}, nil
+	})
+	MustRegister("@getsub", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@getsub: %w", err)
+		}
+		return &getSubExpr{field: operand}, nil
+	})
+	MustRegister("@setsub", func(args any) (Expression, error) {
+		left, right, err := asBinaryExprs(args, "@setsub")
+		if err != nil {
+			return nil, err
+		}
+		return &setSubExpr{field: left, value: right}, nil
+	})
+	MustRegister("@exists", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@exists: %w", err)
+		}
+		return &existsExpr{field: operand}, nil
+	})
 }

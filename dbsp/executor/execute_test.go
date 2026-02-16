@@ -8,7 +8,6 @@ import (
 
 	"go.uber.org/zap/zapcore"
 
-	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/dbsp/circuit"
 	"github.com/l7mp/dbsp/dbsp/operator"
 	"github.com/l7mp/dbsp/dbsp/transform"
@@ -32,8 +31,9 @@ var _ = Describe("Executor", func() {
 			c := circuit.New("simple")
 			c.AddNode(circuit.Input("in"))
 			c.AddNode(circuit.Op("sel", operator.NewSelect("σ",
-				expression.Func(func(e datamodel.Document) (any, error) {
-					return e.(testutils.Record).Value > 5, nil
+				expression.Func(func(ctx *expression.EvalContext) (any, error) {
+					e := ctx.Document().(testutils.Record)
+					return e.Value > 5, nil
 				}))))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "sel", 0))
@@ -275,8 +275,9 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 		It("Select: normal vs incremental", func() {
 			c := circuit.New("select-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("sel", operator.NewSelect("gt5", expression.Func(func(e datamodel.Document) (any, error) {
-				return e.(testutils.Record).Value > 5, nil
+			c.AddNode(circuit.Op("sel", operator.NewSelect("gt5", expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				e := ctx.Document().(testutils.Record)
+				return e.Value > 5, nil
 			}))))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "sel", 0))
@@ -293,8 +294,8 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 		It("Project: normal vs incremental", func() {
 			c := circuit.New("project-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("proj", operator.NewProject("double", expression.Func(func(e datamodel.Document) (any, error) {
-				r := e.(testutils.Record)
+			c.AddNode(circuit.Op("proj", operator.NewProject("double", expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				r := ctx.Document().(testutils.Record)
 				return testutils.Record{ID: r.ID, Value: r.Value * 2}, nil
 			}))))
 			c.AddNode(circuit.Output("out"))

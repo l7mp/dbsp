@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/l7mp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/expression"
 	"github.com/l7mp/dbsp/expression/dbsp"
 )
 
@@ -61,12 +62,16 @@ func (d *TestDoc) SetField(key string, value any) error {
 	return nil
 }
 
+func (d *TestDoc) New() datamodel.Document {
+	return &TestDoc{fields: make(map[string]any)}
+}
+
 var _ = Describe("Literal Operators", func() {
 	It("should evaluate @nil", func() {
 		expr, err := dbsp.Compile([]byte(`{"@nil": null}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(BeNil())
 	})
@@ -75,7 +80,7 @@ var _ = Describe("Literal Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@bool": true}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -84,7 +89,7 @@ var _ = Describe("Literal Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@int": 42}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(42)))
 	})
@@ -93,7 +98,7 @@ var _ = Describe("Literal Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@float": 3.14}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(3.14))
 	})
@@ -102,7 +107,7 @@ var _ = Describe("Literal Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@string": "hello"}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("hello"))
 	})
@@ -111,7 +116,7 @@ var _ = Describe("Literal Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@list": [1, 2, 3]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal([]any{int64(1), int64(2), int64(3)}))
 	})
@@ -120,7 +125,7 @@ var _ = Describe("Literal Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@list": [1, {"@add": [2, 3]}]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal([]any{int64(1), int64(5)}))
 	})
@@ -129,7 +134,7 @@ var _ = Describe("Literal Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@dict": {"x": 1, "y": 2}}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(map[string]any{"x": int64(1), "y": int64(2)}))
 	})
@@ -138,7 +143,7 @@ var _ = Describe("Literal Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@dict": {"sum": {"@add": [1, 2]}}}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(map[string]any{"sum": int64(3)}))
 	})
@@ -149,7 +154,7 @@ var _ = Describe("Boolean Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@and": [true, true, true]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -158,7 +163,7 @@ var _ = Describe("Boolean Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@and": [true, false, true]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(false))
 	})
@@ -167,7 +172,7 @@ var _ = Describe("Boolean Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@or": [false, false, false]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(false))
 	})
@@ -176,7 +181,7 @@ var _ = Describe("Boolean Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@or": [false, true, false]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -185,7 +190,7 @@ var _ = Describe("Boolean Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@not": true}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(false))
 	})
@@ -196,7 +201,7 @@ var _ = Describe("Arithmetic Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@add": [1, 2, 3]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(6)))
 	})
@@ -205,7 +210,7 @@ var _ = Describe("Arithmetic Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@add": [1.5, 2.5]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(4.0))
 	})
@@ -214,7 +219,7 @@ var _ = Describe("Arithmetic Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@add": [1, 2.5]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(3.5))
 	})
@@ -223,7 +228,7 @@ var _ = Describe("Arithmetic Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@sub": [10, 3]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(7)))
 	})
@@ -232,7 +237,7 @@ var _ = Describe("Arithmetic Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@mul": [2, 3, 4]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(24)))
 	})
@@ -241,7 +246,7 @@ var _ = Describe("Arithmetic Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@div": [10, 3]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(3))) // Integer division.
 	})
@@ -251,7 +256,7 @@ var _ = Describe("Arithmetic Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@div": [10.5, 2.5]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(BeNumerically("~", 4.2, 0.01))
 	})
@@ -260,7 +265,7 @@ var _ = Describe("Arithmetic Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@div": [10, 0]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		_, err = expr.Evaluate(nil)
+		_, err = expr.Evaluate(expression.NewContext(nil))
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("division by zero"))
 	})
@@ -271,7 +276,7 @@ var _ = Describe("Comparison Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@eq": [10, 10]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -280,7 +285,7 @@ var _ = Describe("Comparison Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@eq": [10, 20]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(false))
 	})
@@ -289,7 +294,7 @@ var _ = Describe("Comparison Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@gt": [10, 5]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -298,7 +303,7 @@ var _ = Describe("Comparison Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@gte": [10, 10]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -307,7 +312,7 @@ var _ = Describe("Comparison Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@lt": [5, 10]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -316,7 +321,7 @@ var _ = Describe("Comparison Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@lte": [10, 10]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -325,7 +330,7 @@ var _ = Describe("Comparison Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@lt": ["apple", "banana"]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -346,7 +351,7 @@ var _ = Describe("Field Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@get": "name"}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(doc)
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("Alice"))
 	})
@@ -355,7 +360,7 @@ var _ = Describe("Field Operators", func() {
 		expr, err := dbsp.Compile([]byte(`"$.age"`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(doc)
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(30)))
 	})
@@ -364,7 +369,7 @@ var _ = Describe("Field Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@get": "missing"}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		_, err = expr.Evaluate(doc)
+		_, err = expr.Evaluate(expression.NewContext(doc))
 		Expect(err).To(HaveOccurred())
 		Expect(err).To(MatchError(datamodel.ErrFieldNotFound))
 	})
@@ -373,7 +378,7 @@ var _ = Describe("Field Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@exists": "name"}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(doc)
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -382,7 +387,7 @@ var _ = Describe("Field Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@exists": "missing"}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(doc)
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(false))
 	})
@@ -391,7 +396,7 @@ var _ = Describe("Field Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@set": ["newField", 42]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(doc)
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(42)))
 
@@ -406,7 +411,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@sum": [1, 2, 3]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(6)))
 	})
@@ -415,7 +420,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@len": {"@list": [1, 2, 3, 4, 5]}}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(5)))
 	})
@@ -424,7 +429,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@min": [3, 1, 4, 1, 5]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(1)))
 	})
@@ -433,7 +438,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@max": [3, 1, 4, 1, 5]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(5)))
 	})
@@ -442,7 +447,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@in": [2, [1, 2, 3]]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -451,7 +456,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@in": [5, [1, 2, 3]]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(false))
 	})
@@ -460,7 +465,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@range": 5}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal([]any{int64(1), int64(2), int64(3), int64(4), int64(5)}))
 	})
@@ -470,7 +475,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@map": [{"@add": [{"@arg": null}, 10]}, [1, 2, 3]]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal([]any{int64(11), int64(12), int64(13)}))
 	})
@@ -480,7 +485,7 @@ var _ = Describe("List Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@filter": [{"@gt": [{"@arg": null}, 2]}, [1, 2, 3, 4]]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal([]any{int64(3), int64(4)}))
 	})
@@ -491,7 +496,7 @@ var _ = Describe("Conditional Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@cond": [true, "yes", "no"]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("yes"))
 	})
@@ -500,7 +505,7 @@ var _ = Describe("Conditional Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@cond": [false, "yes", "no"]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("no"))
 	})
@@ -509,7 +514,7 @@ var _ = Describe("Conditional Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@definedOr": [null, null, 42]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(42)))
 	})
@@ -520,7 +525,7 @@ var _ = Describe("Utility Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@noop": null}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(BeNil())
 	})
@@ -529,7 +534,7 @@ var _ = Describe("Utility Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@hash": "test"}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(HaveLen(16)) // 8 bytes = 16 hex chars.
 	})
@@ -538,7 +543,7 @@ var _ = Describe("Utility Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@concat": ["hello", " ", "world"]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("hello world"))
 	})
@@ -549,7 +554,7 @@ var _ = Describe("Utility Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@abs": {"@int": -42}}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(42)))
 	})
@@ -558,7 +563,7 @@ var _ = Describe("Utility Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@abs": -3.14}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(BeNumerically("~", 3.14, 0.01))
 	})
@@ -567,7 +572,7 @@ var _ = Describe("Utility Operators", func() {
 		expr, err := dbsp.Compile([]byte(`{"@isnil": null}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -578,7 +583,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@regexp": ["^hello", "hello world"]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -587,7 +592,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@regexp": ["^world", "hello world"]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(false))
 	})
@@ -596,7 +601,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@upper": "hello"}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("HELLO"))
 	})
@@ -605,7 +610,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@lower": "HELLO"}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("hello"))
 	})
@@ -614,7 +619,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@trim": "  hello  "}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("hello"))
 	})
@@ -623,7 +628,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@substring": ["hello world", 7]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("world"))
 	})
@@ -632,7 +637,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@substring": ["hello world", 1, 5]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("hello"))
 	})
@@ -641,7 +646,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@replace": ["hello world", "world", "universe"]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("hello universe"))
 	})
@@ -650,7 +655,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@split": ["a,b,c", ","]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal([]any{"a", "b", "c"}))
 	})
@@ -659,7 +664,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@join": [["a", "b", "c"], "-"]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("a-b-c"))
 	})
@@ -668,7 +673,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@startswith": ["hello world", "hello"]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -677,7 +682,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@endswith": ["hello world", "world"]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -686,7 +691,7 @@ var _ = Describe("String Operators", func() {
 		expr, err := dbsp.CompileString(`{"@contains": ["hello world", "lo wo"]}`)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
 	})
@@ -698,7 +703,7 @@ var _ = Describe("Complex Expressions", func() {
 		expr, err := dbsp.Compile([]byte(`{"@mul": [{"@add": [1, 2]}, {"@add": [3, 4]}]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(21)))
 	})
@@ -707,7 +712,7 @@ var _ = Describe("Complex Expressions", func() {
 		expr, err := dbsp.Compile([]byte(`{"@dict": {"result": {"@add": [1, 2, 3]}, "name": "test"}}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(map[string]any{"result": int64(6), "name": "test"}))
 	})
@@ -721,7 +726,7 @@ var _ = Describe("Complex Expressions", func() {
 		expr, err := dbsp.Compile([]byte(`{"@add": ["$.a", "$.b"]}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(doc)
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(30)))
 	})
@@ -729,21 +734,38 @@ var _ = Describe("Complex Expressions", func() {
 
 var _ = Describe("Registry", func() {
 	It("should allow registering custom operators", func() {
-		registry := dbsp.NewRegistry()
+		registry := dbsp.DefaultRegistry.Clone()
 
-		// Register built-in operators first.
-		registry.MustRegister("@int", func() dbsp.Operator { return &dbsp.IntOp{} })
-		registry.MustRegister("@list", func() dbsp.Operator { return &dbsp.ListOp{} })
-
-		// Register custom operator.
-		registry.MustRegister("@double", func() dbsp.Operator {
-			return &customDoubleOp{}
+		// Register custom operator that doubles its input.
+		registry.MustRegister("@double", func(args any) (dbsp.Expression, error) {
+			operand, ok := args.(dbsp.Expression)
+			if !ok {
+				// Literal value: wrap it.
+				return expression.Func(func(ctx *expression.EvalContext) (any, error) {
+					i, err := dbsp.AsInt(args)
+					if err != nil {
+						return nil, err
+					}
+					return i * 2, nil
+				}), nil
+			}
+			return expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				v, err := operand.Evaluate(ctx)
+				if err != nil {
+					return nil, err
+				}
+				i, err := dbsp.AsInt(v)
+				if err != nil {
+					return nil, err
+				}
+				return i * 2, nil
+			}), nil
 		})
 
 		expr, err := dbsp.CompileWithRegistry([]byte(`{"@double": 21}`), registry)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(42)))
 	})
@@ -752,51 +774,18 @@ var _ = Describe("Registry", func() {
 		registry := dbsp.DefaultRegistry.Clone()
 
 		// Override @add to always return 999.
-		err := registry.Override("@add", func() dbsp.Operator {
-			return &customAlwaysOp{value: int64(999)}
+		err := registry.Override("@add", func(args any) (dbsp.Expression, error) {
+			return expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				return int64(999), nil
+			}), nil
 		})
 		Expect(err).NotTo(HaveOccurred())
 
 		expr, err := dbsp.CompileWithRegistry([]byte(`{"@add": [1, 2]}`), registry)
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(nil)
+		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(999)))
 	})
 })
-
-// Custom operator for testing.
-type customDoubleOp struct{}
-
-func (o *customDoubleOp) Name() string { return "@double" }
-
-func (o *customDoubleOp) Evaluate(ctx *dbsp.Context, args dbsp.Args) (any, error) {
-	var value any
-	switch a := args.(type) {
-	case dbsp.LiteralArgs:
-		value = a.Value
-	case dbsp.UnaryArgs:
-		v, err := a.Operand.Eval(ctx)
-		if err != nil {
-			return nil, err
-		}
-		value = v
-	}
-
-	i, err := dbsp.AsInt(value)
-	if err != nil {
-		return nil, err
-	}
-	return i * 2, nil
-}
-
-type customAlwaysOp struct {
-	value any
-}
-
-func (o *customAlwaysOp) Name() string { return "@always" }
-
-func (o *customAlwaysOp) Evaluate(ctx *dbsp.Context, args dbsp.Args) (any, error) {
-	return o.value, nil
-}

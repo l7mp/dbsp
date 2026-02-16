@@ -1,58 +1,37 @@
 package sql
 
 import (
-	"testing"
-
-	"github.com/l7mp/dbsp/expression/dbsp"
+	"github.com/l7mp/dbsp/datamodel/relation"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/xwb1989/sqlparser"
-	"github.com/xwb1989/sqlparser/dependency/querypb"
 )
 
-func TestCompileExpressionBasic(t *testing.T) {
-	stmt, err := sqlparser.Parse("select * from t where a = 1 and b is null")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	selectStmt, ok := stmt.(*sqlparser.Select)
-	if !ok {
-		t.Fatalf("expected select, got %T", stmt)
-	}
-	where := selectStmt.Where
-	if where == nil {
-		t.Fatalf("expected where clause")
-	}
-	bindVars := make(map[string]*querypb.BindVariable)
-	sqlparser.Normalize(selectStmt, bindVars, "v")
+var _ = Describe("CompileExpression", func() {
+	It("compiles basic WHERE expressions", func() {
+		db := relation.NewDatabase("db")
+		table := relation.NewTable("t", relation.NewSchema("a", "b").WithQualifiedNames("t"))
+		db.RegisterTable("t", table)
+		norm, err := Normalize("select * from t where a = 1 and b is null", db)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(norm.Stmt.Where).NotTo(BeNil())
 
-	expr, err := CompileExpression(where.Expr)
-	if err != nil {
-		t.Fatalf("compile expression: %v", err)
-	}
+		expr, err := CompilePredicate(norm.Stmt.Where.Expr, norm.BindVars)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(expr).NotTo(BeNil())
+	})
 
-	dbspExpr, ok := expr.(*dbsp.Expression)
-	if !ok {
-		t.Fatalf("expected dbsp expression, got %T", expr)
-	}
-	if dbspExpr.Root() == nil {
-		t.Fatalf("expected non-nil root")
-	}
-}
-
-func TestCompileExpressionJoinAlias(t *testing.T) {
-	stmt, err := sqlparser.Parse("select * from a join b on a.id = b.id")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	selectStmt, ok := stmt.(*sqlparser.Select)
-	if !ok {
-		t.Fatalf("expected select, got %T", stmt)
-	}
-	join, ok := selectStmt.From[0].(*sqlparser.JoinTableExpr)
-	if !ok {
-		t.Fatalf("expected join, got %T", selectStmt.From[0])
-	}
-	aliases := map[string]string{"a": "left", "b": "right"}
-	if _, err := CompileExpressionWithAliases(join.Condition.On, aliases); err != nil {
-		t.Fatalf("compile expression: %v", err)
-	}
-}
+	It("compiles expressions with join aliases", func() {
+		db := relation.NewDatabase("db")
+		tableA := relation.NewTable("a", relation.NewSchema("id").WithQualifiedNames("a"))
+		tableB := relation.NewTable("b", relation.NewSchema("id").WithQualifiedNames("b"))
+		db.RegisterTable("a", tableA)
+		db.RegisterTable("b", tableB)
+		norm, err := Normalize("select * from a join b on a.id = b.id", db)
+		Expect(err).NotTo(HaveOccurred())
+		join, ok := norm.Stmt.From[0].(*sqlparser.JoinTableExpr)
+		Expect(ok).To(BeTrue())
+		_, err = CompilePredicate(join.Condition.On, norm.BindVars)
+		Expect(err).NotTo(HaveOccurred())
+	})
+})

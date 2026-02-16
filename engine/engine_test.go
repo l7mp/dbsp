@@ -1,10 +1,10 @@
 package engine_test
 
 import (
-	"testing"
-
 	"github.com/l7mp/dbsp/compiler"
 	"github.com/l7mp/dbsp/engine"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 type stubCompiler struct {
@@ -20,14 +20,13 @@ func (s *stubCompiler) CompileString(source string) (*compiler.CompiledQuery, er
 	return s.Compile([]byte(source))
 }
 
-func TestEngineCompileUsesCompiler(t *testing.T) {
-	stub := &stubCompiler{}
-	eng := engine.New(stub)
+var _ = Describe("Engine", func() {
+	It("calls compiler on Compile", func() {
+		stub := &stubCompiler{}
+		eng := engine.New(stub)
 
-	if err := eng.Compile("select 1"); err == nil {
-		t.Fatalf("expected error from nil compiled query")
-	}
-	if !stub.called {
-		t.Fatalf("expected compiler to be called")
-	}
-}
+		err := eng.Compile("select 1")
+		Expect(err).To(HaveOccurred())
+		Expect(stub.called).To(BeTrue())
+	})
+})

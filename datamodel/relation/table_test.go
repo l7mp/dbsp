@@ -28,12 +28,14 @@ func (b badDoc) Concat(other datamodel.Document) datamodel.Document {
 	return b
 }
 func (b badDoc) Copy() datamodel.Document { return b }
+func (b badDoc) New() datamodel.Document  { return badDoc{} }
 func (b badDoc) GetField(_ string) (any, error) {
 	return nil, datamodel.ErrFieldNotFound
 }
 func (b badDoc) SetField(_ string, _ any) error {
 	return datamodel.ErrFieldNotFound
 }
+func (b badDoc) Fields() []string { return nil }
 
 var _ = Describe("Table/ZSet conversion", func() {
 	It("round-trips Table -> ZSet -> Table", func() {

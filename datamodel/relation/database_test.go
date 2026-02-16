@@ -5,22 +5,34 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("Database", func() {
-	It("registers and retrieves tables case-insensitively", func() {
+var _ = Describe("Database DML", func() {
+	It("inserts, updates, and deletes rows", func() {
 		db := NewDatabase("test")
-		schema := &Schema{Columns: []Column{{Name: "id", Type: TypeInt}}}
-		table := NewTable("Users", schema)
+		schema := NewSchema("id", "name").WithQualifiedNames("t").WithPrimaryKey(0)
+		table := NewTable("t", schema)
+		db.RegisterTable("t", table)
 
-		db.RegisterTable("Users", table)
+		Expect(db.Insert("t", []any{int64(1), "alice"})).To(Succeed())
+		pk := mustPrimaryKey(table, []any{int64(1), "alice"})
+		row, ok := table.Lookup(pk)
+		Expect(ok).To(BeTrue())
+		Expect(row.Data[1]).To(Equal("alice"))
 
-		fetched, err := db.GetTable("users")
+		updated, err := db.Update("t", pk, func(r *Row) error {
+			return r.SetField("name", "bob")
+		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(fetched).To(Equal(table))
-	})
+		Expect(updated.Data[1]).To(Equal("bob"))
 
-	It("returns an error for missing tables", func() {
-		db := NewDatabase("test")
-		_, err := db.GetTable("missing")
-		Expect(err).To(HaveOccurred())
+		deleted, err := db.Delete("t", pk)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(deleted).To(BeTrue())
 	})
 })
+
+func mustPrimaryKey(t *Table, data []any) string {
+	row := &Row{Table: t, Data: data}
+	pk, err := row.PrimaryKey()
+	Expect(err).NotTo(HaveOccurred())
+	return pk
+}

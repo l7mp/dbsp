@@ -2,30 +2,26 @@ package dbsp
 
 import "github.com/l7mp/dbsp/expression"
 
-// ExpressionCompiler adapts the DBSP expression language to expression.Compiler.
-type ExpressionCompiler struct {
-	registry *Registry
+// Expression is an alias for expression.Expression used throughout this package.
+type Expression = expression.Expression
+
+// Compile parses JSON and returns an Expression using the default registry.
+func Compile(data []byte) (Expression, error) {
+	return CompileWithRegistry(data, DefaultRegistry)
 }
 
-// NewCompiler creates a DBSP expression compiler with the default registry.
-func NewCompiler() *ExpressionCompiler {
-	return &ExpressionCompiler{registry: DefaultRegistry}
+// CompileString parses a JSON string and returns an Expression using the default registry.
+func CompileString(s string) (Expression, error) {
+	return Compile([]byte(s))
 }
 
-// WithRegistry sets a custom operator registry. Returns the receiver for chaining.
-func (c *ExpressionCompiler) WithRegistry(r *Registry) *ExpressionCompiler {
-	c.registry = r
-	return c
+// CompileWithRegistry parses JSON using a custom registry.
+func CompileWithRegistry(data []byte, registry *Registry) (Expression, error) {
+	parser := NewParser().WithRegistry(registry)
+	return parser.Parse(data)
 }
 
-// Compile implements expression.Compiler.
-func (c *ExpressionCompiler) Compile(source []byte) (expression.Expression, error) {
-	return CompileWithRegistry(source, c.registry)
+// CompileStringWithRegistry parses a JSON string using a custom registry.
+func CompileStringWithRegistry(s string, registry *Registry) (Expression, error) {
+	return CompileWithRegistry([]byte(s), registry)
 }
-
-// CompileString implements expression.Compiler.
-func (c *ExpressionCompiler) CompileString(source string) (expression.Expression, error) {
-	return c.Compile([]byte(source))
-}
-
-var _ expression.Compiler = (*ExpressionCompiler)(nil)

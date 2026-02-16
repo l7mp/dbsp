@@ -1,30 +1,29 @@
-// Package dbsp provides an extensible expression language for DBSP operators.
-package dbsp
+package expression
 
 import (
 	"github.com/go-logr/logr"
 	"github.com/l7mp/dbsp/datamodel"
 )
 
-// Context carries evaluation state through the expression tree.
+// EvalContext carries evaluation state through the expression tree.
 // It is immutable - methods return new contexts with modifications.
-type Context struct {
+type EvalContext struct {
 	document datamodel.Document
 	subject  any
 	logger   logr.Logger
 }
 
 // NewContext creates a root evaluation context.
-func NewContext(doc datamodel.Document) *Context {
-	return &Context{
+func NewContext(doc datamodel.Document) *EvalContext {
+	return &EvalContext{
 		document: doc,
 		logger:   logr.Discard(),
 	}
 }
 
 // WithLogger returns a new context with the given logger.
-func (c *Context) WithLogger(logger logr.Logger) *Context {
-	return &Context{
+func (c *EvalContext) WithLogger(logger logr.Logger) *EvalContext {
+	return &EvalContext{
 		document: c.document,
 		subject:  c.subject,
 		logger:   logger,
@@ -33,8 +32,8 @@ func (c *Context) WithLogger(logger logr.Logger) *Context {
 
 // WithSubject returns a new context with the given subject.
 // Used by @map/@filter to pass iteration values.
-func (c *Context) WithSubject(subject any) *Context {
-	return &Context{
+func (c *EvalContext) WithSubject(subject any) *EvalContext {
+	return &EvalContext{
 		document: c.document,
 		subject:  subject,
 		logger:   c.logger,
@@ -42,16 +41,16 @@ func (c *Context) WithSubject(subject any) *Context {
 }
 
 // Document returns the primary document.
-func (c *Context) Document() datamodel.Document {
+func (c *EvalContext) Document() datamodel.Document {
 	return c.document
 }
 
 // Subject returns the current iteration subject (nil if not in iteration).
-func (c *Context) Subject() any {
+func (c *EvalContext) Subject() any {
 	return c.subject
 }
 
 // Logger returns the logger.
-func (c *Context) Logger() logr.Logger {
+func (c *EvalContext) Logger() logr.Logger {
 	return c.logger
 }
