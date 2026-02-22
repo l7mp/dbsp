@@ -7,7 +7,10 @@ import (
 )
 
 // mapExpr implements @map - iterates over a list, evaluating an expression for each element.
-type mapExpr struct{ mapFn, list Expression }
+type mapExpr struct {
+	mapFn Expression
+	list  Expression
+}
 
 func (e *mapExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	listValue, err := e.list.Evaluate(ctx)
@@ -37,7 +40,10 @@ func (e *mapExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *mapExpr) String() string { return fmt.Sprintf("@map(%v, %v)", e.mapFn, e.list) }
 
 // filterExpr implements @filter - filters a list based on a predicate.
-type filterExpr struct{ predicate, list Expression }
+type filterExpr struct {
+	predicate Expression
+	list      Expression
+}
 
 func (e *filterExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	listValue, err := e.list.Evaluate(ctx)
@@ -77,7 +83,9 @@ func (e *filterExpr) String() string {
 }
 
 // sumExpr implements @sum - sums all elements.
-type sumExpr struct{ args []Expression }
+type sumExpr struct {
+	args []Expression
+}
 
 func (e *sumExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	// Evaluate all args.
@@ -130,7 +138,9 @@ func (e *sumExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *sumExpr) String() string { return fmt.Sprintf("@sum(%v)", e.args) }
 
 // lenExpr implements @len - returns the length of a list or string.
-type lenExpr struct{ operand Expression }
+type lenExpr struct {
+	operand Expression
+}
 
 func (e *lenExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -165,7 +175,9 @@ func (e *lenExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *lenExpr) String() string { return fmt.Sprintf("@len(%v)", e.operand) }
 
 // minExpr implements @min - returns the minimum value in a list.
-type minExpr struct{ args []Expression }
+type minExpr struct {
+	args []Expression
+}
 
 func (e *minExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	list, err := evaluateNumericList(ctx, e.args, "@min")
@@ -211,7 +223,9 @@ func (e *minExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *minExpr) String() string { return fmt.Sprintf("@min(%v)", e.args) }
 
 // maxExpr implements @max - returns the maximum value in a list.
-type maxExpr struct{ args []Expression }
+type maxExpr struct {
+	args []Expression
+}
 
 func (e *maxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	list, err := evaluateNumericList(ctx, e.args, "@max")
@@ -257,7 +271,10 @@ func (e *maxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *maxExpr) String() string { return fmt.Sprintf("@max(%v)", e.args) }
 
 // inExpr implements @in - checks if an element is in a list.
-type inExpr struct{ element, list Expression }
+type inExpr struct {
+	element Expression
+	list    Expression
+}
 
 func (e *inExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	elemVal, err := e.element.Evaluate(ctx)
@@ -289,7 +306,9 @@ func (e *inExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *inExpr) String() string { return fmt.Sprintf("@in(%v, %v)", e.element, e.list) }
 
 // rangeExpr implements @range - creates a range of integers [1..n].
-type rangeExpr struct{ operand Expression }
+type rangeExpr struct {
+	operand Expression
+}
 
 func (e *rangeExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)

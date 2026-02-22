@@ -93,7 +93,9 @@ func evaluateVariadicNumeric(ctx *expression.EvalContext, args []Expression, opN
 }
 
 // addExpr implements @add.
-type addExpr struct{ args []Expression }
+type addExpr struct {
+	args []Expression
+}
 
 func (e *addExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return evaluateVariadicNumeric(ctx, e.args, "@add",
@@ -105,7 +107,10 @@ func (e *addExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *addExpr) String() string { return fmt.Sprintf("@add(%v)", e.args) }
 
 // subExpr implements @sub.
-type subExpr struct{ left, right Expression }
+type subExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *subExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return evaluateBinaryNumeric(ctx, e.left, e.right, "@sub",
@@ -117,7 +122,9 @@ func (e *subExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *subExpr) String() string { return fmt.Sprintf("@sub(%v, %v)", e.left, e.right) }
 
 // mulExpr implements @mul.
-type mulExpr struct{ args []Expression }
+type mulExpr struct {
+	args []Expression
+}
 
 func (e *mulExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return evaluateVariadicNumeric(ctx, e.args, "@mul",
@@ -129,7 +136,10 @@ func (e *mulExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *mulExpr) String() string { return fmt.Sprintf("@mul(%v)", e.args) }
 
 // divExpr implements @div.
-type divExpr struct{ left, right Expression }
+type divExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *divExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	aVal, err := e.left.Evaluate(ctx)
@@ -171,7 +181,10 @@ func (e *divExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *divExpr) String() string { return fmt.Sprintf("@div(%v, %v)", e.left, e.right) }
 
 // modExpr implements @mod (modulo).
-type modExpr struct{ left, right Expression }
+type modExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *modExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	aVal, err := e.left.Evaluate(ctx)
@@ -206,7 +219,9 @@ func (e *modExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *modExpr) String() string { return fmt.Sprintf("@mod(%v, %v)", e.left, e.right) }
 
 // negExpr implements @neg (unary negation).
-type negExpr struct{ operand Expression }
+type negExpr struct {
+	operand Expression
+}
 
 func (e *negExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)

@@ -9,7 +9,9 @@ import (
 )
 
 // getExpr implements @get - retrieves a field from the document.
-type getExpr struct{ field Expression }
+type getExpr struct {
+	field Expression
+}
 
 func (e *getExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	fieldPath, err := evaluateFieldPath(ctx, e.field, "@get")
@@ -35,7 +37,10 @@ func (e *getExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *getExpr) String() string { return fmt.Sprintf("@get(%v)", e.field) }
 
 // setExpr implements @set - sets a field on the document (mutates in-place).
-type setExpr struct{ field, value Expression }
+type setExpr struct {
+	field Expression
+	value Expression
+}
 
 func (e *setExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	fieldPathVal, err := e.field.Evaluate(ctx)
@@ -68,7 +73,9 @@ func (e *setExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *setExpr) String() string { return fmt.Sprintf("@set(%v, %v)", e.field, e.value) }
 
 // getSubExpr implements @getsub - retrieves a field from the subject.
-type getSubExpr struct{ field Expression }
+type getSubExpr struct {
+	field Expression
+}
 
 func (e *getSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	fieldPath, err := evaluateFieldPath(ctx, e.field, "@getsub")
@@ -107,7 +114,10 @@ func (e *getSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *getSubExpr) String() string { return fmt.Sprintf("@getsub(%v)", e.field) }
 
 // setSubExpr implements @setsub - sets a field on the subject (mutates in-place).
-type setSubExpr struct{ field, value Expression }
+type setSubExpr struct {
+	field Expression
+	value Expression
+}
 
 func (e *setSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	fieldPathVal, err := e.field.Evaluate(ctx)
@@ -151,7 +161,9 @@ func (e *setSubExpr) String() string {
 }
 
 // existsExpr implements @exists - checks if a field exists in the document.
-type existsExpr struct{ field Expression }
+type existsExpr struct {
+	field Expression
+}
 
 func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	fieldPath, err := evaluateFieldPath(ctx, e.field, "@exists")

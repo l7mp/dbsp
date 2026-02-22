@@ -8,7 +8,10 @@ import (
 )
 
 // eqExpr implements @eq (equality).
-type eqExpr struct{ left, right Expression }
+type eqExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *eqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	aVal, err := e.left.Evaluate(ctx)
@@ -29,7 +32,10 @@ func (e *eqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *eqExpr) String() string { return fmt.Sprintf("@eq(%v, %v)", e.left, e.right) }
 
 // neqExpr implements @neq (not equal).
-type neqExpr struct{ left, right Expression }
+type neqExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *neqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	aVal, err := e.left.Evaluate(ctx)
@@ -50,7 +56,10 @@ func (e *neqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *neqExpr) String() string { return fmt.Sprintf("@neq(%v, %v)", e.left, e.right) }
 
 // gtExpr implements @gt (greater than).
-type gtExpr struct{ left, right Expression }
+type gtExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *gtExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return compareNumeric(ctx, e.left, e.right, "@gt", func(cmp int) bool { return cmp > 0 })
@@ -59,7 +68,10 @@ func (e *gtExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *gtExpr) String() string { return fmt.Sprintf("@gt(%v, %v)", e.left, e.right) }
 
 // gteExpr implements @gte (greater than or equal).
-type gteExpr struct{ left, right Expression }
+type gteExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *gteExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return compareNumeric(ctx, e.left, e.right, "@gte", func(cmp int) bool { return cmp >= 0 })
@@ -68,7 +80,10 @@ func (e *gteExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *gteExpr) String() string { return fmt.Sprintf("@gte(%v, %v)", e.left, e.right) }
 
 // ltExpr implements @lt (less than).
-type ltExpr struct{ left, right Expression }
+type ltExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *ltExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return compareNumeric(ctx, e.left, e.right, "@lt", func(cmp int) bool { return cmp < 0 })
@@ -77,7 +92,10 @@ func (e *ltExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *ltExpr) String() string { return fmt.Sprintf("@lt(%v, %v)", e.left, e.right) }
 
 // lteExpr implements @lte (less than or equal).
-type lteExpr struct{ left, right Expression }
+type lteExpr struct {
+	left  Expression
+	right Expression
+}
 
 func (e *lteExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return compareNumeric(ctx, e.left, e.right, "@lte", func(cmp int) bool { return cmp <= 0 })

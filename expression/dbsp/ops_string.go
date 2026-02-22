@@ -9,7 +9,10 @@ import (
 )
 
 // regexpExpr implements @regexp - regex pattern matching.
-type regexpExpr struct{ pattern, str Expression }
+type regexpExpr struct {
+	pattern Expression
+	str     Expression
+}
 
 func (e *regexpExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	patternVal, err := e.pattern.Evaluate(ctx)
@@ -43,7 +46,9 @@ func (e *regexpExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *regexpExpr) String() string { return fmt.Sprintf("@regexp(%v, %v)", e.pattern, e.str) }
 
 // upperExpr implements @upper - converts string to uppercase.
-type upperExpr struct{ operand Expression }
+type upperExpr struct {
+	operand Expression
+}
 
 func (e *upperExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -62,7 +67,9 @@ func (e *upperExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *upperExpr) String() string { return fmt.Sprintf("@upper(%v)", e.operand) }
 
 // lowerExpr implements @lower - converts string to lowercase.
-type lowerExpr struct{ operand Expression }
+type lowerExpr struct {
+	operand Expression
+}
 
 func (e *lowerExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -81,7 +88,9 @@ func (e *lowerExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *lowerExpr) String() string { return fmt.Sprintf("@lower(%v)", e.operand) }
 
 // trimExpr implements @trim - removes leading and trailing whitespace.
-type trimExpr struct{ operand Expression }
+type trimExpr struct {
+	operand Expression
+}
 
 func (e *trimExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -101,7 +110,9 @@ func (e *trimExpr) String() string { return fmt.Sprintf("@trim(%v)", e.operand) 
 
 // substringExpr implements @substring - extracts a substring.
 // Start is 1-based (SQL style). If start is negative, counts from end.
-type substringExpr struct{ args []Expression }
+type substringExpr struct {
+	args []Expression
+}
 
 func (e *substringExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if len(e.args) != 2 && len(e.args) != 3 {
@@ -168,7 +179,9 @@ func (e *substringExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *substringExpr) String() string { return fmt.Sprintf("@substring(%v)", e.args) }
 
 // replaceExpr implements @replace - replaces occurrences of a substring.
-type replaceExpr struct{ args []Expression }
+type replaceExpr struct {
+	args []Expression
+}
 
 func (e *replaceExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if len(e.args) != 3 && len(e.args) != 4 {
@@ -223,7 +236,10 @@ func (e *replaceExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *replaceExpr) String() string { return fmt.Sprintf("@replace(%v)", e.args) }
 
 // splitExpr implements @split - splits a string into a list.
-type splitExpr struct{ str, sep Expression }
+type splitExpr struct {
+	str Expression
+	sep Expression
+}
 
 func (e *splitExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	strVal, err := e.str.Evaluate(ctx)
@@ -257,7 +273,10 @@ func (e *splitExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *splitExpr) String() string { return fmt.Sprintf("@split(%v, %v)", e.str, e.sep) }
 
 // joinExpr implements @join - joins a list into a string.
-type joinExpr struct{ list, sep Expression }
+type joinExpr struct {
+	list Expression
+	sep  Expression
+}
 
 func (e *joinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	listVal, err := e.list.Evaluate(ctx)
@@ -295,7 +314,10 @@ func (e *joinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *joinExpr) String() string { return fmt.Sprintf("@join(%v, %v)", e.list, e.sep) }
 
 // startsWithExpr implements @startswith.
-type startsWithExpr struct{ str, prefix Expression }
+type startsWithExpr struct {
+	str    Expression
+	prefix Expression
+}
 
 func (e *startsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	strVal, err := e.str.Evaluate(ctx)
@@ -326,7 +348,10 @@ func (e *startsWithExpr) String() string {
 }
 
 // endsWithExpr implements @endswith.
-type endsWithExpr struct{ str, suffix Expression }
+type endsWithExpr struct {
+	str    Expression
+	suffix Expression
+}
 
 func (e *endsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	strVal, err := e.str.Evaluate(ctx)
@@ -357,7 +382,10 @@ func (e *endsWithExpr) String() string {
 }
 
 // containsExpr implements @contains.
-type containsExpr struct{ str, sub Expression }
+type containsExpr struct {
+	str Expression
+	sub Expression
+}
 
 func (e *containsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	strVal, err := e.str.Evaluate(ctx)

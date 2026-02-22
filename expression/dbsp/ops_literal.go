@@ -17,7 +17,9 @@ func (e *nilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *nilExpr) String() string { return "@nil" }
 
 // boolExpr implements @bool.
-type boolExpr struct{ operand Expression }
+type boolExpr struct {
+	operand Expression
+}
 
 func (e *boolExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if e.operand == nil {
@@ -38,7 +40,9 @@ func (e *boolExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *boolExpr) String() string { return fmt.Sprintf("@bool(%v)", e.operand) }
 
 // intExpr implements @int.
-type intExpr struct{ operand Expression }
+type intExpr struct {
+	operand Expression
+}
 
 func (e *intExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if e.operand == nil {
@@ -59,7 +63,9 @@ func (e *intExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *intExpr) String() string { return fmt.Sprintf("@int(%v)", e.operand) }
 
 // floatExpr implements @float.
-type floatExpr struct{ operand Expression }
+type floatExpr struct {
+	operand Expression
+}
 
 func (e *floatExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if e.operand == nil {
@@ -80,7 +86,9 @@ func (e *floatExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *floatExpr) String() string { return fmt.Sprintf("@float(%v)", e.operand) }
 
 // stringExpr implements @string.
-type stringExpr struct{ operand Expression }
+type stringExpr struct {
+	operand Expression
+}
 
 func (e *stringExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if e.operand == nil {
@@ -101,7 +109,9 @@ func (e *stringExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *stringExpr) String() string { return fmt.Sprintf("@string(%v)", e.operand) }
 
 // listExpr implements @list - evaluates each element expression.
-type listExpr struct{ elements []Expression }
+type listExpr struct {
+	elements []Expression
+}
 
 func (e *listExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	result := make([]any, len(e.elements))
@@ -119,7 +129,9 @@ func (e *listExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *listExpr) String() string { return fmt.Sprintf("@list(%v)", e.elements) }
 
 // dictExpr implements @dict - evaluates each value expression, preserving keys.
-type dictExpr struct{ entries map[string]Expression }
+type dictExpr struct {
+	entries map[string]Expression
+}
 
 func (e *dictExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	result := make(map[string]any, len(e.entries))
@@ -137,7 +149,9 @@ func (e *dictExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *dictExpr) String() string { return fmt.Sprintf("@dict(%v)", e.entries) }
 
 // constExpr wraps a literal value as an expression.
-type constExpr struct{ value any }
+type constExpr struct {
+	value any
+}
 
 func (e *constExpr) Evaluate(_ *expression.EvalContext) (any, error) {
 	return e.value, nil

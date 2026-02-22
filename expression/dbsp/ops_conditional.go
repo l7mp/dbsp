@@ -48,7 +48,9 @@ func (e *condExpr) String() string {
 
 // switchExpr implements @switch - pattern matching.
 // Each element is a [case, expr] pair expression.
-type switchExpr struct{ args []Expression }
+type switchExpr struct {
+	args []Expression
+}
 
 func (e *switchExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	for i, elem := range e.args {
@@ -80,7 +82,9 @@ func (e *switchExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *switchExpr) String() string { return fmt.Sprintf("@switch(%v)", e.args) }
 
 // definedOrExpr implements @definedOr - returns the first non-nil value.
-type definedOrExpr struct{ args []Expression }
+type definedOrExpr struct {
+	args []Expression
+}
 
 func (e *definedOrExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	for i, elem := range e.args {

@@ -7,7 +7,9 @@ import (
 )
 
 // isNullExpr implements @isnull.
-type isNullExpr struct{ operand Expression }
+type isNullExpr struct {
+	operand Expression
+}
 
 func (e *isNullExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)

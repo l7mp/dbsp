@@ -7,7 +7,9 @@ import (
 )
 
 // andExpr implements @and with short-circuit evaluation.
-type andExpr struct{ args []Expression }
+type andExpr struct {
+	args []Expression
+}
 
 func (e *andExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if len(e.args) == 0 {
@@ -38,7 +40,9 @@ func (e *andExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *andExpr) String() string { return fmt.Sprintf("@and(%v)", e.args) }
 
 // orExpr implements @or with short-circuit evaluation.
-type orExpr struct{ args []Expression }
+type orExpr struct {
+	args []Expression
+}
 
 func (e *orExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if len(e.args) == 0 {
@@ -69,7 +73,9 @@ func (e *orExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *orExpr) String() string { return fmt.Sprintf("@or(%v)", e.args) }
 
 // notExpr implements @not.
-type notExpr struct{ operand Expression }
+type notExpr struct {
+	operand Expression
+}
 
 func (e *notExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)

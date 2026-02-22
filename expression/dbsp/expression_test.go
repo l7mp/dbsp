@@ -1,6 +1,8 @@
 package dbsp_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -60,6 +62,17 @@ func (d *TestDoc) GetField(key string) (any, error) {
 func (d *TestDoc) SetField(key string, value any) error {
 	d.fields[key] = value
 	return nil
+}
+
+func (d *TestDoc) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.fields)
+}
+
+func (d *TestDoc) UnmarshalJSON(data []byte) error {
+	if d == nil {
+		return fmt.Errorf("TestDoc must be non-nil for JSON decoding")
+	}
+	return json.Unmarshal(data, &d.fields)
 }
 
 func (d *TestDoc) New() datamodel.Document {
