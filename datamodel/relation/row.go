@@ -1,6 +1,7 @@
 package relation
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -57,6 +58,58 @@ func (r *Row) PrimaryKey() (string, error) {
 // String returns a string representation of the row.
 func (r *Row) String() string {
 	return fmt.Sprintf("Row%v", r.Data)
+}
+
+// MarshalJSON implements json.Marshaler.
+func (r *Row) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return []byte("null"), nil
+	}
+	if r.Table == nil || r.Table.Schema == nil {
+		return nil, fmt.Errorf("row schema required for JSON encoding")
+	}
+	if len(r.Data) != len(r.Table.Schema.Columns) {
+		return nil, fmt.Errorf("row column count mismatch")
+	}
+
+	fields := make(map[string]any, len(r.Table.Schema.Columns))
+	for i, col := range r.Table.Schema.Columns {
+		fields[col.Name] = r.Data[i]
+	}
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (r *Row) UnmarshalJSON(data []byte) error {
+	if r == nil {
+		return fmt.Errorf("row must be non-nil for JSON decoding")
+	}
+	if r.Table == nil || r.Table.Schema == nil {
+		return fmt.Errorf("row schema required for JSON decoding")
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	values := make([]any, len(r.Table.Schema.Columns))
+	for i, col := range r.Table.Schema.Columns {
+		value, ok := fields[col.Name]
+		if !ok && col.QualifiedName != "" {
+			value, ok = fields[col.QualifiedName]
+		}
+		if !ok {
+			return fmt.Errorf("missing column %s", col.Name)
+		}
+		coerced, err := coerceJSONValue(value, col.Type)
+		if err != nil {
+			return fmt.Errorf("column %s: %w", col.Name, err)
+		}
+		values[i] = coerced
+	}
+
+	r.Data = values
+	return nil
 }
 
 func (r *Row) Copy() datamodel.Document {
@@ -204,28 +257,87 @@ func orderedCodeValues(values []any) []any {
 	}
 	converted := make([]any, len(values))
 	for i, v := range values {
-		switch val := v.(type) {
-		case int:
-			converted[i] = int64(val)
-		case int8:
-			converted[i] = int64(val)
-		case int16:
-			converted[i] = int64(val)
-		case int32:
-			converted[i] = int64(val)
-		case uint:
-			converted[i] = uint64(val)
-		case uint8:
-			converted[i] = uint64(val)
-		case uint16:
-			converted[i] = uint64(val)
-		case uint32:
-			converted[i] = uint64(val)
-		case float32:
-			converted[i] = float64(val)
-		default:
-			converted[i] = v
-		}
+		converted[i] = normalizeScalarValue(v)
 	}
 	return converted
+}
+
+func normalizeScalarValue(value any) any {
+	switch val := value.(type) {
+	case int:
+		return int64(val)
+	case int8:
+		return int64(val)
+	case int16:
+		return int64(val)
+	case int32:
+		return int64(val)
+	case uint:
+		return uint64(val)
+	case uint8:
+		return uint64(val)
+	case uint16:
+		return uint64(val)
+	case uint32:
+		return uint64(val)
+	case float32:
+		return float64(val)
+	default:
+		return value
+	}
+}
+
+func coerceJSONValue(value any, columnType ColumnType) (any, error) {
+	if columnType == TypeAny {
+		return normalizeScalarValue(value), nil
+	}
+
+	switch columnType {
+	case TypeInt:
+		switch v := value.(type) {
+		case float64:
+			if v != float64(int64(v)) {
+				return nil, fmt.Errorf("expected integer, got %v", v)
+			}
+			return int64(v), nil
+		case int:
+			return int64(v), nil
+		case int64:
+			return v, nil
+		case json.Number:
+			parsed, err := v.Int64()
+			if err != nil {
+				return nil, fmt.Errorf("expected integer: %w", err)
+			}
+			return parsed, nil
+		default:
+			return nil, fmt.Errorf("expected integer, got %T", value)
+		}
+	case TypeFloat:
+		switch v := value.(type) {
+		case float64:
+			return v, nil
+		case float32:
+			return float64(v), nil
+		case int:
+			return float64(v), nil
+		case int64:
+			return float64(v), nil
+		case json.Number:
+			parsed, err := v.Float64()
+			if err != nil {
+				return nil, fmt.Errorf("expected float: %w", err)
+			}
+			return parsed, nil
+		default:
+			return nil, fmt.Errorf("expected float, got %T", value)
+		}
+	case TypeString:
+		if s, ok := value.(string); ok {
+			return s, nil
+		}
+		return nil, fmt.Errorf("expected string, got %T", value)
+	default:
+		return nil, fmt.Errorf("unsupported column type %v", columnType)
+	}
 }

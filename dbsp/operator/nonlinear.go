@@ -12,6 +12,7 @@ import (
 
 // Distinct converts Z-set to set (all positive weights become 1).
 type Distinct struct {
+	jsonUnsupported
 	name   string
 	logger logr.Logger
 }

@@ -12,6 +12,7 @@ import (
 
 // CartesianProduct computes A x B using Document.Concat to combine elements.
 type CartesianProduct struct {
+	jsonUnsupported
 	name   string
 	logger logr.Logger
 }

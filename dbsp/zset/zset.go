@@ -1,6 +1,7 @@
 package zset
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -19,6 +20,11 @@ type ZSet struct {
 type Elem struct {
 	Document datamodel.Document
 	Weight   Weight
+}
+
+type jsonElem struct {
+	Elem   json.RawMessage `json:"elem"`
+	Weight Weight          `json:"weight"`
 }
 
 // New creates an empty Z-set.
@@ -166,4 +172,28 @@ func (z ZSet) String() string {
 	}
 	b.WriteString("}")
 	return b.String()
+}
+
+// MarshalJSON implements json.Marshaler.
+func (z ZSet) MarshalJSON() ([]byte, error) {
+	entries := make([]jsonElem, 0, len(z.entries))
+	for _, entry := range z.entries {
+		if entry.Document == nil {
+			return nil, fmt.Errorf("zset entry document is nil")
+		}
+		payload, err := entry.Document.MarshalJSON()
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, jsonElem{Elem: payload, Weight: entry.Weight})
+	}
+	return json.Marshal(entries)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (z *ZSet) UnmarshalJSON(data []byte) error {
+	if z == nil {
+		return fmt.Errorf("zset must be non-nil for JSON decoding")
+	}
+	return fmt.Errorf("zset JSON unmarshaling requires a concrete document type")
 }

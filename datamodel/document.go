@@ -1,6 +1,7 @@
 package datamodel
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -10,6 +11,8 @@ var ErrFieldNotFound = errors.New("field not found")
 // Document is the interface that Z-set elements must implement.
 type Document interface {
 	fmt.Stringer
+	json.Marshaler
+	json.Unmarshaler
 
 	// Hash returns a string identifier for equality checking. Two elements are equal iff their
 	// hashes are equal. This is based on full content (like a hash of all fields).
@@ -35,6 +38,7 @@ type Document interface {
 	// GetField returns the value for a field name.
 	// It may return ErrFieldNotFound when the field is missing.
 	GetField(key string) (any, error)
+
 	// SetField sets the value for a field name.
 	// It may return ErrFieldNotFound when the field is missing.
 	SetField(key string, value any) error

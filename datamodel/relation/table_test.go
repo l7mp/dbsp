@@ -1,6 +1,7 @@
 package relation
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -34,6 +35,12 @@ func (b badDoc) GetField(_ string) (any, error) {
 }
 func (b badDoc) SetField(_ string, _ any) error {
 	return datamodel.ErrFieldNotFound
+}
+func (b badDoc) MarshalJSON() ([]byte, error) {
+	return json.Marshal(b.id)
+}
+func (b badDoc) UnmarshalJSON([]byte) error {
+	return nil
 }
 func (b badDoc) Fields() []string { return nil }
 

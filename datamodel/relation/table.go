@@ -1,7 +1,9 @@
 package relation
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/google/btree"
 	"github.com/l7mp/dbsp/dbsp/zset"
@@ -26,6 +28,80 @@ type Table struct {
 	Schema *Schema
 	// The BTree stores `tableItem`
 	store *btree.BTree
+}
+
+// MarshalJSON implements json.Marshaler.
+func (t *Table) MarshalJSON() ([]byte, error) {
+	if t == nil {
+		return []byte("null"), nil
+	}
+	if t.Schema == nil {
+		return nil, fmt.Errorf("table schema required for JSON encoding")
+	}
+
+	rows := make([]*Row, 0)
+	if t.store != nil {
+		t.store.Ascend(func(i btree.Item) bool {
+			item := i.(tableItem)
+			rows = append(rows, item.row)
+			return true
+		})
+	}
+
+	payload := struct {
+		Name   string  `json:"name"`
+		Schema *Schema `json:"schema"`
+		Rows   []*Row  `json:"rows"`
+	}{
+		Name:   t.Name,
+		Schema: t.Schema,
+		Rows:   rows,
+	}
+
+	return json.Marshal(payload)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (t *Table) UnmarshalJSON(data []byte) error {
+	if t == nil {
+		return fmt.Errorf("table must be non-nil for JSON decoding")
+	}
+
+	var payload struct {
+		Name   string            `json:"name"`
+		Schema *Schema           `json:"schema"`
+		Rows   []json.RawMessage `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	if payload.Schema == nil {
+		return fmt.Errorf("table schema required")
+	}
+	if payload.Name == "" {
+		return fmt.Errorf("table name required")
+	}
+
+	t.Name = payload.Name
+	t.Schema = payload.Schema
+	t.store = btree.New(2)
+
+	if len(payload.Rows) == 0 {
+		return nil
+	}
+
+	rowTable := NewTable(t.Name, t.Schema)
+	for _, raw := range payload.Rows {
+		row := &Row{Table: rowTable}
+		if err := json.Unmarshal(raw, row); err != nil {
+			return err
+		}
+		if err := t.InsertRow(row); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func NewTable(name string, schema *Schema) *Table {

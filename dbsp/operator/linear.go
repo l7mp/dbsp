@@ -13,6 +13,7 @@ import (
 
 // Negate returns -Z.
 type Negate struct {
+	jsonUnsupported
 	logger logr.Logger
 }
 
@@ -49,6 +50,7 @@ func (o *Negate) setLogger(l logr.Logger) { o.logger = l }
 
 // Plus returns A + B.
 type Plus struct {
+	jsonUnsupported
 	logger logr.Logger
 }
 
@@ -85,6 +87,7 @@ func (o *Plus) setLogger(l logr.Logger) { o.logger = l }
 
 // Select filters by predicate.
 type Select struct {
+	jsonUnsupported
 	name      string
 	predicate expression.Expression
 	weightFn  func(weight zset.Weight) bool
@@ -147,6 +150,7 @@ func (o *Select) setLogger(l logr.Logger) { o.logger = l }
 
 // Project transforms elements.
 type Project struct {
+	jsonUnsupported
 	name       string
 	projection expression.Expression // Must return datamodel.Document.
 	logger     logr.Logger
@@ -218,6 +222,7 @@ func (o *Project) setLogger(l logr.Logger) { o.logger = l }
 //	Input:  {id: "x", tags: ["a", "b"]}
 //	Output: {id: "x", tags: "a"}, {id: "x", tags: "b"}
 type Unwind struct {
+	jsonUnsupported
 	name       string
 	fieldPath  string // The array field to unwind.
 	indexField string // Optional: field to store the array index.

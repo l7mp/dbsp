@@ -1,6 +1,7 @@
 package relation
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -61,4 +62,64 @@ func (d *Database) Update(table string, pk string, fn func(row *Row) error) (*Ro
 		return nil, err
 	}
 	return t.Update(pk, fn)
+}
+
+// MarshalJSON implements json.Marshaler.
+func (d *Database) MarshalJSON() ([]byte, error) {
+	if d == nil {
+		return []byte("null"), nil
+	}
+
+	tables := make(map[string]*Table, len(d.tables))
+	for name, table := range d.tables {
+		if table == nil || table.Schema == nil {
+			return nil, fmt.Errorf("table %s schema required for JSON encoding", name)
+		}
+		tables[name] = table
+	}
+
+	payload := struct {
+		Name   string            `json:"name"`
+		Tables map[string]*Table `json:"tables"`
+	}{
+		Name:   d.name,
+		Tables: tables,
+	}
+
+	return json.Marshal(payload)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (d *Database) UnmarshalJSON(data []byte) error {
+	if d == nil {
+		return fmt.Errorf("database must be non-nil for JSON decoding")
+	}
+
+	var payload struct {
+		Name   string            `json:"name"`
+		Tables map[string]*Table `json:"tables"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	if payload.Name == "" {
+		return fmt.Errorf("database name required")
+	}
+	if len(payload.Tables) == 0 {
+		return fmt.Errorf("database tables required")
+	}
+
+	d.name = payload.Name
+	d.tables = make(map[string]*Table, len(payload.Tables))
+	for name, table := range payload.Tables {
+		if table == nil || table.Schema == nil {
+			return fmt.Errorf("table %s schema required", name)
+		}
+		if table.Name == "" {
+			table.Name = name
+		}
+		d.RegisterTable(name, table)
+	}
+
+	return nil
 }

@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -65,6 +66,8 @@ func (l Linearity) String() string {
 // Operator is a computation on Z-sets.
 type Operator interface {
 	fmt.Stringer
+	json.Marshaler
+	json.Unmarshaler
 
 	// Name returns the operator's display name.
 	Name() string
