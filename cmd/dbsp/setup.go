@@ -21,15 +21,9 @@ func buildRootCmd(state *appState) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	root.AddCommand(circuitRootCommand(nil, state))
-	// Flat aliases give scripts and tests access to circuit sub-commands
-	// without prefixing every line with "circuit".
-	root.AddCommand(nodeCommand(state))
-	root.AddCommand(edgeCommand(state))
-	root.AddCommand(printCommand(state))
-	root.AddCommand(validateCommand(state))
-	root.AddCommand(incrementalizeCommand(state))
 	root.AddCommand(zsetRootCommand(nil, state))
 	root.AddCommand(executorRootCommand(nil, state))
+	root.AddCommand(sqlRootCommand(nil, state))
 	return root
 }
 
@@ -47,6 +41,7 @@ func setupRootMenu(app *console.Console, state *appState) {
 		root.AddCommand(circuitRootCommand(app, state))
 		root.AddCommand(zsetRootCommand(app, state))
 		root.AddCommand(executorRootCommand(app, state))
+		root.AddCommand(sqlRootCommand(app, state))
 		root.AddCommand(newExitCommand(app, state))
 		return root
 	})

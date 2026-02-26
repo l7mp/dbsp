@@ -3,6 +3,7 @@ package relation
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -26,6 +27,26 @@ func (d *Database) GetName() string { return d.name }
 // RegisterTable adds a table schema to the catalog.
 func (d *Database) RegisterTable(name string, table *Table) {
 	d.tables[strings.ToLower(name)] = table
+}
+
+// Tables returns all table names in sorted order.
+func (d *Database) Tables() []string {
+	names := make([]string, 0, len(d.tables))
+	for name := range d.tables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// DropTable removes a table from the catalog.
+func (d *Database) DropTable(name string) error {
+	key := strings.ToLower(name)
+	if _, ok := d.tables[key]; !ok {
+		return fmt.Errorf("table %s not found", name)
+	}
+	delete(d.tables, key)
+	return nil
 }
 
 // GetTable returns the schema for a table, or an error if not found.

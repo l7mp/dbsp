@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/go-logr/logr"
 
+	"github.com/l7mp/dbsp/datamodel/relation"
 	"github.com/l7mp/dbsp/dbsp/circuit"
 	"github.com/l7mp/dbsp/internal/logger"
 )
@@ -12,6 +13,7 @@ type appState struct {
 	circuits        map[string]*circuit.Circuit
 	executors       map[string]*boundExecutor
 	zsets           map[string]*boundZSet
+	db              *relation.Database
 	currentCircuit  string
 	currentExecutor string
 	currentZSet     string
@@ -25,6 +27,7 @@ func newState() *appState {
 		circuits:  make(map[string]*circuit.Circuit),
 		executors: make(map[string]*boundExecutor),
 		zsets:     make(map[string]*boundZSet),
+		db:        relation.NewDatabase("dbsp"),
 		logger:    logger.DiscardLogger(),
 	}
 }

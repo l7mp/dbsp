@@ -2,8 +2,8 @@ package sql
 
 import (
 	"fmt"
+	"sort"
 
-	"github.com/go-logr/logr"
 	"github.com/xwb1989/sqlparser"
 	"github.com/xwb1989/sqlparser/dependency/querypb"
 
@@ -224,32 +224,32 @@ func compileProjection(selectExprs sqlparser.SelectExprs, bindVars map[string]*q
 			entries[name] = exprRoot
 		}
 	}
-	root, err := compileProjectionSet(entries)
-	if err != nil {
-		return nil, err
+	// Sort keys for deterministic evaluation order.
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+
 	return expression.Func(func(ctx *expression.EvalContext) (any, error) {
 		if ctx == nil || ctx.Document() == nil {
 			return nil, fmt.Errorf("projection: missing document")
 		}
 		newDoc := ctx.Document().New()
-		_, err := root.Evaluate(expression.NewContext(newDoc).WithLogger(logr.Discard()))
-		if err != nil {
-			return nil, err
+		// Evaluate each expression in the original input context so that
+		// field lookups read from the input document, not from the (empty)
+		// output document.
+		for _, key := range keys {
+			val, err := entries[key].Evaluate(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("projection %s: %w", key, err)
+			}
+			if err := newDoc.SetField(key, val); err != nil {
+				return nil, fmt.Errorf("set field %s: %w", key, err)
+			}
 		}
 		return newDoc, nil
 	}), nil
-}
-
-func compileProjectionSet(entries map[string]dbsp.Expression) (dbsp.Expression, error) {
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("projection: empty set")
-	}
-	setOps := make([]dbsp.Expression, 0, len(entries))
-	for key, expr := range entries {
-		setOps = append(setOps, dbsp.NewSet(dbsp.NewConst(key), expr))
-	}
-	return dbsp.NewList(setOps...), nil
 }
 
 func fieldName(col *sqlparser.ColName) string {

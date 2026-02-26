@@ -27,6 +27,7 @@ func newRootCommand() *cobra.Command {
 	root.AddCommand(circuitRootCommand(nil, state))
 	root.AddCommand(zsetRootCommand(nil, state))
 	root.AddCommand(executorRootCommand(nil, state))
+	root.AddCommand(sqlRootCommand(nil, state))
 	root.AddCommand(newRunCommand())
 	root.AddCommand(newShellCommand())
 
@@ -54,6 +55,7 @@ func newShellCommand() *cobra.Command {
 			setupCircuitMenu(app, state)
 			setupZSetMenu(app, state)
 			setupExecutorMenu(app, state)
+			setupSQLMenu(app, state)
 
 			return app.Start()
 		},
