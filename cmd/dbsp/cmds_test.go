@@ -281,20 +281,20 @@ var _ = Describe("Executor commands", func() {
 			Expect(run("zset", "insert", `{"id":1}`)).To(Succeed())
 		})
 
-		It("stores output Z-sets using the provided prefix", func() {
+		It("stores the output Z-set under the provided name", func() {
 			Expect(run("executor", "execute", "--out", "result", "in=input-data")).To(Succeed())
-			Expect(state.zsets).To(HaveKey("result-out"))
-			Expect(state.zsets["result-out"].data.Size()).To(Equal(1))
+			Expect(state.zsets).To(HaveKey("result"))
+			Expect(state.zsets["result"].data.Size()).To(Equal(1))
 		})
 
-		It("defaults the prefix to the executor name", func() {
+		It("defaults the output name to <executor>-<node>", func() {
 			Expect(run("executor", "execute", "in=input-data")).To(Succeed())
 			Expect(state.zsets).To(HaveKey("e-out"))
 		})
 
 		It("passes the document through a pass-through circuit unchanged", func() {
 			Expect(run("executor", "execute", "--out", "r", "in=input-data")).To(Succeed())
-			outEntries := sortedEntries(state.zsets["r-out"].data)
+			outEntries := sortedEntries(state.zsets["r"].data)
 			inEntries := sortedEntries(state.zsets["input-data"].data)
 			Expect(outEntries[0].Document.Hash()).To(Equal(inEntries[0].Document.Hash()))
 		})

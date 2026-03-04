@@ -194,7 +194,7 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 	// --- Content commands (require current executor context) ---
 
 	executeCmd := &cobra.Command{
-		Use:   "execute [--out <prefix>] [<node>=<zset>...]",
+		Use:   "execute [--out <name>] [<node>=<zset>...]",
 		Short: "Run one circuit step with the given inputs",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -202,12 +202,9 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 			if err != nil {
 				return err
 			}
-			prefix, err := cmd.Flags().GetString("out")
+			outName, err := cmd.Flags().GetString("out")
 			if err != nil {
 				return err
-			}
-			if prefix == "" {
-				prefix = state.currentExecutor
 			}
 			// Parse node=zset pairs.
 			inputs := make(map[string]zset.ZSet)
@@ -227,7 +224,9 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 			if err != nil {
 				return err
 			}
-			// Store and report each output Z-set.
+			// Store and report each output Z-set. When --out is given and
+			// there is exactly one output node, use the name directly;
+			// otherwise append "-<node>" to disambiguate.
 			outNames := make([]string, 0, len(outputs))
 			for node := range outputs {
 				outNames = append(outNames, node)
@@ -235,14 +234,22 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 			sort.Strings(outNames)
 			for _, node := range outNames {
 				z := outputs[node]
-				name := prefix + "-" + node
+				var name string
+				switch {
+				case outName != "" && len(outputs) == 1:
+					name = outName
+				case outName != "":
+					name = outName + "-" + node
+				default:
+					name = state.currentExecutor + "-" + node
+				}
 				state.zsets[name] = &boundZSet{data: z}
 				fmt.Fprintf(os.Stdout, "Output: %s  (+%d docs)\n", name, z.Size())
 			}
 			return nil
 		},
 	}
-	executeCmd.Flags().String("out", "", "Output Z-set name prefix (default: executor name)")
+	executeCmd.Flags().String("out", "", "Output Z-set name (default: <executor>-<node>)")
 
 	incrementalizeCmd := &cobra.Command{
 		Use:   "incrementalize <new-name>",
