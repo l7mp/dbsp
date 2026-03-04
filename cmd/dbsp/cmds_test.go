@@ -11,9 +11,9 @@ import (
 // (input → output) in state and sets it as the current circuit.
 func simpleCircuit(run func(...string) error, name string) {
 	ExpectWithOffset(1, run("circuit", "create", name)).To(Succeed())
-	ExpectWithOffset(1, run("circuit", "node", "add", "in", "input")).To(Succeed())
-	ExpectWithOffset(1, run("circuit", "node", "add", "out", "output")).To(Succeed())
-	ExpectWithOffset(1, run("circuit", "edge", "add", "in", "out", "0")).To(Succeed())
+	ExpectWithOffset(1, run("circuit", "node", "add", name, "in", "input")).To(Succeed())
+	ExpectWithOffset(1, run("circuit", "node", "add", name, "out", "output")).To(Succeed())
+	ExpectWithOffset(1, run("circuit", "edge", "add", name, "in", "out", "0")).To(Succeed())
 }
 
 var _ = Describe("ZSet commands", func() {
@@ -27,10 +27,9 @@ var _ = Describe("ZSet commands", func() {
 	})
 
 	Describe("create", func() {
-		It("creates a new Z-set and selects it", func() {
+		It("creates a new Z-set", func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
 			Expect(state.zsets).To(HaveKey("foo"))
-			Expect(state.currentZSet).To(Equal("foo"))
 		})
 
 		It("errors on duplicate name", func() {
@@ -44,73 +43,65 @@ var _ = Describe("ZSet commands", func() {
 		})
 	})
 
-	Describe("update", func() {
-		It("sets the current Z-set to an existing one", func() {
-			Expect(run("zset", "create", "foo")).To(Succeed())
-			Expect(run("zset", "create", "bar")).To(Succeed())
-			Expect(run("zset", "update", "foo")).To(Succeed())
-			Expect(state.currentZSet).To(Equal("foo"))
-		})
-
-		It("errors on unknown name", func() {
-			Expect(run("zset", "update", "nope")).To(MatchError(ContainSubstring("not found")))
-		})
-	})
-
 	Describe("insert", func() {
 		BeforeEach(func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
 		})
 
 		It("inserts a document with default weight 1", func() {
-			Expect(run("zset", "insert", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
 			Expect(state.zsets["foo"].data.Size()).To(Equal(1))
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(1)))
 		})
 
 		It("inserts a document with a custom weight", func() {
-			Expect(run("zset", "insert", `{"id":1}`, "--weight", "-2")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`, "--weight", "-2")).To(Succeed())
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(-2)))
 		})
 
 		It("accumulates weight for the same document", func() {
-			Expect(run("zset", "insert", `{"id":1}`)).To(Succeed())
-			Expect(run("zset", "insert", `{"id":1}`, "--weight", "2")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`, "--weight", "2")).To(Succeed())
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(3)))
 		})
 
 		It("removes the entry when cumulative weight reaches zero", func() {
-			Expect(run("zset", "insert", `{"id":1}`)).To(Succeed())
-			Expect(run("zset", "insert", `{"id":1}`, "--weight", "-1")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`, "--weight", "-1")).To(Succeed())
 			Expect(state.zsets["foo"].data.Size()).To(Equal(0))
+		})
+
+		It("errors on unknown zset name", func() {
+			Expect(run("zset", "insert", "nope", `{"id":1}`)).
+				To(MatchError(ContainSubstring("not found")))
 		})
 	})
 
 	Describe("weight", func() {
 		BeforeEach(func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
-			Expect(run("zset", "insert", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
 		})
 
 		It("changes the weight of an entry by 1-based index", func() {
-			Expect(run("zset", "weight", "1", "5")).To(Succeed())
+			Expect(run("zset", "weight", "foo", "1", "5")).To(Succeed())
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(5)))
 		})
 
 		It("errors on out-of-range index", func() {
-			Expect(run("zset", "weight", "99", "1")).To(MatchError(ContainSubstring("out of range")))
+			Expect(run("zset", "weight", "foo", "99", "1")).To(MatchError(ContainSubstring("out of range")))
 		})
 	})
 
 	Describe("negate", func() {
 		It("flips all weights", func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
-			Expect(run("zset", "insert", `{"id":1}`)).To(Succeed())
-			Expect(run("zset", "negate")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "negate", "foo")).To(Succeed())
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(-1)))
 		})
@@ -119,8 +110,8 @@ var _ = Describe("ZSet commands", func() {
 	Describe("clear", func() {
 		It("removes all entries", func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
-			Expect(run("zset", "insert", `{"id":1}`)).To(Succeed())
-			Expect(run("zset", "clear")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "clear", "foo")).To(Succeed())
 			Expect(state.zsets["foo"].data.Size()).To(Equal(0))
 		})
 	})
@@ -130,12 +121,6 @@ var _ = Describe("ZSet commands", func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
 			Expect(run("zset", "delete", "foo")).To(Succeed())
 			Expect(state.zsets).NotTo(HaveKey("foo"))
-		})
-
-		It("clears currentZSet when the selected Z-set is deleted", func() {
-			Expect(run("zset", "create", "foo")).To(Succeed())
-			Expect(run("zset", "delete", "foo")).To(Succeed())
-			Expect(state.currentZSet).To(Equal(""))
 		})
 
 		It("errors on unknown name", func() {
@@ -155,10 +140,9 @@ var _ = Describe("Circuit commands", func() {
 	})
 
 	Describe("create", func() {
-		It("creates a circuit and selects it", func() {
+		It("creates a circuit", func() {
 			Expect(run("circuit", "create", "c")).To(Succeed())
 			Expect(state.circuits).To(HaveKey("c"))
-			Expect(state.currentCircuit).To(Equal("c"))
 		})
 
 		It("errors on duplicate name", func() {
@@ -173,13 +157,13 @@ var _ = Describe("Circuit commands", func() {
 		})
 
 		It("adds an input node", func() {
-			Expect(run("circuit", "node", "add", "in", "input")).To(Succeed())
+			Expect(run("circuit", "node", "add", "c", "in", "input")).To(Succeed())
 			Expect(state.circuits["c"].Node("in")).NotTo(BeNil())
 		})
 
 		It("deletes a node", func() {
-			Expect(run("circuit", "node", "add", "in", "input")).To(Succeed())
-			Expect(run("circuit", "node", "delete", "in")).To(Succeed())
+			Expect(run("circuit", "node", "add", "c", "in", "input")).To(Succeed())
+			Expect(run("circuit", "node", "delete", "c", "in")).To(Succeed())
 			Expect(state.circuits["c"].Node("in")).To(BeNil())
 		})
 	})
@@ -194,7 +178,7 @@ var _ = Describe("Circuit commands", func() {
 		})
 
 		It("deletes an edge", func() {
-			Expect(run("circuit", "edge", "delete", "in", "out", "0")).To(Succeed())
+			Expect(run("circuit", "edge", "delete", "c", "in", "out", "0")).To(Succeed())
 			Expect(state.circuits["c"].Edges()).To(BeEmpty())
 		})
 	})
@@ -202,7 +186,7 @@ var _ = Describe("Circuit commands", func() {
 	Describe("validate", func() {
 		It("succeeds for a well-formed circuit", func() {
 			simpleCircuit(run, "c")
-			Expect(run("circuit", "validate")).To(Succeed())
+			Expect(run("circuit", "validate", "c")).To(Succeed())
 		})
 	})
 
@@ -212,13 +196,13 @@ var _ = Describe("Circuit commands", func() {
 		})
 
 		It("stores the incremental circuit under a new name", func() {
-			Expect(run("circuit", "incrementalize", "c-inc")).To(Succeed())
+			Expect(run("circuit", "incrementalize", "c", "c-inc")).To(Succeed())
 			Expect(state.circuits).To(HaveKey("c-inc"))
 		})
 
 		It("errors when the target name already exists", func() {
-			Expect(run("circuit", "incrementalize", "c-inc")).To(Succeed())
-			Expect(run("circuit", "incrementalize", "c-inc")).
+			Expect(run("circuit", "incrementalize", "c", "c-inc")).To(Succeed())
+			Expect(run("circuit", "incrementalize", "c", "c-inc")).
 				To(MatchError(ContainSubstring("already exists")))
 		})
 	})
@@ -228,12 +212,6 @@ var _ = Describe("Circuit commands", func() {
 			Expect(run("circuit", "create", "c")).To(Succeed())
 			Expect(run("circuit", "delete", "c")).To(Succeed())
 			Expect(state.circuits).NotTo(HaveKey("c"))
-		})
-
-		It("clears currentCircuit when the selected circuit is deleted", func() {
-			Expect(run("circuit", "create", "c")).To(Succeed())
-			Expect(run("circuit", "delete", "c")).To(Succeed())
-			Expect(state.currentCircuit).To(Equal(""))
 		})
 	})
 })
@@ -250,11 +228,10 @@ var _ = Describe("Executor commands", func() {
 	})
 
 	Describe("create", func() {
-		It("creates an executor and selects it", func() {
+		It("creates an executor", func() {
 			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
 			Expect(state.executors).To(HaveKey("e"))
 			Expect(state.executors["e"].circuitName).To(Equal("c"))
-			Expect(state.currentExecutor).To(Equal("e"))
 		})
 
 		It("errors when --circuit is omitted", func() {
@@ -278,29 +255,35 @@ var _ = Describe("Executor commands", func() {
 		BeforeEach(func() {
 			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
 			Expect(run("zset", "create", "input-data")).To(Succeed())
-			Expect(run("zset", "insert", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "input-data", `{"id":1}`)).To(Succeed())
 		})
 
-		It("stores the output Z-set under the provided name", func() {
-			Expect(run("executor", "execute", "--out", "result", "in=input-data")).To(Succeed())
+		It("stores the output Z-set under the assigned name", func() {
+			Expect(run("executor", "execute", "e", "in=input-data", "out=result")).To(Succeed())
 			Expect(state.zsets).To(HaveKey("result"))
 			Expect(state.zsets["result"].data.Size()).To(Equal(1))
 		})
 
-		It("defaults the output name to <executor>-<node>", func() {
-			Expect(run("executor", "execute", "in=input-data")).To(Succeed())
+		It("overwrites an existing Z-set with the same name", func() {
+			Expect(run("zset", "create", "result")).To(Succeed())
+			Expect(run("executor", "execute", "e", "in=input-data", "out=result")).To(Succeed())
+			Expect(state.zsets["result"].data.Size()).To(Equal(1))
+		})
+
+		It("defaults the output name to <executor>-<node> for a single output", func() {
+			Expect(run("executor", "execute", "e", "in=input-data")).To(Succeed())
 			Expect(state.zsets).To(HaveKey("e-out"))
 		})
 
 		It("passes the document through a pass-through circuit unchanged", func() {
-			Expect(run("executor", "execute", "--out", "r", "in=input-data")).To(Succeed())
+			Expect(run("executor", "execute", "e", "in=input-data", "out=r")).To(Succeed())
 			outEntries := sortedEntries(state.zsets["r"].data)
 			inEntries := sortedEntries(state.zsets["input-data"].data)
 			Expect(outEntries[0].Document.Hash()).To(Equal(inEntries[0].Document.Hash()))
 		})
 
 		It("errors on an unknown input Z-set", func() {
-			Expect(run("executor", "execute", "in=nope")).
+			Expect(run("executor", "execute", "e", "in=nope")).
 				To(MatchError(ContainSubstring("not found")))
 		})
 	})
@@ -311,22 +294,21 @@ var _ = Describe("Executor commands", func() {
 		})
 
 		It("creates an incremental circuit and executor", func() {
-			Expect(run("executor", "incrementalize", "e-inc")).To(Succeed())
+			Expect(run("executor", "incrementalize", "e", "e-inc")).To(Succeed())
 			Expect(state.circuits).To(HaveKey("c-inc"))
 			Expect(state.executors).To(HaveKey("e-inc"))
 			Expect(state.executors["e-inc"].circuitName).To(Equal("c-inc"))
 		})
 
 		It("errors if the incremental circuit already exists", func() {
-			Expect(run("executor", "incrementalize", "e-inc")).To(Succeed())
-			Expect(run("executor", "incrementalize", "e-inc2")).
+			Expect(run("executor", "incrementalize", "e", "e-inc")).To(Succeed())
+			Expect(run("executor", "incrementalize", "e", "e-inc2")).
 				To(MatchError(ContainSubstring("already exists")))
 		})
 
 		It("errors if the new executor name already exists", func() {
 			Expect(run("executor", "create", "e-inc", "--circuit", "c")).To(Succeed())
-			Expect(run("executor", "update", "e")).To(Succeed())
-			Expect(run("executor", "incrementalize", "e-inc")).
+			Expect(run("executor", "incrementalize", "e", "e-inc")).
 				To(MatchError(ContainSubstring("already exists")))
 		})
 	})
@@ -334,7 +316,7 @@ var _ = Describe("Executor commands", func() {
 	Describe("reset", func() {
 		It("resets executor state without error", func() {
 			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
-			Expect(run("executor", "reset")).To(Succeed())
+			Expect(run("executor", "reset", "e")).To(Succeed())
 		})
 	})
 
@@ -343,12 +325,6 @@ var _ = Describe("Executor commands", func() {
 			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
 			Expect(run("executor", "delete", "e")).To(Succeed())
 			Expect(state.executors).NotTo(HaveKey("e"))
-		})
-
-		It("clears currentExecutor when the selected executor is deleted", func() {
-			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
-			Expect(run("executor", "delete", "e")).To(Succeed())
-			Expect(state.currentExecutor).To(Equal(""))
 		})
 	})
 })

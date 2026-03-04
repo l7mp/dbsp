@@ -16,21 +16,22 @@ import (
 // callers control error presentation.
 func buildRootCmd(state *appState) *cobra.Command {
 	root := &cobra.Command{
-		Use:          "dbsp",
+		Use:           "dbsp",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
-	root.AddCommand(circuitRootCommand(nil, state))
-	root.AddCommand(zsetRootCommand(nil, state))
-	root.AddCommand(executorRootCommand(nil, state))
-	root.AddCommand(sqlRootCommand(nil, state))
+	root.AddCommand(circuitRootCommand(state))
+	root.AddCommand(zsetRootCommand(state))
+	root.AddCommand(executorRootCommand(state))
+	root.AddCommand(sqlRootCommand(state))
 	return root
 }
 
 // setupRootMenu configures the default (root) interactive menu.
 func setupRootMenu(app *console.Console, state *appState) {
 	menu := app.ActiveMenu()
-	setupPrompt(menu, state)
+	p := menu.Prompt()
+	p.Primary = func() string { return "dbsp > " }
 	menu.AddInterrupt(io.EOF, func(c *console.Console) {
 		fmt.Fprintln(os.Stdout, "Exiting shell")
 		os.Exit(0)
@@ -38,82 +39,19 @@ func setupRootMenu(app *console.Console, state *appState) {
 
 	menu.SetCommands(func() *cobra.Command {
 		root := &cobra.Command{}
-		root.AddCommand(circuitRootCommand(app, state))
-		root.AddCommand(zsetRootCommand(app, state))
-		root.AddCommand(executorRootCommand(app, state))
-		root.AddCommand(sqlRootCommand(app, state))
-		root.AddCommand(newExitCommand(app, state))
-		return root
-	})
-}
-
-// setupCircuitMenu configures the "circuit" interactive sub-menu.
-func setupCircuitMenu(app *console.Console, state *appState) {
-	menu := app.NewMenu("circuit")
-	setupPrompt(menu, state)
-	menu.AddInterrupt(io.EOF, func(c *console.Console) {
-		switchToParentMenu(app, state)
-	})
-
-	menu.SetCommands(func() *cobra.Command {
-		root := &cobra.Command{}
-		for _, cmd := range circuitMenuCommands(app, state) {
-			root.AddCommand(cmd)
-		}
-		root.AddCommand(newExitCommand(app, state))
-		return root
-	})
-}
-
-// setupPrompt installs a context-aware prompt on any menu.
-func setupPrompt(menu *console.Menu, state *appState) {
-	p := menu.Prompt()
-	p.Primary = func() string {
-		switch {
-		case state.currentCircuit != "":
-			return fmt.Sprintf("dbsp circuit(%s) > ", state.currentCircuit)
-		case state.currentExecutor != "":
-			return fmt.Sprintf("dbsp executor(%s) > ", state.currentExecutor)
-		case state.currentZSet != "":
-			return fmt.Sprintf("dbsp zset(%s) > ", state.currentZSet)
-		default:
-			return "dbsp > "
-		}
-	}
-}
-
-// newExitCommand returns a cobra command that exits the current menu or the
-// whole shell when already at the root.
-func newExitCommand(app *console.Console, state *appState) *cobra.Command {
-	return &cobra.Command{
-		Use:   "exit",
-		Short: "Exit current menu",
-		Run: func(cmd *cobra.Command, args []string) {
-			appMenu := app.ActiveMenu()
-			if appMenu.Name() == "" {
+		root.AddCommand(circuitRootCommand(state))
+		root.AddCommand(zsetRootCommand(state))
+		root.AddCommand(executorRootCommand(state))
+		root.AddCommand(sqlRootCommand(state))
+		root.AddCommand(&cobra.Command{
+			Use:   "exit",
+			Short: "Exit the shell",
+			Run: func(cmd *cobra.Command, args []string) {
 				os.Exit(0)
-			}
-			switchToParentMenu(app, state)
-		},
-	}
-}
-
-// switchToParentMenu returns to the parent menu and clears all context fields.
-func switchToParentMenu(app *console.Console, state *appState) {
-	if state == nil || state.parentMenu == "" {
-		app.SwitchMenu("")
-		if state != nil {
-			state.currentCircuit = ""
-			state.currentExecutor = ""
-			state.currentZSet = ""
-		}
-		return
-	}
-	app.SwitchMenu(state.parentMenu)
-	state.parentMenu = ""
-	state.currentCircuit = ""
-	state.currentExecutor = ""
-	state.currentZSet = ""
+			},
+		})
+		return root
+	})
 }
 
 // runLineShell runs a simple line-by-line interactive shell on stdin.

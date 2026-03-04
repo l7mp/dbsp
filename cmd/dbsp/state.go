@@ -10,15 +10,11 @@ import (
 
 // appState holds all mutable shell state shared across commands.
 type appState struct {
-	circuits        map[string]*circuit.Circuit
-	executors       map[string]*boundExecutor
-	zsets           map[string]*boundZSet
-	db              *relation.Database
-	currentCircuit  string
-	currentExecutor string
-	currentZSet     string
-	parentMenu      string
-	logger          logr.Logger
+	circuits  map[string]*circuit.Circuit
+	executors map[string]*boundExecutor
+	zsets     map[string]*boundZSet
+	db        *relation.Database
+	logger    logr.Logger
 }
 
 // newState returns a fresh appState with all maps initialised and a discard logger.

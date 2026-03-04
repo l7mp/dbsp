@@ -2,13 +2,11 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/reeflective/console"
 	"github.com/spf13/cobra"
 
 	"github.com/l7mp/dbsp/datamodel"
@@ -22,38 +20,26 @@ type boundZSet struct {
 	data      zset.ZSet
 }
 
-func zsetRootCommand(app *console.Console, state *appState) *cobra.Command {
+func zsetRootCommand(state *appState) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "zset",
 		Short: "Z-set management",
 	}
-	for _, cmd := range zsetMenuCommands(app, state) {
-		root.AddCommand(cmd)
-	}
+	root.AddCommand(
+		createZSetCmd(state),
+		getZSetCmd(state),
+		deleteZSetCmd(state),
+		listZSetsCmd(state),
+		insertCmd(state),
+		weightCmd(state),
+		negateCmd(state),
+		clearCmd(state),
+	)
 	return root
 }
 
-func setupZSetMenu(app *console.Console, state *appState) {
-	menu := app.NewMenu("zset")
-	setupPrompt(menu, state)
-	menu.AddInterrupt(io.EOF, func(c *console.Console) {
-		switchToParentMenu(app, state)
-	})
-
-	menu.SetCommands(func() *cobra.Command {
-		root := &cobra.Command{}
-		for _, cmd := range zsetMenuCommands(app, state) {
-			root.AddCommand(cmd)
-		}
-		root.AddCommand(newExitCommand(app, state))
-		return root
-	})
-}
-
-func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
-	// --- Lifecycle commands ---
-
-	createZSet := &cobra.Command{
+func createZSetCmd(state *appState) *cobra.Command {
+	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a new empty Z-set",
 		Args:  cobra.ExactArgs(1),
@@ -70,75 +56,30 @@ func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
 				return fmt.Errorf("zset %s already exists", name)
 			}
 			state.zsets[name] = &boundZSet{data: zset.New()}
-			enterZSetContext(app, state, name)
 			return nil
 		},
 	}
-	createZSet.Flags().String("table", "", "Bind Z-set to a table (not yet implemented)")
-	if app == nil {
-		createZSet.RunE = func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			tableName, err := cmd.Flags().GetString("table")
-			if err != nil {
-				return err
-			}
-			if tableName != "" {
-				return fmt.Errorf("table-bound zsets not yet implemented")
-			}
-			if _, exists := state.zsets[name]; exists {
-				return fmt.Errorf("zset %s already exists", name)
-			}
-			state.zsets[name] = &boundZSet{data: zset.New()}
-			state.currentZSet = name
-			return nil
-		}
-	}
+	cmd.Flags().String("table", "", "Bind Z-set to a table (not yet implemented)")
+	return cmd
+}
 
-	updateZSet := &cobra.Command{
-		Use:   "update <name>",
-		Short: "Enter Z-set edit mode",
+func getZSetCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <name>",
+		Short: "Print Z-set entries",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if _, exists := state.zsets[name]; !exists {
-				return fmt.Errorf("zset %s not found", name)
-			}
-			enterZSetContext(app, state, name)
-			return nil
-		},
-	}
-	if app == nil {
-		updateZSet.Short = "Set the current Z-set"
-		updateZSet.RunE = func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if _, exists := state.zsets[name]; !exists {
-				return fmt.Errorf("zset %s not found", name)
-			}
-			state.currentZSet = name
-			return nil
-		}
-	}
-
-	getZSet := &cobra.Command{
-		Use:   "get [<name>]",
-		Short: "Print Z-set entries",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			var bz *boundZSet
-			var err error
-			if len(args) == 1 {
-				bz, err = requireZSet(state, args[0])
-			} else {
-				bz, err = requireCurrentZSet(state)
-			}
+			bz, err := requireZSet(state, args[0])
 			if err != nil {
 				return err
 			}
 			return printZSetEntries(bz.data)
 		},
 	}
+}
 
-	deleteZSet := &cobra.Command{
+func deleteZSetCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete a Z-set",
 		Args:  cobra.ExactArgs(1),
@@ -148,14 +89,13 @@ func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
 				return fmt.Errorf("zset %s not found", name)
 			}
 			delete(state.zsets, name)
-			if state.currentZSet == name {
-				state.currentZSet = ""
-			}
 			return nil
 		},
 	}
+}
 
-	listZSets := &cobra.Command{
+func listZSetsCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
 		Use:   "list",
 		Short: "List Z-sets",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -173,15 +113,15 @@ func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
 			}
 		},
 	}
+}
 
-	// --- Content commands (require current Z-set context) ---
-
-	insertCmd := &cobra.Command{
-		Use:   "insert <json>",
-		Short: "Insert a JSON document into the current Z-set",
-		Args:  cobra.ExactArgs(1),
+func insertCmd(state *appState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "insert <name> <json>",
+		Short: "Insert a JSON document into a Z-set",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bz, err := requireCurrentZSet(state)
+			bz, err := requireZSet(state, args[0])
 			if err != nil {
 				return err
 			}
@@ -190,7 +130,7 @@ func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
 				return err
 			}
 			// Strip surrounding shell quotes if present (common in interactive use).
-			raw := strings.Trim(args[0], "'\"")
+			raw := strings.Trim(args[1], "'\"")
 			doc, err := datamodel.ParseUnstructured([]byte(raw))
 			if err != nil {
 				return err
@@ -199,24 +139,27 @@ func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
 			return nil
 		},
 	}
-	insertCmd.Flags().Int64("weight", 1, "Element weight (default 1)")
+	cmd.Flags().Int64("weight", 1, "Element weight (default 1)")
+	return cmd
+}
 
-	weightCmd := &cobra.Command{
-		Use:   "weight <idx> <w>",
+func weightCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "weight <name> <idx> <w>",
 		Short: "Change the weight of an element by 1-based index",
-		Args:  cobra.ExactArgs(2),
+		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bz, err := requireCurrentZSet(state)
+			bz, err := requireZSet(state, args[0])
 			if err != nil {
 				return err
 			}
-			idx, err := strconv.Atoi(args[0])
+			idx, err := strconv.Atoi(args[1])
 			if err != nil || idx < 1 {
-				return fmt.Errorf("invalid index %q: must be a positive integer", args[0])
+				return fmt.Errorf("invalid index %q: must be a positive integer", args[1])
 			}
-			newW, err := strconv.ParseInt(args[1], 10, 64)
+			newW, err := strconv.ParseInt(args[2], 10, 64)
 			if err != nil {
-				return fmt.Errorf("invalid weight %q: must be an integer", args[1])
+				return fmt.Errorf("invalid weight %q: must be an integer", args[2])
 			}
 			entries := sortedEntries(bz.data)
 			if idx > len(entries) {
@@ -230,12 +173,15 @@ func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
 			return nil
 		},
 	}
+}
 
-	negateCmd := &cobra.Command{
-		Use:   "negate",
-		Short: "Negate all weights in the current Z-set",
+func negateCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "negate <name>",
+		Short: "Negate all weights in a Z-set",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bz, err := requireCurrentZSet(state)
+			bz, err := requireZSet(state, args[0])
 			if err != nil {
 				return err
 			}
@@ -243,12 +189,15 @@ func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
 			return nil
 		},
 	}
+}
 
-	clearCmd := &cobra.Command{
-		Use:   "clear",
-		Short: "Remove all entries from the current Z-set",
+func clearCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "clear <name>",
+		Short: "Remove all entries from a Z-set",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bz, err := requireCurrentZSet(state)
+			bz, err := requireZSet(state, args[0])
 			if err != nil {
 				return err
 			}
@@ -256,30 +205,6 @@ func zsetMenuCommands(app *console.Console, state *appState) []*cobra.Command {
 			return nil
 		},
 	}
-
-	return []*cobra.Command{
-		createZSet,
-		updateZSet,
-		getZSet,
-		deleteZSet,
-		listZSets,
-		insertCmd,
-		weightCmd,
-		negateCmd,
-		clearCmd,
-	}
-}
-
-func enterZSetContext(app *console.Console, state *appState, name string) {
-	if app == nil {
-		state.currentZSet = name
-		return
-	}
-	if app.ActiveMenu().Name() != "zset" {
-		state.parentMenu = app.ActiveMenu().Name()
-		app.SwitchMenu("zset")
-	}
-	state.currentZSet = name
 }
 
 func requireZSet(state *appState, name string) (*boundZSet, error) {
@@ -288,13 +213,6 @@ func requireZSet(state *appState, name string) (*boundZSet, error) {
 		return nil, fmt.Errorf("zset %s not found", name)
 	}
 	return bz, nil
-}
-
-func requireCurrentZSet(state *appState) (*boundZSet, error) {
-	if state.currentZSet == "" {
-		return nil, fmt.Errorf("no z-set selected (use 'zset update <name>')")
-	}
-	return requireZSet(state, state.currentZSet)
 }
 
 // sortedEntries returns ZSet entries sorted deterministically by document hash.

@@ -17,70 +17,47 @@ func main() {
 }
 
 func newRootCommand() *cobra.Command {
-	state := newState()
-
-	root := &cobra.Command{
-		Use:   "dbsp",
-		Short: "DBSP command-line tools",
-	}
-
-	root.AddCommand(circuitRootCommand(nil, state))
-	root.AddCommand(zsetRootCommand(nil, state))
-	root.AddCommand(executorRootCommand(nil, state))
-	root.AddCommand(sqlRootCommand(nil, state))
-	root.AddCommand(newRunCommand())
-	root.AddCommand(newShellCommand())
-
-	return root
-}
-
-func newShellCommand() *cobra.Command {
 	var noReadline bool
 
-	cmd := &cobra.Command{
-		Use:   "shell",
-		Short: "Start interactive DBSP shell",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			state := newState()
+	root := &cobra.Command{
+		Use:   "dbsp [script]",
+		Short: "DBSP command-line tools",
+		Long: `DBSP command-line tools.
 
+With no arguments, starts an interactive shell.
+With a script file argument, executes the script.
+Subcommands (circuit, zset, executor, sql) are also available directly.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				// Script mode: run commands from file.
+				file, err := os.Open(args[0])
+				if err != nil {
+					return err
+				}
+				defer file.Close()
+				return runScript(newState(), file, args[0])
+			}
+			// Interactive mode.
+			state := newState()
 			if noReadline {
 				return runLineShell(state)
 			}
-
 			app := console.New("dbsp")
 			app.NewlineBefore = true
 			app.NewlineAfter = true
-
 			setupRootMenu(app, state)
-			setupCircuitMenu(app, state)
-			setupZSetMenu(app, state)
-			setupExecutorMenu(app, state)
-			setupSQLMenu(app, state)
-
 			return app.Start()
 		},
 	}
 
-	cmd.Flags().BoolVar(&noReadline, "no-readline", false, "Disable readline and run a basic line shell")
+	root.Flags().BoolVar(&noReadline, "no-readline", false, "Disable readline (interactive mode only)")
 
-	return cmd
-}
+	state := newState()
+	root.AddCommand(circuitRootCommand(state))
+	root.AddCommand(zsetRootCommand(state))
+	root.AddCommand(executorRootCommand(state))
+	root.AddCommand(sqlRootCommand(state))
 
-func newRunCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "run <script>",
-		Short: "Run DBSP commands from a script file",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			file, err := os.Open(args[0])
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			return runScript(newState(), file, args[0])
-		},
-	}
-
-	return cmd
+	return root
 }

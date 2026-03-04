@@ -3,14 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/reeflective/console"
 	"github.com/spf13/cobra"
 	"github.com/xwb1989/sqlparser"
 
@@ -21,49 +19,18 @@ import (
 	"github.com/l7mp/dbsp/dbsp/zset"
 )
 
-func sqlRootCommand(app *console.Console, state *appState) *cobra.Command {
+func sqlRootCommand(state *appState) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "sql",
 		Short: "SQL table and query management",
 	}
-	if app != nil {
-		// Bare "sql" enters the SQL submenu.
-		root.RunE = func(cmd *cobra.Command, args []string) error {
-			enterSQLContext(app, state)
-			return nil
-		}
-	}
-	for _, cmd := range sqlMenuCommands(app, state) {
+	for _, cmd := range sqlCommands(state) {
 		root.AddCommand(cmd)
 	}
 	return root
 }
 
-func setupSQLMenu(app *console.Console, state *appState) {
-	menu := app.NewMenu("sql")
-	setupSQLPrompt(menu)
-	menu.AddInterrupt(io.EOF, func(c *console.Console) {
-		switchToParentMenu(app, state)
-	})
-	menu.SetCommands(func() *cobra.Command {
-		root := &cobra.Command{}
-		for _, cmd := range sqlMenuCommands(app, state) {
-			root.AddCommand(cmd)
-		}
-		root.AddCommand(newExitCommand(app, state))
-		return root
-	})
-}
-
-// setupSQLPrompt installs a fixed prompt on the SQL menu.
-func setupSQLPrompt(menu *console.Menu) {
-	p := menu.Prompt()
-	p.Primary = func() string {
-		return "dbsp sql > "
-	}
-}
-
-func sqlMenuCommands(app *console.Console, state *appState) []*cobra.Command {
+func sqlCommands(state *appState) []*cobra.Command {
 	createCmd := &cobra.Command{
 		Use:   "create <TOKEN>...",
 		Short: "Execute a CREATE TABLE statement",
@@ -180,16 +147,6 @@ Flags:
 		dropCmd,
 		tablesCmd,
 		describeCmd,
-	}
-}
-
-func enterSQLContext(app *console.Console, state *appState) {
-	if app == nil {
-		return
-	}
-	if app.ActiveMenu().Name() != "sql" {
-		state.parentMenu = app.ActiveMenu().Name()
-		app.SwitchMenu("sql")
 	}
 }
 

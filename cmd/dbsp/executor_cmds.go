@@ -2,12 +2,10 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"sort"
 	"strings"
 
-	"github.com/reeflective/console"
 	"github.com/spf13/cobra"
 
 	"github.com/l7mp/dbsp/dbsp/executor"
@@ -22,38 +20,25 @@ type boundExecutor struct {
 	exec        *executor.Executor
 }
 
-func executorRootCommand(app *console.Console, state *appState) *cobra.Command {
+func executorRootCommand(state *appState) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "executor",
 		Short: "Executor management",
 	}
-	for _, cmd := range executorMenuCommands(app, state) {
-		root.AddCommand(cmd)
-	}
+	root.AddCommand(
+		createExecutorCmd(state),
+		getExecutorCmd(state),
+		deleteExecutorCmd(state),
+		listExecutorsCmd(state),
+		executeCmd(state),
+		incrementalizeExecutorCmd(state),
+		resetCmd(state),
+	)
 	return root
 }
 
-func setupExecutorMenu(app *console.Console, state *appState) {
-	menu := app.NewMenu("executor")
-	setupPrompt(menu, state)
-	menu.AddInterrupt(io.EOF, func(c *console.Console) {
-		switchToParentMenu(app, state)
-	})
-
-	menu.SetCommands(func() *cobra.Command {
-		root := &cobra.Command{}
-		for _, cmd := range executorMenuCommands(app, state) {
-			root.AddCommand(cmd)
-		}
-		root.AddCommand(newExitCommand(app, state))
-		return root
-	})
-}
-
-func executorMenuCommands(app *console.Console, state *appState) []*cobra.Command {
-	// --- Lifecycle commands ---
-
-	createExecutor := &cobra.Command{
+func createExecutorCmd(state *appState) *cobra.Command {
+	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a new executor for a circuit",
 		Args:  cobra.ExactArgs(1),
@@ -78,75 +63,20 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 				return err
 			}
 			state.executors[name] = &boundExecutor{circuitName: circuitName, exec: exec}
-			enterExecutorContext(app, state, name)
 			return nil
 		},
 	}
-	createExecutor.Flags().String("circuit", "", "Circuit to build the executor for")
-	if app == nil {
-		createExecutor.RunE = func(cmd *cobra.Command, args []string) error {
-			circuitName, err := cmd.Flags().GetString("circuit")
-			if err != nil {
-				return err
-			}
-			if circuitName == "" {
-				return fmt.Errorf("circuit name required (use --circuit)")
-			}
-			c, err := requireCircuit(state, circuitName)
-			if err != nil {
-				return err
-			}
-			name := args[0]
-			if _, exists := state.executors[name]; exists {
-				return fmt.Errorf("executor %s already exists", name)
-			}
-			exec, err := executor.New(c, state.logger)
-			if err != nil {
-				return err
-			}
-			state.executors[name] = &boundExecutor{circuitName: circuitName, exec: exec}
-			state.currentExecutor = name
-			return nil
-		}
-	}
+	cmd.Flags().String("circuit", "", "Circuit to build the executor for")
+	return cmd
+}
 
-	updateExecutor := &cobra.Command{
-		Use:   "update <name>",
-		Short: "Enter executor edit mode",
+func getExecutorCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <name>",
+		Short: "Print executor info",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if _, exists := state.executors[name]; !exists {
-				return fmt.Errorf("executor %s not found", name)
-			}
-			enterExecutorContext(app, state, name)
-			return nil
-		},
-	}
-	if app == nil {
-		updateExecutor.Short = "Set the current executor"
-		updateExecutor.RunE = func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if _, exists := state.executors[name]; !exists {
-				return fmt.Errorf("executor %s not found", name)
-			}
-			state.currentExecutor = name
-			return nil
-		}
-	}
-
-	getExecutor := &cobra.Command{
-		Use:   "get [<name>]",
-		Short: "Print executor info",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			var be *boundExecutor
-			var err error
-			if len(args) == 1 {
-				be, err = requireExecutor(state, args[0])
-			} else {
-				be, err = requireCurrentExecutor(state)
-			}
+			be, err := requireExecutor(state, args[0])
 			if err != nil {
 				return err
 			}
@@ -154,8 +84,10 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 			return nil
 		},
 	}
+}
 
-	deleteExecutor := &cobra.Command{
+func deleteExecutorCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete an executor",
 		Args:  cobra.ExactArgs(1),
@@ -165,14 +97,13 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 				return fmt.Errorf("executor %s not found", name)
 			}
 			delete(state.executors, name)
-			if state.currentExecutor == name {
-				state.currentExecutor = ""
-			}
 			return nil
 		},
 	}
+}
 
-	listExecutors := &cobra.Command{
+func listExecutorsCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
 		Use:   "list",
 		Short: "List executors",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -190,77 +121,113 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 			}
 		},
 	}
+}
 
-	// --- Content commands (require current executor context) ---
+func executeCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "execute <name> [<node>=<zset>...]",
+		Short: "Run one circuit step with the given inputs and outputs",
+		Long: `Run one step of the named executor's circuit.
 
-	executeCmd := &cobra.Command{
-		Use:   "execute [--out <name>] [<node>=<zset>...]",
-		Short: "Run one circuit step with the given inputs",
-		Args:  cobra.ArbitraryArgs,
+Each additional argument is a node=zset pair. Whether it is treated as an
+input or an output is determined by the circuit topology:
+  - input node:  the named Z-set is fed into the circuit
+  - output node: the circuit result is stored in the named Z-set,
+                 overwriting any existing Z-set with that name
+
+Output assignments are optional when the circuit has exactly one output node;
+in that case the result is stored under <executor>-<node> by default. If there
+are multiple output nodes and not all of them are assigned, the command errors.`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			be, err := requireCurrentExecutor(state)
+			execName := args[0]
+			be, err := requireExecutor(state, execName)
 			if err != nil {
 				return err
 			}
-			outName, err := cmd.Flags().GetString("out")
+			c, err := requireCircuit(state, be.circuitName)
 			if err != nil {
 				return err
 			}
-			// Parse node=zset pairs.
+
+			// Build sets of input and output node names from the circuit.
+			inputNodes := make(map[string]bool)
+			for _, n := range c.Inputs() {
+				inputNodes[n.ID] = true
+			}
+			outputNodes := make(map[string]bool)
+			for _, n := range c.Outputs() {
+				outputNodes[n.ID] = true
+			}
+
+			// Parse node=zset pairs, routing each to inputs or outputs.
 			inputs := make(map[string]zset.ZSet)
-			for _, arg := range args {
+			outAssign := make(map[string]string) // circuit node → zset name
+			for _, arg := range args[1:] {
 				parts := strings.SplitN(arg, "=", 2)
 				if len(parts) != 2 {
-					return fmt.Errorf("invalid input %q: expected node=zset", arg)
+					return fmt.Errorf("invalid argument %q: expected node=zset", arg)
 				}
-				nodeName, zsetName := parts[0], parts[1]
-				bz, err := requireZSet(state, zsetName)
-				if err != nil {
-					return err
+				node, zsetName := parts[0], parts[1]
+				switch {
+				case inputNodes[node]:
+					bz, err := requireZSet(state, zsetName)
+					if err != nil {
+						return err
+					}
+					inputs[node] = bz.data
+				case outputNodes[node]:
+					outAssign[node] = zsetName
+				default:
+					return fmt.Errorf("unknown node %q", node)
 				}
-				inputs[nodeName] = bz.data
 			}
+
+			// Validate output assignments: all outputs must be assigned
+			// unless there is exactly one output (default naming applies).
+			for _, n := range c.Outputs() {
+				if _, ok := outAssign[n.ID]; !ok {
+					if len(c.Outputs()) > 1 {
+						return fmt.Errorf("output node %q has no zset assignment; "+
+							"use %s=<zset> to assign it", n.ID, n.ID)
+					}
+					// Single unassigned output: use default name.
+					outAssign[n.ID] = execName + "-" + n.ID
+				}
+			}
+
 			outputs, err := be.exec.Execute(inputs)
 			if err != nil {
 				return err
 			}
-			// Store and report each output Z-set. When --out is given and
-			// there is exactly one output node, use the name directly;
-			// otherwise append "-<node>" to disambiguate.
+
+			// Store results, overwriting any existing zset with the same name.
 			outNames := make([]string, 0, len(outputs))
 			for node := range outputs {
 				outNames = append(outNames, node)
 			}
 			sort.Strings(outNames)
 			for _, node := range outNames {
-				z := outputs[node]
-				var name string
-				switch {
-				case outName != "" && len(outputs) == 1:
-					name = outName
-				case outName != "":
-					name = outName + "-" + node
-				default:
-					name = state.currentExecutor + "-" + node
-				}
-				state.zsets[name] = &boundZSet{data: z}
-				fmt.Fprintf(os.Stdout, "Output: %s  (+%d docs)\n", name, z.Size())
+				name := outAssign[node]
+				state.zsets[name] = &boundZSet{data: outputs[node]}
+				fmt.Fprintf(os.Stdout, "Output: %s  (+%d docs)\n", name, outputs[node].Size())
 			}
 			return nil
 		},
 	}
-	executeCmd.Flags().String("out", "", "Output Z-set name (default: <executor>-<node>)")
+}
 
-	incrementalizeCmd := &cobra.Command{
-		Use:   "incrementalize <new-name>",
+func incrementalizeExecutorCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "incrementalize <name> <new-name>",
 		Short: "Create an incremental twin circuit and executor",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			be, err := requireCurrentExecutor(state)
+			be, err := requireExecutor(state, args[0])
 			if err != nil {
 				return err
 			}
-			newName := args[0]
+			newName := args[1]
 			// Resolve the source circuit.
 			c, err := requireCircuit(state, be.circuitName)
 			if err != nil {
@@ -288,12 +255,15 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 			return nil
 		},
 	}
+}
 
-	resetCmd := &cobra.Command{
-		Use:   "reset",
+func resetCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "reset <name>",
 		Short: "Reset executor state",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			be, err := requireCurrentExecutor(state)
+			be, err := requireExecutor(state, args[0])
 			if err != nil {
 				return err
 			}
@@ -302,29 +272,6 @@ func executorMenuCommands(app *console.Console, state *appState) []*cobra.Comman
 			return nil
 		},
 	}
-
-	return []*cobra.Command{
-		createExecutor,
-		updateExecutor,
-		getExecutor,
-		deleteExecutor,
-		listExecutors,
-		executeCmd,
-		incrementalizeCmd,
-		resetCmd,
-	}
-}
-
-func enterExecutorContext(app *console.Console, state *appState, name string) {
-	if app == nil {
-		state.currentExecutor = name
-		return
-	}
-	if app.ActiveMenu().Name() != "executor" {
-		state.parentMenu = app.ActiveMenu().Name()
-		app.SwitchMenu("executor")
-	}
-	state.currentExecutor = name
 }
 
 func requireExecutor(state *appState, name string) (*boundExecutor, error) {
@@ -333,11 +280,4 @@ func requireExecutor(state *appState, name string) (*boundExecutor, error) {
 		return nil, fmt.Errorf("executor %s not found", name)
 	}
 	return be, nil
-}
-
-func requireCurrentExecutor(state *appState) (*boundExecutor, error) {
-	if state.currentExecutor == "" {
-		return nil, fmt.Errorf("no executor selected (use 'executor update <name>')")
-	}
-	return requireExecutor(state, state.currentExecutor)
 }

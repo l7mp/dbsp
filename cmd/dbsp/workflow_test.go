@@ -44,46 +44,41 @@ var _ = Describe("JOIN workflow", func() {
 		// Flat JSON with unqualified field names matches what the compiled circuit
 		// expects from Unstructured documents after CartesianProduct + Select.
 		Expect(run("zset", "create", "products_z")).To(Succeed())
-		Expect(run("zset", "insert", `{"pid":1,"name":"Widget","price":9.99}`)).To(Succeed())
-		Expect(run("zset", "insert", `{"pid":2,"name":"Gadget","price":24.99}`)).To(Succeed())
+		Expect(run("zset", "insert", "products_z", `{"pid":1,"name":"Widget","price":9.99}`)).To(Succeed())
+		Expect(run("zset", "insert", "products_z", `{"pid":2,"name":"Gadget","price":24.99}`)).To(Succeed())
 
 		Expect(run("zset", "create", "orders_z")).To(Succeed())
-		Expect(run("zset", "insert", `{"oid":101,"product_id":1,"qty":3}`)).To(Succeed())
-		Expect(run("zset", "insert", `{"oid":102,"product_id":2,"qty":1}`)).To(Succeed())
+		Expect(run("zset", "insert", "orders_z", `{"oid":101,"product_id":1,"qty":3}`)).To(Succeed())
+		Expect(run("zset", "insert", "orders_z", `{"oid":102,"product_id":2,"qty":1}`)).To(Succeed())
 
 		// --- SotW via executor ---
-		// executor create sets sotw_exec as the current executor.
-		Expect(run("executor", "create", "--circuit", "join_q", "sotw_exec")).To(Succeed())
-		Expect(run("executor", "execute",
+		Expect(run("executor", "create", "sotw_exec", "--circuit", "join_q")).To(Succeed())
+		Expect(run("executor", "execute", "sotw_exec",
 			"input_orders=orders_z", "input_products=products_z")).To(Succeed())
 
 		Expect(state.zsets).To(HaveKey("sotw_exec-output"))
 		Expect(state.zsets["sotw_exec-output"].data.Size()).To(Equal(2))
 
 		// --- Derive incremental twin ---
-		// incrementalize operates on the current executor (sotw_exec).
-		// It creates circuit "join_q-inc" and executor "inc_exec".
-		Expect(run("executor", "incrementalize", "inc_exec")).To(Succeed())
+		// incrementalize creates circuit "join_q-inc" and executor "inc_exec".
+		Expect(run("executor", "incrementalize", "sotw_exec", "inc_exec")).To(Succeed())
 		Expect(state.circuits).To(HaveKey("join_q-inc"))
 		Expect(state.executors).To(HaveKey("inc_exec"))
 
 		// --- Step 1 of incremental executor: seed with full SotW data ---
 		// The first delta equals the full dataset; output must match SotW.
-		Expect(run("executor", "update", "inc_exec")).To(Succeed())
-		Expect(run("executor", "execute",
+		Expect(run("executor", "execute", "inc_exec",
 			"input_orders=orders_z", "input_products=products_z")).To(Succeed())
 
 		Expect(state.zsets).To(HaveKey("inc_exec-output"))
 		Expect(state.zsets["inc_exec-output"].data.Size()).To(Equal(2))
 
 		// --- Step 2: delta — one new order, empty products delta ---
-		// zset create sets the new Z-set as current, so the subsequent insert
-		// goes into delta_orders automatically.
 		Expect(run("zset", "create", "delta_orders")).To(Succeed())
-		Expect(run("zset", "insert", `{"oid":103,"product_id":1,"qty":7}`)).To(Succeed())
+		Expect(run("zset", "insert", "delta_orders", `{"oid":103,"product_id":1,"qty":7}`)).To(Succeed())
 		Expect(run("zset", "create", "empty_z")).To(Succeed())
 
-		Expect(run("executor", "execute",
+		Expect(run("executor", "execute", "inc_exec",
 			"input_orders=delta_orders", "input_products=empty_z")).To(Succeed())
 
 		// Only the one new join tuple should appear in the incremental output.

@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/reeflective/console"
 	"github.com/spf13/cobra"
 
 	"github.com/l7mp/dbsp/dbsp/circuit"
@@ -17,19 +16,27 @@ import (
 	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
 )
 
-func circuitRootCommand(app *console.Console, state *appState) *cobra.Command {
+func circuitRootCommand(state *appState) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "circuit",
 		Short: "Circuit management",
 	}
-	for _, cmd := range circuitMenuCommands(app, state) {
-		root.AddCommand(cmd)
-	}
+	root.AddCommand(
+		createCircuitCmd(state),
+		getCircuitCmd(state),
+		deleteCircuitCmd(state),
+		listCircuitsCmd(state),
+		nodeCommand(state),
+		edgeCommand(state),
+		printCommand(state),
+		validateCommand(state),
+		incrementalizeCommand(state),
+	)
 	return root
 }
 
-func circuitMenuCommands(app *console.Console, state *appState) []*cobra.Command {
-	createCircuit := &cobra.Command{
+func createCircuitCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a new empty circuit",
 		Args:  cobra.ExactArgs(1),
@@ -39,49 +46,13 @@ func circuitMenuCommands(app *console.Console, state *appState) []*cobra.Command
 				return fmt.Errorf("circuit %s already exists", name)
 			}
 			state.circuits[name] = circuit.New(name)
-			enterCircuitContext(app, state, name)
 			return nil
 		},
 	}
-	if app == nil {
-		createCircuit.Short = "Create a new empty circuit and select it"
-		createCircuit.RunE = func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if _, exists := state.circuits[name]; exists {
-				return fmt.Errorf("circuit %s already exists", name)
-			}
-			state.circuits[name] = circuit.New(name)
-			state.currentCircuit = name
-			return nil
-		}
-	}
+}
 
-	updateCircuit := &cobra.Command{
-		Use:   "update <name>",
-		Short: "Enter circuit edit mode",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if _, exists := state.circuits[name]; !exists {
-				return fmt.Errorf("circuit %s not found", name)
-			}
-			enterCircuitContext(app, state, name)
-			return nil
-		},
-	}
-	if app == nil {
-		updateCircuit.Short = "Set the current circuit"
-		updateCircuit.RunE = func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if _, exists := state.circuits[name]; !exists {
-				return fmt.Errorf("circuit %s not found", name)
-			}
-			state.currentCircuit = name
-			return nil
-		}
-	}
-
-	getCircuit := &cobra.Command{
+func getCircuitCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
 		Use:   "get <name>",
 		Short: "Print a circuit",
 		Args:  cobra.ExactArgs(1),
@@ -93,8 +64,10 @@ func circuitMenuCommands(app *console.Console, state *appState) []*cobra.Command
 			return printCircuit(c)
 		},
 	}
+}
 
-	deleteCircuit := &cobra.Command{
+func deleteCircuitCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete a circuit",
 		Args:  cobra.ExactArgs(1),
@@ -104,14 +77,13 @@ func circuitMenuCommands(app *console.Console, state *appState) []*cobra.Command
 				return fmt.Errorf("circuit %s not found", name)
 			}
 			delete(state.circuits, name)
-			if state.currentCircuit == name {
-				state.currentCircuit = ""
-			}
 			return nil
 		},
 	}
+}
 
-	listCircuits := &cobra.Command{
+func listCircuitsCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
 		Use:   "list",
 		Short: "List circuits",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -129,19 +101,6 @@ func circuitMenuCommands(app *console.Console, state *appState) []*cobra.Command
 			}
 		},
 	}
-
-	return []*cobra.Command{
-		createCircuit,
-		updateCircuit,
-		getCircuit,
-		deleteCircuit,
-		listCircuits,
-		nodeCommand(state),
-		edgeCommand(state),
-		printCommand(state),
-		validateCommand(state),
-		incrementalizeCommand(state),
-	}
 }
 
 func nodeCommand(state *appState) *cobra.Command {
@@ -149,18 +108,17 @@ func nodeCommand(state *appState) *cobra.Command {
 		Use:   "node",
 		Short: "Manage circuit nodes",
 	}
-	root.PersistentFlags().String("circuit", "", "Circuit name")
 
 	addCmd := &cobra.Command{
-		Use:   "add <name> <kind> [args...]",
-		Short: "Add a node to the circuit",
-		Args:  cobra.MinimumNArgs(2),
+		Use:   "add <circuit> <node> <kind> [args...]",
+		Short: "Add a node to a circuit",
+		Args:  cobra.MinimumNArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			node, err := buildNode(args[0], strings.ToLower(args[1]), args[2:])
+			node, err := buildNode(args[1], strings.ToLower(args[2]), args[3:])
 			if err != nil {
 				return err
 			}
@@ -169,48 +127,48 @@ func nodeCommand(state *appState) *cobra.Command {
 	}
 
 	getCmd := &cobra.Command{
-		Use:   "get <name>",
-		Short: "Get a node from the circuit",
-		Args:  cobra.ExactArgs(1),
+		Use:   "get <circuit> <node>",
+		Short: "Get a node from a circuit",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			node := c.Node(args[0])
+			node := c.Node(args[1])
 			if node == nil {
-				return fmt.Errorf("node %s not found", args[0])
+				return fmt.Errorf("node %s not found", args[1])
 			}
 			return printNode(node)
 		},
 	}
 
 	deleteCmd := &cobra.Command{
-		Use:   "delete <name>",
-		Short: "Delete a node from the circuit",
-		Args:  cobra.ExactArgs(1),
+		Use:   "delete <circuit> <node>",
+		Short: "Delete a node from a circuit",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			return c.RemoveNode(args[0])
+			return c.RemoveNode(args[1])
 		},
 	}
 
 	updateCmd := &cobra.Command{
-		Use:   "update <name> <kind> [args...]",
-		Short: "Update a node in the circuit",
-		Args:  cobra.MinimumNArgs(2),
+		Use:   "update <circuit> <node> <kind> [args...]",
+		Short: "Update a node in a circuit",
+		Args:  cobra.MinimumNArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			if err := c.RemoveNode(args[0]); err != nil {
+			if err := c.RemoveNode(args[1]); err != nil {
 				return err
 			}
-			node, err := buildNode(args[0], strings.ToLower(args[1]), args[2:])
+			node, err := buildNode(args[1], strings.ToLower(args[2]), args[3:])
 			if err != nil {
 				return err
 			}
@@ -227,81 +185,80 @@ func edgeCommand(state *appState) *cobra.Command {
 		Use:   "edge",
 		Short: "Manage circuit edges",
 	}
-	root.PersistentFlags().String("circuit", "", "Circuit name")
 
 	addCmd := &cobra.Command{
-		Use:   "add <from> <to> <port>",
-		Short: "Add an edge to the circuit",
-		Args:  cobra.ExactArgs(3),
+		Use:   "add <circuit> <from> <to> <port>",
+		Short: "Add an edge to a circuit",
+		Args:  cobra.ExactArgs(4),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			port, err := parsePort(args[2])
+			port, err := parsePort(args[3])
 			if err != nil {
 				return err
 			}
-			return c.AddEdge(circuit.NewEdge(args[0], args[1], port))
+			return c.AddEdge(circuit.NewEdge(args[1], args[2], port))
 		},
 	}
 
 	getCmd := &cobra.Command{
-		Use:   "get <from> <to> <port>",
-		Short: "Get an edge from the circuit",
-		Args:  cobra.ExactArgs(3),
+		Use:   "get <circuit> <from> <to> <port>",
+		Short: "Get an edge from a circuit",
+		Args:  cobra.ExactArgs(4),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			port, err := parsePort(args[2])
+			port, err := parsePort(args[3])
 			if err != nil {
 				return err
 			}
 			for _, e := range c.Edges() {
-				if e.From == args[0] && e.To == args[1] && e.Port == port {
+				if e.From == args[1] && e.To == args[2] && e.Port == port {
 					return printEdge(e)
 				}
 			}
-			return fmt.Errorf("edge %s -> %s (port %d) not found", args[0], args[1], port)
+			return fmt.Errorf("edge %s -> %s (port %d) not found", args[1], args[2], port)
 		},
 	}
 
 	deleteCmd := &cobra.Command{
-		Use:   "delete <from> <to> <port>",
-		Short: "Delete an edge from the circuit",
-		Args:  cobra.ExactArgs(3),
+		Use:   "delete <circuit> <from> <to> <port>",
+		Short: "Delete an edge from a circuit",
+		Args:  cobra.ExactArgs(4),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			port, err := parsePort(args[2])
+			port, err := parsePort(args[3])
 			if err != nil {
 				return err
 			}
-			return c.RemoveEdge(args[0], args[1], port)
+			return c.RemoveEdge(args[1], args[2], port)
 		},
 	}
 
 	updateCmd := &cobra.Command{
-		Use:   "update <from> <to> <port>",
-		Short: "Update an edge in the circuit",
-		Args:  cobra.ExactArgs(3),
+		Use:   "update <circuit> <from> <to> <port>",
+		Short: "Update an edge in a circuit",
+		Args:  cobra.ExactArgs(4),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			port, err := parsePort(args[2])
+			port, err := parsePort(args[3])
 			if err != nil {
 				return err
 			}
-			if err := c.RemoveEdge(args[0], args[1], port); err != nil {
+			if err := c.RemoveEdge(args[1], args[2], port); err != nil {
 				return err
 			}
-			return c.AddEdge(circuit.NewEdge(args[0], args[1], port))
+			return c.AddEdge(circuit.NewEdge(args[1], args[2], port))
 		},
 	}
 
@@ -310,18 +267,18 @@ func edgeCommand(state *appState) *cobra.Command {
 }
 
 func printCommand(state *appState) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "print [nodes|edges|all]",
+	return &cobra.Command{
+		Use:   "print <circuit> [nodes|edges|all]",
 		Short: "Print circuit components",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
 			target := "all"
-			if len(args) == 1 {
-				target = strings.ToLower(args[0])
+			if len(args) == 2 {
+				target = strings.ToLower(args[1])
 			}
 			switch target {
 			case "nodes":
@@ -335,16 +292,15 @@ func printCommand(state *appState) *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().String("circuit", "", "Circuit name")
-	return cmd
 }
 
 func validateCommand(state *appState) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "validate",
-		Short: "Validate the current circuit",
+	return &cobra.Command{
+		Use:   "validate <circuit>",
+		Short: "Validate a circuit",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
@@ -359,21 +315,19 @@ func validateCommand(state *appState) *cobra.Command {
 			return fmt.Errorf("circuit has %d validation errors", len(errs))
 		},
 	}
-	cmd.Flags().String("circuit", "", "Circuit name")
-	return cmd
 }
 
 func incrementalizeCommand(state *appState) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "incrementalize <new-name>",
+	return &cobra.Command{
+		Use:   "incrementalize <circuit> <new-name>",
 		Short: "Create an incrementalized circuit",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCurrentCircuit(cmd, state)
+			c, err := requireCircuit(state, args[0])
 			if err != nil {
 				return err
 			}
-			name := args[0]
+			name := args[1]
 			if _, exists := state.circuits[name]; exists {
 				return fmt.Errorf("circuit %s already exists", name)
 			}
@@ -385,20 +339,6 @@ func incrementalizeCommand(state *appState) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().String("circuit", "", "Circuit name")
-	return cmd
-}
-
-func enterCircuitContext(app *console.Console, state *appState, name string) {
-	if app == nil {
-		state.currentCircuit = name
-		return
-	}
-	if app.ActiveMenu().Name() != "circuit" {
-		state.parentMenu = app.ActiveMenu().Name()
-		app.SwitchMenu("circuit")
-	}
-	state.currentCircuit = name
 }
 
 func requireCircuit(state *appState, name string) (*circuit.Circuit, error) {
@@ -407,23 +347,6 @@ func requireCircuit(state *appState, name string) (*circuit.Circuit, error) {
 		return nil, fmt.Errorf("circuit %s not found", name)
 	}
 	return c, nil
-}
-
-func requireCurrentCircuit(cmd *cobra.Command, state *appState) (*circuit.Circuit, error) {
-	if state.currentCircuit != "" {
-		return requireCircuit(state, state.currentCircuit)
-	}
-	if cmd == nil {
-		return nil, fmt.Errorf("circuit name required (use --circuit)")
-	}
-	name, err := cmd.Flags().GetString("circuit")
-	if err != nil {
-		return nil, err
-	}
-	if name == "" {
-		return nil, fmt.Errorf("circuit name required (use --circuit)")
-	}
-	return requireCircuit(state, name)
 }
 
 func buildNode(name, kind string, args []string) (*circuit.Node, error) {
