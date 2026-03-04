@@ -26,7 +26,7 @@ func NewCompiler(db *relation.Database) *Compiler {
 }
 
 // Compile parses and compiles a SQL statement.
-func (c *Compiler) Compile(source []byte) (*compiler.CompiledQuery, error) {
+func (c *Compiler) Compile(source []byte) (*compiler.Query, error) {
 	normalized, err := Normalize(string(source), c.db)
 	if err != nil {
 		return nil, err
@@ -35,11 +35,11 @@ func (c *Compiler) Compile(source []byte) (*compiler.CompiledQuery, error) {
 }
 
 // CompileString is a convenience wrapper for string input.
-func (c *Compiler) CompileString(source string) (*compiler.CompiledQuery, error) {
+func (c *Compiler) CompileString(source string) (*compiler.Query, error) {
 	return c.Compile([]byte(source))
 }
 
-func (c *Compiler) compileSelect(sel *sqlparser.Select, bindVars map[string]*querypb.BindVariable) (*compiler.CompiledQuery, error) {
+func (c *Compiler) compileSelect(sel *sqlparser.Select, bindVars map[string]*querypb.BindVariable) (*compiler.Query, error) {
 	if sel.From == nil || len(sel.From) != 1 {
 		return nil, UnimplementedError{Feature: "select with multiple FROM items"}
 	}
@@ -81,7 +81,7 @@ func (c *Compiler) compileSelect(sel *sqlparser.Select, bindVars map[string]*que
 		return nil, err
 	}
 
-	return &compiler.CompiledQuery{
+	return &compiler.Query{
 		Circuit:  compiledCircuit,
 		InputMap: inputMap,
 		OutputMap: map[string]string{

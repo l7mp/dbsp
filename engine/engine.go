@@ -32,5 +32,5 @@ type Engine interface {
 	IsIncremental() bool
 
 	// CompiledQuery returns the compiled query, or nil if not yet compiled.
-	CompiledQuery() *compiler.CompiledQuery
+	CompiledQuery() *compiler.Query
 }

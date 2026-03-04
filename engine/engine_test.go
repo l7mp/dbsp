@@ -11,12 +11,12 @@ type stubCompiler struct {
 	called bool
 }
 
-func (s *stubCompiler) Compile(source []byte) (*compiler.CompiledQuery, error) {
+func (s *stubCompiler) Compile(source []byte) (*compiler.Query, error) {
 	s.called = true
 	return nil, nil
 }
 
-func (s *stubCompiler) CompileString(source string) (*compiler.CompiledQuery, error) {
+func (s *stubCompiler) CompileString(source string) (*compiler.Query, error) {
 	return s.Compile([]byte(source))
 }
 

@@ -55,7 +55,7 @@ func New(c compiler.Compiler, opts ...Option) Engine {
 // baseEngine implements Engine.
 type baseEngine struct {
 	compiler    compiler.Compiler
-	query       *compiler.CompiledQuery
+	query       *compiler.Query
 	executor    *executor.Executor
 	observer    Observer
 	incremental bool
@@ -78,7 +78,7 @@ func (e *baseEngine) Compile(source string) error {
 		if err != nil {
 			return err
 		}
-		compiled = &compiler.CompiledQuery{
+		compiled = &compiler.Query{
 			Circuit:   incr,
 			InputMap:  cloneMap(query.InputMap),
 			OutputMap: cloneMap(query.OutputMap),
@@ -168,7 +168,7 @@ func (e *baseEngine) IsIncremental() bool {
 }
 
 // CompiledQuery returns the compiled query.
-func (e *baseEngine) CompiledQuery() *compiler.CompiledQuery {
+func (e *baseEngine) CompiledQuery() *compiler.Query {
 	return e.query
 }
 
