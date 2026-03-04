@@ -9,7 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/l7mp/dbsp/datamodel"
+	"encoding/json"
+
+	"github.com/l7mp/dbsp/datamodel/unstructured"
 	"github.com/l7mp/dbsp/dbsp/zset"
 )
 
@@ -131,10 +133,11 @@ func insertCmd(state *appState) *cobra.Command {
 			}
 			// Strip surrounding shell quotes if present (common in interactive use).
 			raw := strings.Trim(args[1], "'\"")
-			doc, err := datamodel.ParseUnstructured([]byte(raw))
-			if err != nil {
-				return err
+			var fields map[string]any
+			if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+				return fmt.Errorf("invalid JSON: %w", err)
 			}
+			doc := unstructured.New(fields, nil)
 			bz.data.Insert(doc, zset.Weight(w))
 			return nil
 		},
