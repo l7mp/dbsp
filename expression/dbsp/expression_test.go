@@ -411,9 +411,10 @@ var _ = Describe("Field Operators", func() {
 
 		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal(int64(42)))
+		// @set returns the modified document, not the value.
+		Expect(result).To(Equal(doc))
 
-		// Verify field was set.
+		// Verify field was set on the document.
 		v, _ := doc.GetField("newField")
 		Expect(v).To(Equal(int64(42)))
 	})

@@ -67,7 +67,7 @@ func (e *setExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	}
 
 	ctx.Logger().V(8).Info("eval", "op", "@set", "field", fieldPath, "value", value)
-	return value, nil
+	return doc, nil
 }
 
 func (e *setExpr) String() string { return fmt.Sprintf("@set(%v, %v)", e.field, e.value) }
@@ -144,13 +144,13 @@ func (e *setSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 			return nil, fmt.Errorf("@setsub: %w", err)
 		}
 		ctx.Logger().V(8).Info("eval", "op", "@setsub", "field", fieldPath, "value", value)
-		return value, nil
+		return doc, nil
 	}
 
 	if m, ok := subject.(map[string]any); ok {
 		m[fieldPath] = value
 		ctx.Logger().V(8).Info("eval", "op", "@setsub", "field", fieldPath, "value", value)
-		return value, nil
+		return m, nil
 	}
 
 	return nil, fmt.Errorf("@setsub: subject is not a document or map: %T", subject)
