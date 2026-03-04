@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // marshalNullaryOp marshals a nullary operator as {"@op": null}.
@@ -47,8 +48,8 @@ func marshalExprSlice(exprs []Expression) (json.RawMessage, error) {
 	return json.Marshal(items)
 }
 
-// marshalDictEntries marshals a dict expression as {"@dict": {k: v, ...}}.
-func marshalDictEntries(entries map[string]Expression) ([]byte, error) {
+// marshalDictNatural marshals dict entries as a plain JSON object {k: v, ...}.
+func marshalDictNatural(entries map[string]Expression) ([]byte, error) {
 	entriesJSON := make(map[string]json.RawMessage, len(entries))
 	for k, v := range entries {
 		b, err := json.Marshal(v)
@@ -57,11 +58,7 @@ func marshalDictEntries(entries map[string]Expression) ([]byte, error) {
 		}
 		entriesJSON[k] = b
 	}
-	entriesBytes, err := json.Marshal(entriesJSON)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(map[string]json.RawMessage{"@dict": entriesBytes})
+	return json.Marshal(entriesJSON)
 }
 
 // unmarshalInto compiles JSON into an expression and copies the result into dst
@@ -100,34 +97,72 @@ func (e *constExpr) UnmarshalJSON(b []byte) error {
 func (e *nilExpr) MarshalJSON() ([]byte, error) { return []byte("null"), nil }
 func (e *nilExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
 
-// boolExpr: marshals as {"@bool": <operand>}.
-func (e *boolExpr) MarshalJSON() ([]byte, error) { return marshalUnaryOp("@bool", e.operand) }
-func (e *boolExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
-
-// intExpr: marshals as {"@int": <operand>}.
-func (e *intExpr) MarshalJSON() ([]byte, error) { return marshalUnaryOp("@int", e.operand) }
-func (e *intExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
-
-// floatExpr: marshals as {"@float": <operand>}.
-func (e *floatExpr) MarshalJSON() ([]byte, error) { return marshalUnaryOp("@float", e.operand) }
-func (e *floatExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
-
-// stringExpr: marshals as {"@string": <operand>}.
-func (e *stringExpr) MarshalJSON() ([]byte, error) { return marshalUnaryOp("@string", e.operand) }
-func (e *stringExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
-
-// listExpr: marshals as {"@list": [<elements...>]}.
-func (e *listExpr) MarshalJSON() ([]byte, error) {
-	elems, err := marshalExprSlice(e.elements)
-	if err != nil {
-		return nil, err
+// boolExpr: marshals as bare true/false when the operand is a constant bool;
+// falls back to {"@bool": <operand>} for computed operands.
+func (e *boolExpr) MarshalJSON() ([]byte, error) {
+	if c, ok := e.operand.(*constExpr); ok {
+		if b, ok := c.value.(bool); ok {
+			return json.Marshal(b)
+		}
 	}
-	return json.Marshal(map[string]json.RawMessage{"@list": elems})
+	return marshalUnaryOp("@bool", e.operand)
+}
+func (e *boolExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
+
+// intExpr: marshals as a bare integer when the operand is a constant int64 or
+// an integer-valued float64 (which can occur when the explicit form {"@int":42}
+// is parsed, since JSON numbers are float64); falls back to {"@int": <operand>}
+// for computed operands.
+func (e *intExpr) MarshalJSON() ([]byte, error) {
+	if c, ok := e.operand.(*constExpr); ok {
+		switch v := c.value.(type) {
+		case int64:
+			return json.Marshal(v)
+		case float64:
+			if v == float64(int64(v)) {
+				return json.Marshal(int64(v))
+			}
+		}
+	}
+	return marshalUnaryOp("@int", e.operand)
+}
+func (e *intExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
+
+// floatExpr: marshals as a bare float when the operand is a constant float64;
+// falls back to {"@float": <operand>} for computed operands.
+func (e *floatExpr) MarshalJSON() ([]byte, error) {
+	if c, ok := e.operand.(*constExpr); ok {
+		if f, ok := c.value.(float64); ok {
+			return json.Marshal(f)
+		}
+	}
+	return marshalUnaryOp("@float", e.operand)
+}
+func (e *floatExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
+
+// stringExpr: marshals as a bare string when the operand is a constant string that
+// does not start with "$." or "$$." (which would be misread as a @get/@getsub
+// shorthand). Uses {"@string": <operand>} otherwise.
+func (e *stringExpr) MarshalJSON() ([]byte, error) {
+	if c, ok := e.operand.(*constExpr); ok {
+		if s, ok := c.value.(string); ok {
+			if !strings.HasPrefix(s, "$.") && !strings.HasPrefix(s, "$$.") {
+				return json.Marshal(s)
+			}
+		}
+	}
+	return marshalUnaryOp("@string", e.operand)
+}
+func (e *stringExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
+
+// listExpr: marshals as a bare JSON array [<elements...>].
+func (e *listExpr) MarshalJSON() ([]byte, error) {
+	return marshalExprSlice(e.elements)
 }
 func (e *listExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
-// dictExpr: marshals as {"@dict": {k: v, ...}}.
-func (e *dictExpr) MarshalJSON() ([]byte, error) { return marshalDictEntries(e.entries) }
+// dictExpr: marshals as a bare JSON object {k: v, ...}.
+func (e *dictExpr) MarshalJSON() ([]byte, error) { return marshalDictNatural(e.entries) }
 func (e *dictExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
 
 // addExpr: marshals as {"@add": [<args...>]}.
@@ -190,17 +225,33 @@ func (e *ltExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
 func (e *lteExpr) MarshalJSON() ([]byte, error) { return marshalBinaryOp("@lte", e.left, e.right) }
 func (e *lteExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
 
-// getExpr: marshals as {"@get": <field>}.
-func (e *getExpr) MarshalJSON() ([]byte, error) { return marshalUnaryOp("@get", e.field) }
-func (e *getExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
+// getExpr: marshals as "$.field" shorthand when the field is a constant string;
+// falls back to {"@get": <field>} for computed field names.
+func (e *getExpr) MarshalJSON() ([]byte, error) {
+	if c, ok := e.field.(*constExpr); ok {
+		if s, ok := c.value.(string); ok {
+			return json.Marshal("$." + s)
+		}
+	}
+	return marshalUnaryOp("@get", e.field)
+}
+func (e *getExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
 // setExpr: marshals as {"@set": [field, value]}.
 func (e *setExpr) MarshalJSON() ([]byte, error) { return marshalBinaryOp("@set", e.field, e.value) }
 func (e *setExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
 
-// getSubExpr: marshals as {"@getsub": <field>}.
-func (e *getSubExpr) MarshalJSON() ([]byte, error) { return marshalUnaryOp("@getsub", e.field) }
-func (e *getSubExpr) UnmarshalJSON(b []byte) error  { return unmarshalInto(b, e) }
+// getSubExpr: marshals as "$$.field" shorthand when the field is a constant string;
+// falls back to {"@getsub": <field>} for computed field names.
+func (e *getSubExpr) MarshalJSON() ([]byte, error) {
+	if c, ok := e.field.(*constExpr); ok {
+		if s, ok := c.value.(string); ok {
+			return json.Marshal("$$." + s)
+		}
+	}
+	return marshalUnaryOp("@getsub", e.field)
+}
+func (e *getSubExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
 // setSubExpr: marshals as {"@setsub": [field, value]}.
 func (e *setSubExpr) MarshalJSON() ([]byte, error) {
