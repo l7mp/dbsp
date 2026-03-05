@@ -27,17 +27,15 @@ func NewNegate(opts ...Option) *Negate {
 	return o
 }
 
-// Name implements Operator.
-func (o *Negate) Name() string { return "negate" }
-
 // String implements fmt.Stringer.
-func (o *Negate) String() string { return "Negate" }
+func (o *Negate) String() string { return "-" }
 
 // Arity implements Operator.
 func (o *Negate) Arity() int { return 1 }
 
 // Linearity implements Operator.
 func (o *Negate) Linearity() Linearity { return Linear }
+func (o *Negate) Kind() Kind           { return KindNegate }
 
 // Apply implements Operator.
 func (o *Negate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -46,6 +44,7 @@ func (o *Negate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
+func (o *Negate) Set(_ zset.ZSet)         {}
 func (o *Negate) setLogger(l logr.Logger) { o.logger = l }
 
 // LinearCombination returns Σ coeffs[i] · inputs[i].
@@ -53,7 +52,6 @@ func (o *Negate) setLogger(l logr.Logger) { o.logger = l }
 // addition is coeffs=[+1,+1], and arbitrary integer multiples are supported.
 type LinearCombination struct {
 	jsonUnsupported
-	name   string
 	coeffs []int
 	logger logr.Logger
 }
@@ -61,8 +59,8 @@ type LinearCombination struct {
 // NewLinearCombination creates a new LinearCombination operator. coeffs must
 // not be empty; each element is the integer multiplier for the corresponding
 // input port.
-func NewLinearCombination(name string, coeffs []int, opts ...Option) *LinearCombination {
-	o := &LinearCombination{name: name, coeffs: coeffs}
+func NewLinearCombination(coeffs []int, opts ...Option) *LinearCombination {
+	o := &LinearCombination{coeffs: coeffs}
 	for _, opt := range opts {
 		opt.apply(o)
 	}
@@ -70,12 +68,9 @@ func NewLinearCombination(name string, coeffs []int, opts ...Option) *LinearComb
 	return o
 }
 
-// Name implements Operator.
-func (o *LinearCombination) Name() string { return o.name }
-
 // String implements fmt.Stringer.
 func (o *LinearCombination) String() string {
-	return fmt.Sprintf("LC(%s, %v)", o.name, o.coeffs)
+	return fmt.Sprintf("LC(%v)", o.coeffs)
 }
 
 // Arity implements Operator.
@@ -83,6 +78,7 @@ func (o *LinearCombination) Arity() int { return len(o.coeffs) }
 
 // Linearity implements Operator.
 func (o *LinearCombination) Linearity() Linearity { return Linear }
+func (o *LinearCombination) Kind() Kind           { return KindLinearCombination }
 
 // Apply implements Operator.
 func (o *LinearCombination) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -102,57 +98,40 @@ func (o *LinearCombination) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
+func (o *LinearCombination) Set(_ zset.ZSet)         {}
 func (o *LinearCombination) setLogger(l logr.Logger) { o.logger = l }
 
-// Plus returns A + B.
-type Plus struct {
-	jsonUnsupported
-	logger logr.Logger
+// NewPlus creates a binary addition operator (coefficients [+1, +1]).
+func NewPlus(opts ...Option) *LinearCombination {
+	return NewLinearCombination([]int{1, 1}, opts...)
 }
 
-// NewPlus creates a new Plus operator.
-func NewPlus(opts ...Option) *Plus {
-	o := &Plus{}
-	for _, opt := range opts {
-		opt.apply(o)
-	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
+// NewMinus creates a binary subtraction operator (coefficients [+1, -1]).
+func NewMinus(opts ...Option) *LinearCombination {
+	return NewLinearCombination([]int{1, -1}, opts...)
 }
 
-// Name implements Operator.
-func (o *Plus) Name() string { return "plus" }
-
-// String implements fmt.Stringer.
-func (o *Plus) String() string { return "Plus" }
-
-// Arity implements Operator.
-func (o *Plus) Arity() int { return 2 }
-
-// Linearity implements Operator.
-func (o *Plus) Linearity() Linearity { return Linear }
-
-// Apply implements Operator.
-func (o *Plus) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
-	result := inputs[0].Add(inputs[1])
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
-	return result, nil
+// NewSum is a backward-compatible alias for NewPlus.
+func NewSum(opts ...Option) *LinearCombination {
+	return NewPlus(opts...)
 }
 
-func (o *Plus) setLogger(l logr.Logger) { o.logger = l }
+// NewSubtract is a backward-compatible alias for NewMinus.
+func NewSubtract(opts ...Option) *LinearCombination {
+	return NewMinus(opts...)
+}
 
 // Select filters by predicate.
 type Select struct {
 	jsonUnsupported
-	name      string
 	predicate expression.Expression
 	weightFn  func(weight zset.Weight) bool
 	logger    logr.Logger
 }
 
 // NewSelect creates a new Select operator.
-func NewSelect(name string, predicate expression.Expression, opts ...Option) *Select {
-	o := &Select{name: name, predicate: predicate}
+func NewSelect(predicate expression.Expression, opts ...Option) *Select {
+	o := &Select{predicate: predicate}
 	for _, opt := range opts {
 		opt.apply(o)
 	}
@@ -160,12 +139,9 @@ func NewSelect(name string, predicate expression.Expression, opts ...Option) *Se
 	return o
 }
 
-// Name implements Operator.
-func (o *Select) Name() string { return o.name }
-
 // String implements fmt.Stringer.
 func (o *Select) String() string {
-	return fmt.Sprintf("Select(%s, %s)", o.name, o.predicate)
+	return fmt.Sprintf("σ(%s)", o.predicate)
 }
 
 // Arity implements Operator.
@@ -173,6 +149,7 @@ func (o *Select) Arity() int { return 1 }
 
 // Linearity implements Operator.
 func (o *Select) Linearity() Linearity { return Linear }
+func (o *Select) Kind() Kind           { return KindSelect }
 
 // Apply implements Operator.
 func (o *Select) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -202,19 +179,19 @@ func (o *Select) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
+func (o *Select) Set(_ zset.ZSet)         {}
 func (o *Select) setLogger(l logr.Logger) { o.logger = l }
 
 // Project transforms elements.
 type Project struct {
 	jsonUnsupported
-	name       string
 	projection expression.Expression // Must return datamodel.Document.
 	logger     logr.Logger
 }
 
 // NewProject creates a new Project operator.
-func NewProject(name string, projection expression.Expression, opts ...Option) *Project {
-	o := &Project{name: name, projection: projection}
+func NewProject(projection expression.Expression, opts ...Option) *Project {
+	o := &Project{projection: projection}
 	for _, opt := range opts {
 		opt.apply(o)
 	}
@@ -222,12 +199,9 @@ func NewProject(name string, projection expression.Expression, opts ...Option) *
 	return o
 }
 
-// Name implements Operator.
-func (o *Project) Name() string { return o.name }
-
 // String implements fmt.Stringer.
 func (o *Project) String() string {
-	return fmt.Sprintf("Project(%s, %s)", o.name, o.projection)
+	return fmt.Sprintf("π(%s)", o.projection)
 }
 
 // Arity implements Operator.
@@ -235,6 +209,7 @@ func (o *Project) Arity() int { return 1 }
 
 // Linearity implements Operator.
 func (o *Project) Linearity() Linearity { return Linear }
+func (o *Project) Kind() Kind           { return KindProject }
 
 // Apply implements Operator.
 func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -267,6 +242,7 @@ func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
+func (o *Project) Set(_ zset.ZSet)         {}
 func (o *Project) setLogger(l logr.Logger) { o.logger = l }
 
 // Unwind flattens an array field into multiple documents.
@@ -279,7 +255,6 @@ func (o *Project) setLogger(l logr.Logger) { o.logger = l }
 //	Output: {id: "x", tags: "a"}, {id: "x", tags: "b"}
 type Unwind struct {
 	jsonUnsupported
-	name       string
 	fieldPath  string // The array field to unwind.
 	indexField string // Optional: field to store the array index.
 	logger     logr.Logger
@@ -287,8 +262,8 @@ type Unwind struct {
 
 // NewUnwind creates a new Unwind operator.
 // fieldPath is the name of the array field to unwind.
-func NewUnwind(name string, fieldPath string, opts ...Option) *Unwind {
-	o := &Unwind{name: name, fieldPath: fieldPath}
+func NewUnwind(fieldPath string, opts ...Option) *Unwind {
+	o := &Unwind{fieldPath: fieldPath}
 	for _, opt := range opts {
 		opt.apply(o)
 	}
@@ -302,15 +277,12 @@ func (o *Unwind) WithIndexField(field string) *Unwind {
 	return o
 }
 
-// Name implements Operator.
-func (o *Unwind) Name() string { return o.name }
-
 // String implements fmt.Stringer.
 func (o *Unwind) String() string {
 	if o.indexField != "" {
-		return fmt.Sprintf("Unwind(%s, field=%s, index=%s)", o.name, o.fieldPath, o.indexField)
+		return fmt.Sprintf("Unwind(field=%s, index=%s)", o.fieldPath, o.indexField)
 	}
-	return fmt.Sprintf("Unwind(%s, field=%s)", o.name, o.fieldPath)
+	return fmt.Sprintf("Unwind(field=%s)", o.fieldPath)
 }
 
 // Arity implements Operator.
@@ -318,6 +290,7 @@ func (o *Unwind) Arity() int { return 1 }
 
 // Linearity implements Operator.
 func (o *Unwind) Linearity() Linearity { return Linear }
+func (o *Unwind) Kind() Kind           { return KindUnwind }
 
 // Apply implements Operator.
 func (o *Unwind) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -371,4 +344,5 @@ func (o *Unwind) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
+func (o *Unwind) Set(_ zset.ZSet)         {}
 func (o *Unwind) setLogger(l logr.Logger) { o.logger = l }

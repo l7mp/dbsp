@@ -22,7 +22,7 @@ var _ = Describe("Incrementalize", func() {
 			// in -> select -> out.
 			c := circuit.New("linear-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("sel", operator.NewSelect("σ", expression.Func(func(ctx *expression.EvalContext) (any, error) {
+			c.AddNode(circuit.Op("sel", operator.NewSelect(expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			}))))
 			c.AddNode(circuit.Output("out"))
@@ -34,11 +34,11 @@ var _ = Describe("Incrementalize", func() {
 			Expect(incr.Name()).To(Equal("linear-test^Δ"))
 
 			// Structure should be same: in -> sel -> out.
-			Expect(incr.Node("in").Kind).To(Equal(circuit.NodeInput))
-			Expect(incr.Node("sel").Kind).To(Equal(circuit.NodeOperator))
-			Expect(incr.Node("out").Kind).To(Equal(circuit.NodeOutput))
+			Expect(incr.Node("in").Kind()).To(Equal(operator.KindInput))
+			Expect(incr.Node("sel^Δ").Kind()).To(Equal(operator.KindSelect))
+			Expect(incr.Node("out").Kind()).To(Equal(operator.KindOutput))
 
-			edges := incr.EdgesTo("sel")
+			edges := incr.EdgesTo("sel^Δ")
 			Expect(edges).To(HaveLen(1))
 			Expect(edges[0].From).To(Equal("in"))
 		})
@@ -50,7 +50,7 @@ var _ = Describe("Incrementalize", func() {
 			c := circuit.New("bilinear-test")
 			c.AddNode(circuit.Input("left"))
 			c.AddNode(circuit.Input("right"))
-			c.AddNode(circuit.Op("prod", operator.NewCartesianProduct("×")))
+			c.AddNode(circuit.Op("prod", operator.NewCartesianProduct()))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("left", "prod", 0))
 			c.AddEdge(circuit.NewEdge("right", "prod", 1))
@@ -60,22 +60,22 @@ var _ = Describe("Incrementalize", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should have integrators.
-			Expect(incr.Node("prod_int_left").Kind).To(Equal(circuit.NodeIntegrate))
-			Expect(incr.Node("prod_int_right").Kind).To(Equal(circuit.NodeIntegrate))
+			Expect(incr.Node("prod^Δ_int_left").Kind()).To(Equal(operator.KindIntegrate))
+			Expect(incr.Node("prod^Δ_int_right").Kind()).To(Equal(operator.KindIntegrate))
 
 			// Should have three terms.
-			Expect(incr.Node("prod_t1").Kind).To(Equal(circuit.NodeOperator))
-			Expect(incr.Node("prod_t2").Kind).To(Equal(circuit.NodeOperator))
-			Expect(incr.Node("prod_t3").Kind).To(Equal(circuit.NodeOperator))
+			Expect(incr.Node("prod^Δ_t1").Kind()).To(Equal(operator.KindCartesian))
+			Expect(incr.Node("prod^Δ_t2").Kind()).To(Equal(operator.KindCartesian))
+			Expect(incr.Node("prod^Δ_t3").Kind()).To(Equal(operator.KindCartesian))
 
 			// Should have sums.
-			Expect(incr.Node("prod_sum12").Kind).To(Equal(circuit.NodeOperator))
-			Expect(incr.Node("prod_sum").Kind).To(Equal(circuit.NodeOperator))
+			Expect(incr.Node("prod^Δ_sum12").Kind()).To(Equal(operator.KindLinearCombination))
+			Expect(incr.Node("prod^Δ_sum").Kind()).To(Equal(operator.KindLinearCombination))
 
 			// Output should connect from sum.
 			edges := incr.EdgesTo("out")
 			Expect(edges).To(HaveLen(1))
-			Expect(edges[0].From).To(Equal("prod_sum"))
+			Expect(edges[0].From).To(Equal("prod^Δ_sum"))
 		})
 	})
 
@@ -84,7 +84,7 @@ var _ = Describe("Incrementalize", func() {
 			// in -> distinct -> out.
 			c := circuit.New("nonlinear-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("dist", operator.NewDistinct("H")))
+			c.AddNode(circuit.Op("dist", operator.NewDistinct()))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "dist", 0))
 			c.AddEdge(circuit.NewEdge("dist", "out", 0))
@@ -93,26 +93,59 @@ var _ = Describe("Incrementalize", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should have integrate -> op -> differentiate.
-			Expect(incr.Node("dist_int").Kind).To(Equal(circuit.NodeIntegrate))
-			Expect(incr.Node("dist_op").Kind).To(Equal(circuit.NodeOperator))
-			Expect(incr.Node("dist_diff").Kind).To(Equal(circuit.NodeDifferentiate))
+			Expect(incr.Node("dist^Δ_int").Kind()).To(Equal(operator.KindIntegrate))
+			Expect(incr.Node("dist^Δ_op").Kind()).To(Equal(operator.KindDistinct))
+			Expect(incr.Node("dist^Δ_diff").Kind()).To(Equal(operator.KindDifferentiate))
 
 			// Verify chain: in -> int -> op -> diff -> out.
-			intEdges := incr.EdgesTo("dist_int")
+			intEdges := incr.EdgesTo("dist^Δ_int")
 			Expect(intEdges).To(HaveLen(1))
 			Expect(intEdges[0].From).To(Equal("in"))
 
-			opEdges := incr.EdgesTo("dist_op")
+			opEdges := incr.EdgesTo("dist^Δ_op")
 			Expect(opEdges).To(HaveLen(1))
-			Expect(opEdges[0].From).To(Equal("dist_int"))
+			Expect(opEdges[0].From).To(Equal("dist^Δ_int"))
 
-			diffEdges := incr.EdgesTo("dist_diff")
+			diffEdges := incr.EdgesTo("dist^Δ_diff")
 			Expect(diffEdges).To(HaveLen(1))
-			Expect(diffEdges[0].From).To(Equal("dist_op"))
+			Expect(diffEdges[0].From).To(Equal("dist^Δ_op"))
 
 			outEdges := incr.EdgesTo("out")
 			Expect(outEdges).To(HaveLen(1))
-			Expect(outEdges[0].From).To(Equal("dist_diff"))
+			Expect(outEdges[0].From).To(Equal("dist^Δ_diff"))
+		})
+
+		It("uses self-contained HKeyed for DistinctKeyed (distinct_pi)", func() {
+			// in -> distinct_pi -> out.
+			c := circuit.New("distinct-pi-test")
+			c.AddNode(circuit.Input("in"))
+			c.AddNode(circuit.Op("dpi", operator.NewDistinctKeyed()))
+			c.AddNode(circuit.Output("out"))
+			c.AddEdge(circuit.NewEdge("in", "dpi", 0))
+			c.AddEdge(circuit.NewEdge("dpi", "out", 0))
+
+			incr, err := Incrementalize(c)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should NOT use generic D∘O∘I pattern — no external int/delay/diff.
+			Expect(incr.Node("dpi^Δ_int")).To(BeNil())
+			Expect(incr.Node("dpi^Δ_delay")).To(BeNil())
+			Expect(incr.Node("dpi^Δ_op")).To(BeNil())
+			Expect(incr.Node("dpi^Δ_diff")).To(BeNil())
+
+			// Should have a single HKeyed operator node.
+			Expect(incr.Node("dpi^Δ_H").Kind()).To(Equal(operator.KindHKeyed))
+
+			// H receives one input: delta (port 0).
+			hEdges := incr.EdgesTo("dpi^Δ_H")
+			Expect(hEdges).To(HaveLen(1))
+			Expect(hEdges[0].From).To(Equal("in"))
+			Expect(hEdges[0].Port).To(Equal(0))
+
+			// Output connects from H.
+			outEdges := incr.EdgesTo("out")
+			Expect(outEdges).To(HaveLen(1))
+			Expect(outEdges[0].From).To(Equal("dpi^Δ_H"))
 		})
 	})
 
@@ -128,7 +161,7 @@ var _ = Describe("Incrementalize", func() {
 			incr, err := Incrementalize(c)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(incr.Node("z-1").Kind).To(Equal(circuit.NodeDelay))
+			Expect(incr.Node("z-1^Δ").Kind()).To(Equal(operator.KindDelay))
 		})
 
 		It("bypasses integrate nodes", func() {
@@ -184,7 +217,7 @@ var _ = Describe("Incrementalize", func() {
 			incr, err := Incrementalize(c)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(incr.Node("d0").Kind).To(Equal(circuit.NodeDelta0))
+			Expect(incr.Node("d0^Δ").Kind()).To(Equal(operator.KindDelta0))
 		})
 	})
 
@@ -203,12 +236,12 @@ var _ = Describe("Incrementalize", func() {
 			Expect(incr.Outputs()).To(HaveLen(1))
 
 			// Product should be expanded to three terms.
-			Expect(incr.Node("product_t1")).NotTo(BeNil())
-			Expect(incr.Node("product_t2")).NotTo(BeNil())
-			Expect(incr.Node("product_t3")).NotTo(BeNil())
+			Expect(incr.Node("product^Δ_t1")).NotTo(BeNil())
+			Expect(incr.Node("product^Δ_t2")).NotTo(BeNil())
+			Expect(incr.Node("product^Δ_t3")).NotTo(BeNil())
 
 			// Select should pass through unchanged.
-			Expect(incr.Node("select")).NotTo(BeNil())
+			Expect(incr.Node("select^Δ")).NotTo(BeNil())
 		})
 	})
 })

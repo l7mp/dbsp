@@ -1,8 +1,6 @@
 package operator
 
 import (
-	"fmt"
-
 	"github.com/go-logr/logr"
 
 	"github.com/l7mp/dbsp/datamodel"
@@ -13,13 +11,12 @@ import (
 // CartesianProduct computes A x B using Document.Concat to combine elements.
 type CartesianProduct struct {
 	jsonUnsupported
-	name   string
 	logger logr.Logger
 }
 
 // NewCartesianProduct creates a new CartesianProduct operator.
-func NewCartesianProduct(name string, opts ...Option) *CartesianProduct {
-	o := &CartesianProduct{name: name}
+func NewCartesianProduct(opts ...Option) *CartesianProduct {
+	o := &CartesianProduct{}
 	for _, opt := range opts {
 		opt.apply(o)
 	}
@@ -27,12 +24,9 @@ func NewCartesianProduct(name string, opts ...Option) *CartesianProduct {
 	return o
 }
 
-// Name implements Operator.
-func (o *CartesianProduct) Name() string { return o.name }
-
 // String implements fmt.Stringer.
 func (o *CartesianProduct) String() string {
-	return fmt.Sprintf("CartesianProduct(%s)", o.name)
+	return "×"
 }
 
 // Arity implements Operator.
@@ -40,6 +34,7 @@ func (o *CartesianProduct) Arity() int { return 2 }
 
 // Linearity implements Operator.
 func (o *CartesianProduct) Linearity() Linearity { return Bilinear }
+func (o *CartesianProduct) Kind() Kind           { return KindCartesian }
 
 // Apply implements Operator.
 // It uses Document.Concat to combine left and right elements into a single flattened document.
@@ -59,4 +54,5 @@ func (o *CartesianProduct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
+func (o *CartesianProduct) Set(_ zset.ZSet)         {}
 func (o *CartesianProduct) setLogger(l logr.Logger) { o.logger = l }

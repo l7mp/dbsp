@@ -1,0 +1,21 @@
+#!/usr/bin/env dbsp run
+# Build a simple circuit with two inputs, a join, and a projection.
+
+circuit add demo
+
+node add left input
+node add right input
+node add join cartesian
+node add proj project {"@dict":{"left":"$.left","right":"$.right"}}
+node add out output
+
+edge add left join 0
+edge add right join 1
+edge add join proj 0
+edge add proj out 0
+
+print
+
+incrementalize demo_inc
+circuit update demo_inc
+print

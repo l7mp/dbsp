@@ -12,8 +12,8 @@ func Join(name string, predicate expression.Expression) *Circuit {
 
 	c.AddNode(Input("left"))
 	c.AddNode(Input("right"))
-	c.AddNode(Op("product", operator.NewCartesianProduct("×")))
-	c.AddNode(Op("select", operator.NewSelect("σ", predicate)))
+	c.AddNode(Op("product", operator.NewCartesianProduct()))
+	c.AddNode(Op("select", operator.NewSelect(predicate)))
 	c.AddNode(Output("out"))
 
 	c.AddEdge(NewEdge("left", "product", 0))
@@ -67,6 +67,24 @@ func BilinearIncremental(name string, bilinearOp operator.Operator) *Circuit {
 	// Output.
 	c.AddNode(Output("out"))
 	c.AddEdge(NewEdge("sum_all", "out", 0))
+
+	return c
+}
+
+// DistinctKeyedIncremental creates the incremental circuit for distinct_π.
+// HKeyed maintains its own integrated state (weights + pkIndex) internally,
+// so no external integrator or delay is required:
+//
+//	delta ──→ HKeyed ──→ out
+func DistinctKeyedIncremental(name string) *Circuit {
+	c := New(name)
+
+	c.AddNode(Input("delta"))
+	c.AddNode(Op("H", operator.NewHKeyed()))
+	c.AddNode(Output("out"))
+
+	c.AddEdge(NewEdge("delta", "H", 0))
+	c.AddEdge(NewEdge("H", "out", 0))
 
 	return c
 }

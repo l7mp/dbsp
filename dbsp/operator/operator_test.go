@@ -30,7 +30,6 @@ var _ = Describe("Operators", func() {
 		It("negates all weights", func() {
 			op := NewNegate()
 			// op := NewNegate(WithLogger(logger.NewZapLogger(logger.TraceLevel)))
-			Expect(op.Name()).To(Equal("negate"))
 			Expect(op.Arity()).To(Equal(1))
 			Expect(op.Linearity()).To(Equal(Linear))
 
@@ -51,7 +50,6 @@ var _ = Describe("Operators", func() {
 	Describe("Plus", func() {
 		It("adds two Z-sets", func() {
 			op := NewPlus()
-			Expect(op.Name()).To(Equal("plus"))
 			Expect(op.Arity()).To(Equal(2))
 			Expect(op.Linearity()).To(Equal(Linear))
 
@@ -86,13 +84,13 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("has linear linearity and correct arity", func() {
-			op := NewLinearCombination("lc", []int{1, -1})
+			op := NewLinearCombination([]int{1, -1})
 			Expect(op.Linearity()).To(Equal(Linear))
 			Expect(op.Arity()).To(Equal(2))
 		})
 
 		It("computes X + Y with coefficients [+1, +1]", func() {
-			op := NewLinearCombination("add", []int{1, 1})
+			op := NewLinearCombination([]int{1, 1})
 			result, err := op.Apply(x, y)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(3)))
@@ -100,14 +98,14 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("computes X - Y with coefficients [+1, -1]", func() {
-			op := NewLinearCombination("sub", []int{1, -1})
+			op := NewLinearCombination([]int{1, -1})
 			result, err := op.Apply(x, x)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(0)))
 		})
 
 		It("computes X + Y - Z with coefficients [+1, +1, -1]", func() {
-			op := NewLinearCombination("lc3", []int{1, 1, -1})
+			op := NewLinearCombination([]int{1, 1, -1})
 			Expect(op.Arity()).To(Equal(3))
 			result, err := op.Apply(x, y, z)
 			Expect(err).NotTo(HaveOccurred())
@@ -118,14 +116,14 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("scales with coefficient 2", func() {
-			op := NewLinearCombination("double", []int{2})
+			op := NewLinearCombination([]int{2})
 			result, err := op.Apply(x)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(6)))
 		})
 
 		It("drops inputs with coefficient 0", func() {
-			op := NewLinearCombination("zero", []int{0, 1})
+			op := NewLinearCombination([]int{0, 1})
 			result, err := op.Apply(x, y)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(0)))
@@ -139,8 +137,7 @@ var _ = Describe("Operators", func() {
 				e := ctx.Document().(testutils.Record)
 				return e.Value > 5, nil
 			})
-			op := NewSelect("gt5", predicate)
-			Expect(op.Name()).To(Equal("gt5"))
+			op := NewSelect(predicate)
 			Expect(op.Arity()).To(Equal(1))
 			Expect(op.Linearity()).To(Equal(Linear))
 
@@ -163,7 +160,7 @@ var _ = Describe("Operators", func() {
 			predicate := expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return true, nil
 			})
-			op := NewSelect("all", predicate)
+			op := NewSelect(predicate)
 
 			recordA := testutils.Record{ID: "a", Value: 1}
 			input := zset.New()
@@ -181,8 +178,7 @@ var _ = Describe("Operators", func() {
 				r := ctx.Document().(testutils.Record)
 				return testutils.Record{ID: r.ID, Value: r.Value * 2}, nil
 			})
-			op := NewProject("double", projection)
-			Expect(op.Name()).To(Equal("double"))
+			op := NewProject(projection)
 			Expect(op.Arity()).To(Equal(1))
 			Expect(op.Linearity()).To(Equal(Linear))
 
@@ -209,7 +205,7 @@ var _ = Describe("Operators", func() {
 				}
 				return nil, nil
 			})
-			op := NewProject("filter", projection)
+			op := NewProject(projection)
 
 			recordA := testutils.Record{ID: "a", Value: 3}
 			recordB := testutils.Record{ID: "b", Value: 7}
@@ -226,8 +222,7 @@ var _ = Describe("Operators", func() {
 
 	Describe("CartesianProduct", func() {
 		It("computes all pairs", func() {
-			op := NewCartesianProduct("x")
-			Expect(op.Name()).To(Equal("x"))
+			op := NewCartesianProduct()
 			Expect(op.Arity()).To(Equal(2))
 			Expect(op.Linearity()).To(Equal(Bilinear))
 
@@ -245,7 +240,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("multiplies weights", func() {
-			op := NewCartesianProduct("x")
+			op := NewCartesianProduct()
 
 			left := zset.New().WithElems(zset.Elem{Document: testutils.StringElem("a"), Weight: 2})
 			right := zset.New().WithElems(zset.Elem{Document: testutils.StringElem("x"), Weight: 3})
@@ -262,7 +257,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("creates concatenated elements with correct keys", func() {
-			op := NewCartesianProduct("x")
+			op := NewCartesianProduct()
 
 			left := zset.New().WithElems(zset.Elem{Document: testutils.StringElem("a"), Weight: 1})
 			right := zset.New().WithElems(zset.Elem{Document: testutils.StringElem("b"), Weight: 1})
@@ -279,10 +274,197 @@ var _ = Describe("Operators", func() {
 		})
 	})
 
+	Describe("DistinctKeyed", func() {
+		It("passes a single element unchanged", func() {
+			op := NewDistinctKeyed()
+			Expect(op.Arity()).To(Equal(1))
+			Expect(op.Linearity()).To(Equal(NonLinear))
+
+			r := testutils.Record{ID: "a", Value: 1}
+			input := zset.New()
+			input.Insert(r, 1)
+
+			result, err := op.Apply(input)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Size()).To(Equal(1))
+			Expect(result.Lookup(r.Hash())).To(Equal(zset.Weight(1)))
+		})
+
+		It("passes two elements with different PKs", func() {
+			op := NewDistinctKeyed()
+			ra := testutils.Record{ID: "a", Value: 1}
+			rb := testutils.Record{ID: "b", Value: 2}
+			input := zset.New()
+			input.Insert(ra, 1)
+			input.Insert(rb, 1)
+
+			result, err := op.Apply(input)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Size()).To(Equal(2))
+			Expect(result.Lookup(ra.Hash())).To(Equal(zset.Weight(1)))
+			Expect(result.Lookup(rb.Hash())).To(Equal(zset.Weight(1)))
+		})
+
+		It("picks lexmin when two elements share a PK", func() {
+			op := NewDistinctKeyed()
+			// Both have ID "a" (same PK). Hash is "{ID:a, Value:N}"; Value:1 < Value:2 lexically.
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			Expect(r1.Hash() < r2.Hash()).To(BeTrue(), "test assumes r1 hashes lower")
+			input := zset.New()
+			input.Insert(r1, 1)
+			input.Insert(r2, 1)
+
+			result, err := op.Apply(input)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Size()).To(Equal(1))
+			Expect(result.Lookup(r1.Hash())).To(Equal(zset.Weight(1)))
+			Expect(result.Lookup(r2.Hash())).To(Equal(zset.Weight(0)))
+		})
+
+		It("collapses weight > 1 to weight 1", func() {
+			op := NewDistinctKeyed()
+			r := testutils.Record{ID: "a", Value: 1}
+			input := zset.New()
+			input.Insert(r, 5)
+
+			result, err := op.Apply(input)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(r.Hash())).To(Equal(zset.Weight(1)))
+		})
+
+		It("ignores negative-weight elements", func() {
+			op := NewDistinctKeyed()
+			ra := testutils.Record{ID: "a", Value: 1}
+			rb := testutils.Record{ID: "b", Value: 2}
+			input := zset.New()
+			input.Insert(ra, 1)
+			input.Insert(rb, -1)
+
+			result, err := op.Apply(input)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Size()).To(Equal(1))
+			Expect(result.Lookup(ra.Hash())).To(Equal(zset.Weight(1)))
+		})
+
+		It("returns empty output for empty input", func() {
+			op := NewDistinctKeyed()
+			result, err := op.Apply(zset.New())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.IsZero()).To(BeTrue())
+		})
+
+		It("is idempotent", func() {
+			op := NewDistinctKeyed()
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			input := zset.New()
+			input.Insert(r1, 1)
+			input.Insert(r2, 1)
+
+			once, err := op.Apply(input)
+			Expect(err).NotTo(HaveOccurred())
+			twice, err := op.Apply(once)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(twice.Size()).To(Equal(once.Size()))
+			once.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+				Expect(twice.Lookup(elem.Hash())).To(Equal(weight))
+				return true
+			})
+		})
+	})
+
+	Describe("HKeyed", func() {
+		var op *HKeyed
+
+		BeforeEach(func() { op = NewHKeyed() })
+
+		It("emits +1 when a key first appears", func() {
+			r := testutils.Record{ID: "a", Value: 1}
+			delta := zset.New()
+			delta.Insert(r, 1)
+
+			result, err := op.Apply(delta)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(r.Hash())).To(Equal(zset.Weight(1)))
+		})
+
+		It("emits -1 when a key disappears", func() {
+			r := testutils.Record{ID: "a", Value: 1}
+
+			d1 := zset.New()
+			d1.Insert(r, 1)
+			_, _ = op.Apply(d1)
+
+			d2 := zset.New()
+			d2.Insert(r, -1)
+			result, err := op.Apply(d2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(r.Hash())).To(Equal(zset.Weight(-1)))
+		})
+
+		It("emits {old:-1, new:+1} when lexmin changes", func() {
+			// r1 < r2 lexically (Value:1 < Value:2).
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
+
+			// Step 1: add r1 (lexmin = r1).
+			d1 := zset.New()
+			d1.Insert(r1, 1)
+			_, _ = op.Apply(d1)
+
+			// Step 2: remove r1, add r2 — lexmin transitions r1 → r2.
+			d2 := zset.New()
+			d2.Insert(r1, -1)
+			d2.Insert(r2, 1)
+
+			result, err := op.Apply(d2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(r1.Hash())).To(Equal(zset.Weight(-1)))
+			Expect(result.Lookup(r2.Hash())).To(Equal(zset.Weight(1)))
+		})
+
+		It("emits nothing when lexmin is stable (weight increase on rep)", func() {
+			r := testutils.Record{ID: "a", Value: 1}
+			d1 := zset.New()
+			d1.Insert(r, 1)
+			_, _ = op.Apply(d1)
+
+			d2 := zset.New()
+			d2.Insert(r, 1) // weight 1 → 2, lexmin unchanged.
+
+			result, err := op.Apply(d2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.IsZero()).To(BeTrue())
+		})
+
+		It("resolves key collision to lexmin", func() {
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
+
+			// Both arrive in the same delta — lexmin should win.
+			delta := zset.New()
+			delta.Insert(r1, 1)
+			delta.Insert(r2, 1)
+
+			result, err := op.Apply(delta)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(r1.Hash())).To(Equal(zset.Weight(1)))
+			Expect(result.Lookup(r2.Hash())).To(Equal(zset.Weight(0)))
+		})
+
+		It("emits nothing for an empty delta", func() {
+			result, err := op.Apply(zset.New())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.IsZero()).To(BeTrue())
+		})
+	})
+
 	Describe("Distinct", func() {
 		It("collapses positive weights to 1", func() {
-			op := NewDistinct("H")
-			Expect(op.Name()).To(Equal("H"))
+			op := NewDistinct()
 			Expect(op.Arity()).To(Equal(1))
 			Expect(op.Linearity()).To(Equal(NonLinear))
 
@@ -305,8 +487,7 @@ var _ = Describe("Operators", func() {
 
 	Describe("Unwind", func() {
 		It("flattens arrays", func() {
-			op := NewUnwind("unwind_values", "values")
-			Expect(op.Name()).To(Equal("unwind_values"))
+			op := NewUnwind("values")
 			Expect(op.Arity()).To(Equal(1))
 			Expect(op.Linearity()).To(Equal(Linear))
 
@@ -332,7 +513,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("preserves weights", func() {
-			op := NewUnwind("unwind", "values")
+			op := NewUnwind("values")
 
 			input := zset.New()
 			input.Insert(testutils.NewMutableRecord(map[string]any{
@@ -352,7 +533,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("preserves other fields", func() {
-			op := NewUnwind("unwind", "tags")
+			op := NewUnwind("tags")
 
 			input := zset.New()
 			input.Insert(testutils.NewMutableRecord(map[string]any{
@@ -375,7 +556,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("adds index field when configured", func() {
-			op := NewUnwind("unwind", "values").WithIndexField("idx")
+			op := NewUnwind("values").WithIndexField("idx")
 
 			input := zset.New()
 			input.Insert(testutils.NewMutableRecord(map[string]any{
@@ -397,7 +578,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("skips documents with missing array field", func() {
-			op := NewUnwind("unwind", "values")
+			op := NewUnwind("values")
 
 			input := zset.New()
 			input.Insert(testutils.NewMutableRecord(map[string]any{
@@ -410,7 +591,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("handles nil array values", func() {
-			op := NewUnwind("unwind", "values")
+			op := NewUnwind("values")
 
 			input := zset.New()
 			input.Insert(testutils.NewMutableRecord(map[string]any{

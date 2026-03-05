@@ -20,47 +20,45 @@ var _ = Describe("Circuit", func() {
 		It("creates input nodes", func() {
 			n := Input("in")
 			Expect(n.ID).To(Equal("in"))
-			Expect(n.Kind).To(Equal(NodeInput))
-			Expect(n.Kind.String()).To(Equal("Input"))
+			Expect(n.Kind()).To(Equal(operator.KindInput))
 		})
 
 		It("creates output nodes", func() {
 			n := Output("out")
 			Expect(n.ID).To(Equal("out"))
-			Expect(n.Kind).To(Equal(NodeOutput))
+			Expect(n.Kind()).To(Equal(operator.KindOutput))
 		})
 
 		It("creates operator nodes", func() {
 			op := operator.NewNegate()
 			n := Op("neg", op)
 			Expect(n.ID).To(Equal("neg"))
-			Expect(n.Kind).To(Equal(NodeOperator))
+			Expect(n.Kind()).To(Equal(operator.KindNegate))
 			Expect(n.Operator).To(Equal(op))
 		})
 
 		It("creates delay nodes", func() {
 			n := Delay("z-1")
 			Expect(n.ID).To(Equal("z-1"))
-			Expect(n.Kind).To(Equal(NodeDelay))
-			Expect(n.Kind.String()).To(Equal("Delay"))
+			Expect(n.Kind()).To(Equal(operator.KindDelay))
 		})
 
 		It("creates integrate nodes", func() {
 			n := Integrate("int")
 			Expect(n.ID).To(Equal("int"))
-			Expect(n.Kind).To(Equal(NodeIntegrate))
+			Expect(n.Kind()).To(Equal(operator.KindIntegrate))
 		})
 
 		It("creates differentiate nodes", func() {
 			n := Differentiate("diff")
 			Expect(n.ID).To(Equal("diff"))
-			Expect(n.Kind).To(Equal(NodeDifferentiate))
+			Expect(n.Kind()).To(Equal(operator.KindDifferentiate))
 		})
 
 		It("creates delta0 nodes", func() {
 			n := Delta0("d0")
 			Expect(n.ID).To(Equal("d0"))
-			Expect(n.Kind).To(Equal(NodeDelta0))
+			Expect(n.Kind()).To(Equal(operator.KindDelta0))
 		})
 	})
 
@@ -406,7 +404,7 @@ var _ = Describe("Circuit", func() {
 
 		Describe("BilinearIncremental", func() {
 			It("creates the three-term pattern", func() {
-				op := operator.NewCartesianProduct("×")
+				op := operator.NewCartesianProduct()
 				c := BilinearIncremental("bilinear-incr", op)
 
 				Expect(c.Name()).To(Equal("bilinear-incr"))
@@ -414,8 +412,8 @@ var _ = Describe("Circuit", func() {
 				Expect(c.Outputs()).To(HaveLen(1))
 
 				// Verify integrators.
-				Expect(c.Node("int_a").Kind).To(Equal(NodeIntegrate))
-				Expect(c.Node("int_b").Kind).To(Equal(NodeIntegrate))
+				Expect(c.Node("int_a").Kind()).To(Equal(operator.KindIntegrate))
+				Expect(c.Node("int_b").Kind()).To(Equal(operator.KindIntegrate))
 
 				// Verify three terms.
 				Expect(c.Node("term1")).NotTo(BeNil())
@@ -430,7 +428,7 @@ var _ = Describe("Circuit", func() {
 
 		Describe("NonLinearIncremental", func() {
 			It("creates the D ∘ O ∘ ∫ pattern", func() {
-				op := operator.NewDistinct("H")
+				op := operator.NewDistinct()
 				c := NonLinearIncremental("nonlinear-incr", op)
 
 				Expect(c.Name()).To(Equal("nonlinear-incr"))
@@ -438,11 +436,11 @@ var _ = Describe("Circuit", func() {
 				Expect(c.Outputs()).To(HaveLen(1))
 
 				// Verify structure: delta -> int -> op -> diff -> out.
-				Expect(c.Node("delta").Kind).To(Equal(NodeInput))
-				Expect(c.Node("int").Kind).To(Equal(NodeIntegrate))
-				Expect(c.Node("op").Kind).To(Equal(NodeOperator))
-				Expect(c.Node("diff").Kind).To(Equal(NodeDifferentiate))
-				Expect(c.Node("out").Kind).To(Equal(NodeOutput))
+				Expect(c.Node("delta").Kind()).To(Equal(operator.KindInput))
+				Expect(c.Node("int").Kind()).To(Equal(operator.KindIntegrate))
+				Expect(c.Node("op").Kind()).To(Equal(operator.KindDistinct))
+				Expect(c.Node("diff").Kind()).To(Equal(operator.KindDifferentiate))
+				Expect(c.Node("out").Kind()).To(Equal(operator.KindOutput))
 			})
 		})
 	})

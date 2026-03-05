@@ -8,6 +8,10 @@ import (
 	"github.com/l7mp/dbsp/dbsp/operator"
 )
 
+func incrementalID(id string) string {
+	return id + "^Δ"
+}
+
 // nodeMapping tracks how original nodes map to result nodes.
 type nodeMapping struct {
 	// outputNode is the node that should be used as the source for
@@ -39,37 +43,11 @@ func Incrementalize(c *circuit.Circuit) (*circuit.Circuit, error) {
 
 	// First pass: create all nodes and build the mapping.
 	for _, node := range c.Nodes() {
-		switch node.Kind {
-		case circuit.NodeInput:
-			result.AddNode(circuit.Input(node.ID))
-			mapping[node.ID] = &nodeMapping{outputNode: node.ID, inputNode: node.ID}
-
-		case circuit.NodeOutput:
-			result.AddNode(circuit.Output(node.ID))
-			mapping[node.ID] = &nodeMapping{outputNode: node.ID, inputNode: node.ID}
-
-		case circuit.NodeOperator:
-			m, err := createOperatorNodes(result, node)
-			if err != nil {
-				return nil, err
-			}
-			mapping[node.ID] = m
-
-		case circuit.NodeIntegrate:
-			// Bypassed - no node created.
+		inputNode, outputNode := node.Incrementalize(result)
+		if inputNode == "" && outputNode == "" {
 			mapping[node.ID] = &nodeMapping{skip: true}
-
-		case circuit.NodeDifferentiate:
-			// Bypassed - no node created.
-			mapping[node.ID] = &nodeMapping{skip: true}
-
-		case circuit.NodeDelay:
-			result.AddNode(circuit.Delay(node.ID))
-			mapping[node.ID] = &nodeMapping{outputNode: node.ID, inputNode: node.ID}
-
-		case circuit.NodeDelta0:
-			result.AddNode(circuit.Delta0(node.ID))
-			mapping[node.ID] = &nodeMapping{outputNode: node.ID, inputNode: node.ID}
+		} else {
+			mapping[node.ID] = &nodeMapping{inputNode: inputNode, outputNode: outputNode}
 		}
 	}
 
@@ -107,19 +85,19 @@ func Incrementalize(c *circuit.Circuit) (*circuit.Circuit, error) {
 		// If source is an operator, it handles outgoing edge creation.
 		// When both are operators, target takes precedence for bilinear operators
 		// since they need special wiring of inputs.
-		if toNode.Kind == circuit.NodeOperator {
+		if isUserOp(toNode) {
 			createOperatorEdges(c, result, toNode, e, mapping)
 		}
-		if fromNode.Kind == circuit.NodeOperator {
+		if isUserOp(fromNode) {
 			// For bilinear targets, skip - already handled above.
-			if toNode.Kind == circuit.NodeOperator && toNode.Operator != nil &&
+			if isUserOp(toNode) && toNode.Operator != nil &&
 				toNode.Operator.Linearity() == operator.Bilinear {
 				// Bilinear incoming edges are fully handled by the target.
 				continue
 			}
 			createOperatorEdges(c, result, fromNode, e, mapping)
 		}
-		if fromNode.Kind != circuit.NodeOperator && toNode.Kind != circuit.NodeOperator {
+		if !isUserOp(fromNode) && !isUserOp(toNode) {
 			// Simple nodes: direct edge.
 			actualFrom := fromMapping.outputNode
 			actualTo := toMapping.inputNode
@@ -128,6 +106,13 @@ func Incrementalize(c *circuit.Circuit) (*circuit.Circuit, error) {
 	}
 
 	return result, nil
+}
+
+// isUserOp returns true if the node holds a user-defined operator (Linear,
+// Bilinear, or NonLinear), as opposed to a primitive circuit node.
+func isUserOp(n *circuit.Node) bool {
+	l := n.Operator.Linearity()
+	return l == operator.Linear || l == operator.Bilinear || l == operator.NonLinear
 }
 
 // resolveSource finds the actual output node for a given source.
@@ -156,86 +141,10 @@ func resolveDest(c *circuit.Circuit, mapping map[string]*nodeMapping, nodeID str
 	return m.inputNode
 }
 
-// createOperatorNodes creates the nodes for an operator in the incremental circuit.
-func createOperatorNodes(result *circuit.Circuit, node *circuit.Node) (*nodeMapping, error) {
-	op := node.Operator
-
-	switch op.Linearity() {
-	case operator.Linear:
-		result.AddNode(circuit.Op(node.ID, op))
-		return &nodeMapping{outputNode: node.ID, inputNode: node.ID}, nil
-
-	case operator.Bilinear:
-		prefix := node.ID
-
-		// Create integrators.
-		// The bilinear formula uses ∫a[t-1] and ∫b[t-1], so we need delays after integrators.
-		intLeft := prefix + "_int_left"
-		intRight := prefix + "_int_right"
-		delayLeft := prefix + "_delay_left"
-		delayRight := prefix + "_delay_right"
-		result.AddNode(circuit.Integrate(intLeft))
-		result.AddNode(circuit.Integrate(intRight))
-		result.AddNode(circuit.Delay(delayLeft))
-		result.AddNode(circuit.Delay(delayRight))
-
-		// Connect integrators to delays.
-		result.AddEdge(circuit.NewEdge(intLeft, delayLeft, 0))
-		result.AddEdge(circuit.NewEdge(intRight, delayRight, 0))
-
-		// Create three terms.
-		// term1: Δa ⊗ ∫b[t-1] (delta_a × delayed_int_b)
-		// term2: ∫a[t-1] ⊗ Δb (delayed_int_a × delta_b)
-		// term3: Δa ⊗ Δb (delta_a × delta_b)
-		term1 := prefix + "_t1"
-		term2 := prefix + "_t2"
-		term3 := prefix + "_t3"
-		result.AddNode(circuit.Op(term1, op))
-		result.AddNode(circuit.Op(term2, op))
-		result.AddNode(circuit.Op(term3, op))
-
-		// Create sums.
-		sum12 := prefix + "_sum12"
-		sumAll := prefix + "_sum"
-		result.AddNode(circuit.Op(sum12, operator.NewPlus()))
-		result.AddNode(circuit.Op(sumAll, operator.NewPlus()))
-
-		// Internal edges between new nodes.
-		// term1 + term2.
-		result.AddEdge(circuit.NewEdge(term1, sum12, 0))
-		result.AddEdge(circuit.NewEdge(term2, sum12, 1))
-		// (term1 + term2) + term3.
-		result.AddEdge(circuit.NewEdge(sum12, sumAll, 0))
-		result.AddEdge(circuit.NewEdge(term3, sumAll, 1))
-
-		return &nodeMapping{outputNode: sumAll, inputNode: ""}, nil
-
-	case operator.NonLinear:
-		prefix := node.ID
-
-		// Create nodes: integrate -> op -> differentiate.
-		intNode := prefix + "_int"
-		opNode := prefix + "_op"
-		diffNode := prefix + "_diff"
-
-		result.AddNode(circuit.Integrate(intNode))
-		result.AddNode(circuit.Op(opNode, op))
-		result.AddNode(circuit.Differentiate(diffNode))
-
-		// Internal edges.
-		result.AddEdge(circuit.NewEdge(intNode, opNode, 0))
-		result.AddEdge(circuit.NewEdge(opNode, diffNode, 0))
-
-		return &nodeMapping{outputNode: diffNode, inputNode: intNode}, nil
-	}
-
-	return nil, fmt.Errorf("unknown linearity for operator %s", node.ID)
-}
-
 // createOperatorEdges creates the external edges for an operator.
 func createOperatorEdges(c, result *circuit.Circuit, node *circuit.Node, e *circuit.Edge, mapping map[string]*nodeMapping) {
 	op := node.Operator
-	prefix := node.ID
+	prefix := incrementalID(node.ID)
 
 	switch op.Linearity() {
 	case operator.Linear:
@@ -243,11 +152,11 @@ func createOperatorEdges(c, result *circuit.Circuit, node *circuit.Node, e *circ
 		if e.From == node.ID {
 			// Outgoing edge.
 			toMapping := mapping[e.To]
-			result.AddEdge(circuit.NewEdge(node.ID, toMapping.inputNode, e.Port))
+			result.AddEdge(circuit.NewEdge(mapping[node.ID].outputNode, toMapping.inputNode, e.Port))
 		} else if e.To == node.ID {
 			// Incoming edge.
 			fromMapping := mapping[e.From]
-			result.AddEdge(circuit.NewEdge(fromMapping.outputNode, node.ID, e.Port))
+			result.AddEdge(circuit.NewEdge(fromMapping.outputNode, mapping[node.ID].inputNode, e.Port))
 		}
 
 	case operator.Bilinear:
@@ -291,15 +200,14 @@ func createOperatorEdges(c, result *circuit.Circuit, node *circuit.Node, e *circ
 	case operator.NonLinear:
 		if e.To == node.ID {
 			// Incoming edge.
-			intNode := prefix + "_int"
 			fromMapping := mapping[e.From]
-			result.AddEdge(circuit.NewEdge(fromMapping.outputNode, intNode, e.Port))
+			toNode := mapping[node.ID].inputNode
+			result.AddEdge(circuit.NewEdge(fromMapping.outputNode, toNode, e.Port))
 		} else if e.From == node.ID {
 			// Outgoing edge.
-			diffNode := prefix + "_diff"
+			sourceNode := mapping[node.ID].outputNode
 			toMapping := mapping[e.To]
-			result.AddEdge(circuit.NewEdge(diffNode, toMapping.inputNode, e.Port))
+			result.AddEdge(circuit.NewEdge(sourceNode, toMapping.inputNode, e.Port))
 		}
 	}
 }
-

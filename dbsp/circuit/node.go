@@ -2,86 +2,55 @@ package circuit
 
 import "github.com/l7mp/dbsp/dbsp/operator"
 
-// NodeKind classifies circuit nodes.
-type NodeKind int
-
-const (
-	// NodeInput represents an input node.
-	NodeInput NodeKind = iota
-	// NodeOutput represents an output node.
-	NodeOutput
-	// NodeOperator represents an operator node.
-	NodeOperator
-	// NodeDelay represents the z^-1 delay operator.
-	NodeDelay
-	// NodeIntegrate represents the integral operator.
-	NodeIntegrate
-	// NodeDifferentiate represents the differentiation operator.
-	NodeDifferentiate
-	// NodeDelta0 represents the delta-zero (initial value injection) operator.
-	NodeDelta0
-)
-
-// String returns a string representation of the node kind.
-func (k NodeKind) String() string {
-	switch k {
-	case NodeInput:
-		return "Input"
-	case NodeOutput:
-		return "Output"
-	case NodeOperator:
-		return "Operator"
-	case NodeDelay:
-		return "Delay"
-	case NodeIntegrate:
-		return "Integrate"
-	case NodeDifferentiate:
-		return "Differentiate"
-	case NodeDelta0:
-		return "Delta0"
-	default:
-		return "Unknown"
-	}
-}
-
-// Node represents a node in the circuit.
+// Node represents a node in the circuit, backed by an Operator.
+// The node's role is fully described by its Operator: call node.Operator.Kind()
+// to determine the type, and node.Operator.Linearity() to determine how
+// incrementalization treats it.
 type Node struct {
 	ID       string
-	Kind     NodeKind
-	Operator operator.Operator // Only for NodeOperator.
+	Operator operator.Operator
 }
 
-// Input creates a new input node.
+// Kind returns the embedded operator's Kind.
+func (n *Node) Kind() operator.Kind { return n.Operator.Kind() }
+
+// Input creates a circuit-input node backed by InputOp.
 func Input(id string) *Node {
-	return &Node{ID: id, Kind: NodeInput}
+	return &Node{ID: id, Operator: operator.NewInput()}
 }
 
-// Output creates a new output node.
+// Output creates a circuit-output node backed by OutputOp.
 func Output(id string) *Node {
-	return &Node{ID: id, Kind: NodeOutput}
+	return &Node{ID: id, Operator: operator.NewOutput()}
 }
 
-// Op creates a new operator node.
+// Op creates a user-defined operator node.
 func Op(id string, op operator.Operator) *Node {
-	return &Node{ID: id, Kind: NodeOperator, Operator: op}
+	return &Node{ID: id, Operator: op}
 }
 
-// Delay creates a new delay (z^-1) node.
+// Delay creates a delay emit node backed by a placeholder DelayOp.
+// When added to a Circuit via AddNode, the circuit replaces the operator
+// with a fresh paired (DelayOp, DelayAbsorbOp) sharing internal state,
+// and registers the absorb node (id+"_absorb") automatically.
+// Edges directed at the emit node ID are transparently rewritten by AddEdge
+// to target the absorb node, so callers use a single consistent node ID.
 func Delay(id string) *Node {
-	return &Node{ID: id, Kind: NodeDelay}
+	emit, _ := operator.NewDelay()
+	return &Node{ID: id, Operator: emit}
 }
 
-// Integrate creates a new integrate (∫) node.
+// Integrate creates an integrate (∫) node backed by IntegrateOp.
 func Integrate(id string) *Node {
-	return &Node{ID: id, Kind: NodeIntegrate}
+	return &Node{ID: id, Operator: operator.NewIntegrate()}
 }
 
-// Differentiate creates a new differentiate (D) node.
+// Differentiate creates a differentiate (D) node backed by DifferentiateOp.
 func Differentiate(id string) *Node {
-	return &Node{ID: id, Kind: NodeDifferentiate}
+	return &Node{ID: id, Operator: operator.NewDifferentiate()}
 }
 
-// Delta0 creates a new delta-zero (δ₀) node.
+// Delta0 creates a delta-zero (δ₀) node backed by Delta0Op.
 func Delta0(id string) *Node {
-	return &Node{ID: id, Kind: NodeDelta0}
+	return &Node{ID: id, Operator: operator.NewDelta0()}
 }

@@ -2,20 +2,26 @@ package circuit
 
 import (
 	"fmt"
+	"strings"
 
 	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/topo"
+
+	"github.com/l7mp/dbsp/dbsp/operator"
 )
 
 // New creates a new empty circuit.
 func New(name string) *Circuit {
 	return &Circuit{
-		name:     name,
-		nodes:    make(map[string]*Node),
-		edges:    make([]*Edge, 0),
-		graph:    simple.NewDirectedGraph(),
-		nodeToID: make(map[string]int64),
-		idToNode: make(map[int64]string),
+		name:         name,
+		nodes:        make(map[string]*Node),
+		edges:        make([]*Edge, 0),
+		inputIDs:     make(map[string]bool),
+		outputIDs:    make(map[string]bool),
+		delayEmitIDs: make(map[string]bool),
+		graph:        simple.NewDirectedGraph(),
+		nodeToID:     make(map[string]int64),
+		idToNode:     make(map[int64]string),
 	}
 }
 
@@ -23,22 +29,61 @@ func New(name string) *Circuit {
 func (c *Circuit) Name() string { return c.name }
 
 // AddNode adds a node to the circuit.
+//
+// Special behavior for delay nodes (KindDelay / *operator.DelayOp): the circuit
+// automatically creates and registers the paired absorb node (id+"_absorb") so
+// callers need only add the emit node. The emit ID is recorded in delayEmitIDs
+// so that AddEdge can transparently rewrite edges that target the emit ID to
+// target the absorb node instead.
 func (c *Circuit) AddNode(n *Node) error {
 	if _, exists := c.nodes[n.ID]; exists {
 		return fmt.Errorf("node %s already exists", n.ID)
 	}
-	c.nodes[n.ID] = n
+	c.addNodeRaw(n)
 
+	// Track circuit boundary nodes by operator kind.
+	switch n.Kind() {
+	case operator.KindInput:
+		c.inputIDs[n.ID] = true
+	case operator.KindOutput:
+		c.outputIDs[n.ID] = true
+	case operator.KindDelay:
+		// Register the emit node and automatically create its absorb partner.
+		// NewDelay returns a paired (emit, absorb) sharing the same internal state.
+		c.delayEmitIDs[n.ID] = true
+		emitOp, absorbOp := operator.NewDelay()
+		n.Operator = emitOp
+		c.addNodeRaw(&Node{
+			ID:       n.ID + "_absorb",
+			Operator: absorbOp,
+		})
+	}
+	return nil
+}
+
+// addNodeRaw adds a node directly to the internal maps without any special processing.
+// Used internally by AddNode and Clone.
+func (c *Circuit) addNodeRaw(n *Node) {
+	c.nodes[n.ID] = n
 	gn := c.graph.NewNode()
 	c.graph.AddNode(gn)
 	c.nodeToID[n.ID] = gn.ID()
 	c.idToNode[gn.ID()] = n.ID
-
-	return nil
 }
 
 // AddEdge adds an edge to the circuit.
+//
+// If the target node is a delay emit node (in delayEmitIDs), the edge is
+// transparently rewritten to target the absorb node (id+"_absorb") instead,
+// so callers use the same delay ID for both incoming and outgoing edges.
 func (c *Circuit) AddEdge(e *Edge) error {
+	// Rewrite edges that target a delay emit node to its absorb node.
+	to := e.To
+	if c.delayEmitIDs[to] {
+		to = to + "_absorb"
+		e = &Edge{From: e.From, To: to, Port: e.Port}
+	}
+
 	if _, exists := c.nodes[e.From]; !exists {
 		return fmt.Errorf("source node %s not found", e.From)
 	}
@@ -96,33 +141,50 @@ func (c *Circuit) EdgesFrom(nodeID string) []*Edge {
 	return result
 }
 
-// Inputs returns all input nodes.
+// Inputs returns all circuit-input boundary nodes.
 func (c *Circuit) Inputs() []*Node {
-	var result []*Node
-	for _, n := range c.nodes {
-		if n.Kind == NodeInput {
-			result = append(result, n)
-		}
+	result := make([]*Node, 0, len(c.inputIDs))
+	for id := range c.inputIDs {
+		result = append(result, c.nodes[id])
 	}
 	return result
 }
 
-// Outputs returns all output nodes.
+// Outputs returns all circuit-output boundary nodes.
 func (c *Circuit) Outputs() []*Node {
-	var result []*Node
-	for _, n := range c.nodes {
-		if n.Kind == NodeOutput {
-			result = append(result, n)
-		}
+	result := make([]*Node, 0, len(c.outputIDs))
+	for id := range c.outputIDs {
+		result = append(result, c.nodes[id])
 	}
 	return result
 }
 
-// Clone creates a copy of the circuit.
+// Clone creates a structural copy of the circuit. Operator state is shared
+// (not deep-copied), so the clone should be used for structural analysis,
+// not concurrent execution.
 func (c *Circuit) Clone() *Circuit {
-	clone := New(c.name)
+	clone := &Circuit{
+		name:         c.name,
+		nodes:        make(map[string]*Node),
+		edges:        make([]*Edge, 0, len(c.edges)),
+		inputIDs:     make(map[string]bool, len(c.inputIDs)),
+		outputIDs:    make(map[string]bool, len(c.outputIDs)),
+		delayEmitIDs: make(map[string]bool, len(c.delayEmitIDs)),
+		graph:        simple.NewDirectedGraph(),
+		nodeToID:     make(map[string]int64),
+		idToNode:     make(map[int64]string),
+	}
+	for id := range c.inputIDs {
+		clone.inputIDs[id] = true
+	}
+	for id := range c.outputIDs {
+		clone.outputIDs[id] = true
+	}
+	for id := range c.delayEmitIDs {
+		clone.delayEmitIDs[id] = true
+	}
 	for _, n := range c.nodes {
-		clone.AddNode(&Node{ID: n.ID, Kind: n.Kind, Operator: n.Operator})
+		clone.addNodeRaw(&Node{ID: n.ID, Operator: n.Operator})
 	}
 	for _, e := range c.edges {
 		clone.AddEdge(&Edge{From: e.From, To: e.To, Port: e.Port})
@@ -167,6 +229,9 @@ func (c *Circuit) RemoveNode(id string) error {
 	delete(c.nodes, id)
 	delete(c.idToNode, gonumID)
 	delete(c.nodeToID, id)
+	delete(c.inputIDs, id)
+	delete(c.outputIDs, id)
+	delete(c.delayEmitIDs, id)
 
 	return nil
 }
@@ -240,27 +305,31 @@ func (c *Circuit) BypassNode(id string) error {
 	delete(c.nodes, id)
 	delete(c.idToNode, gonumID)
 	delete(c.nodeToID, id)
+	delete(c.inputIDs, id)
+	delete(c.outputIDs, id)
+	delete(c.delayEmitIDs, id)
 
 	return nil
 }
 
-// Validate checks if the circuit is well-formed.
-// A circuit is well-formed if every cycle contains at least one delay node.
+// Validate checks that the circuit is a DAG (no cycles). A properly constructed
+// circuit using delay nodes (which are split into emit/absorb pairs) will always
+// be a DAG. Cycles indicate a missing delay.
 func (c *Circuit) Validate() []error {
 	var errs []error
 	for _, scc := range c.FindSCCs() {
 		if len(scc) > 1 {
-			hasDelay := false
-			for _, id := range scc {
-				if c.nodes[id].Kind == NodeDelay {
-					hasDelay = true
-					break
-				}
-			}
-			if !hasDelay {
-				errs = append(errs, fmt.Errorf("cycle %v has no delay", scc))
-			}
+			errs = append(errs, fmt.Errorf("circuit has a cycle %v; use delay nodes to break cycles", scc))
 		}
 	}
 	return errs
+}
+
+// isDelayAbsorbID reports whether id is the absorb half of a delay pair.
+func (c *Circuit) isDelayAbsorbID(id string) bool {
+	if !strings.HasSuffix(id, "_absorb") {
+		return false
+	}
+	emitID := strings.TrimSuffix(id, "_absorb")
+	return c.delayEmitIDs[emitID]
 }

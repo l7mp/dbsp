@@ -57,7 +57,7 @@ func (c *Compiler) compileSelect(sel *sqlparser.Select, bindVars map[string]*que
 		if err != nil {
 			return nil, err
 		}
-		selectOp := operator.NewSelect("where", predicate)
+		selectOp := operator.NewSelect(predicate)
 		selectID := "select"
 		if err := compiledCircuit.AddNode(circuit.Op(selectID, selectOp)); err != nil {
 			return nil, err
@@ -151,10 +151,10 @@ func (c *Compiler) compileJoin(expr *sqlparser.JoinTableExpr, compiledCircuit *c
 	productID := fmt.Sprintf("product_%d", len(compiledCircuit.Nodes()))
 	selectID := fmt.Sprintf("select_%d", len(compiledCircuit.Nodes())+1)
 
-	if err := compiledCircuit.AddNode(circuit.Op(productID, operator.NewCartesianProduct("×"))); err != nil {
+	if err := compiledCircuit.AddNode(circuit.Op(productID, operator.NewCartesianProduct())); err != nil {
 		return "", err
 	}
-	if err := compiledCircuit.AddNode(circuit.Op(selectID, operator.NewSelect("σ", predicate))); err != nil {
+	if err := compiledCircuit.AddNode(circuit.Op(selectID, operator.NewSelect(predicate))); err != nil {
 		return "", err
 	}
 	if err := compiledCircuit.AddEdge(circuit.NewEdge(leftID, productID, 0)); err != nil {
@@ -189,7 +189,7 @@ func (c *Compiler) addProjection(selectExprs sqlparser.SelectExprs, compiledCirc
 		return "", err
 	}
 	projectID := fmt.Sprintf("project_%d", len(compiledCircuit.Nodes()))
-	if err := compiledCircuit.AddNode(circuit.Op(projectID, operator.NewProject("project", projection))); err != nil {
+	if err := compiledCircuit.AddNode(circuit.Op(projectID, operator.NewProject(projection))); err != nil {
 		return "", err
 	}
 	if err := compiledCircuit.AddEdge(circuit.NewEdge(inputID, projectID, 0)); err != nil {

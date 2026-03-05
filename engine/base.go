@@ -185,10 +185,9 @@ func (e *baseEngine) executorObserver() executor.ObserverFunc {
 	if e.observer == nil {
 		return nil
 	}
-	return func(node *circuit.Node, values map[string]zset.ZSet, state *executor.State, schedule []string, position int) {
+	return func(node *circuit.Node, values map[string]zset.ZSet, schedule []string, position int) {
 		snapshot := &ExecutionSnapshot{
 			Values:   values,
-			State:    state,
 			Schedule: schedule,
 			Position: position,
 		}

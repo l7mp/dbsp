@@ -30,11 +30,10 @@ var _ = Describe("Executor", func() {
 			// in -> select (value > 5) -> out.
 			c := circuit.New("simple")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("sel", operator.NewSelect("σ",
-				expression.Func(func(ctx *expression.EvalContext) (any, error) {
-					e := ctx.Document().(testutils.Record)
-					return e.Value > 5, nil
-				}))))
+			c.AddNode(circuit.Op("sel", operator.NewSelect(expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				e := ctx.Document().(testutils.Record)
+				return e.Value > 5, nil
+			}))))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "sel", 0))
 			c.AddEdge(circuit.NewEdge("sel", "out", 0))
@@ -275,7 +274,7 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 		It("Select: normal vs incremental", func() {
 			c := circuit.New("select-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("sel", operator.NewSelect("gt5", expression.Func(func(ctx *expression.EvalContext) (any, error) {
+			c.AddNode(circuit.Op("sel", operator.NewSelect(expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				e := ctx.Document().(testutils.Record)
 				return e.Value > 5, nil
 			}))))
@@ -294,7 +293,7 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 		It("Project: normal vs incremental", func() {
 			c := circuit.New("project-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("proj", operator.NewProject("double", expression.Func(func(ctx *expression.EvalContext) (any, error) {
+			c.AddNode(circuit.Op("proj", operator.NewProject(expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				r := ctx.Document().(testutils.Record)
 				return testutils.Record{ID: r.ID, Value: r.Value * 2}, nil
 			}))))
@@ -315,7 +314,7 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 			c := circuit.New("product-test")
 			c.AddNode(circuit.Input("left"))
 			c.AddNode(circuit.Input("right"))
-			c.AddNode(circuit.Op("prod", operator.NewCartesianProduct("×")))
+			c.AddNode(circuit.Op("prod", operator.NewCartesianProduct()))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("left", "prod", 0))
 			c.AddEdge(circuit.NewEdge("right", "prod", 1))
@@ -335,7 +334,7 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 		It("Distinct: normal vs incremental", func() {
 			c := circuit.New("distinct-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("dist", operator.NewDistinct("H")))
+			c.AddNode(circuit.Op("dist", operator.NewDistinct()))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "dist", 0))
 			c.AddEdge(circuit.NewEdge("dist", "out", 0))
@@ -435,6 +434,123 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			// Round 2+: should stabilize (same value circulating = zero delta).
 			out2, _ := incrExec.Execute(map[string]zset.ZSet{"in": zset.New()})
 			Expect(out2["out"].Equal(out1["out"])).To(BeTrue(), "output should stabilize")
+		})
+	})
+
+	// Equivalence test helper: run both a DistinctKeyedIncremental executor and a
+	// NonLinearIncremental(DistinctKeyed) executor on the same delta sequence.
+	// At every step the accumulated incremental output must equal the SotW output.
+	Describe("Incremental Keyed Distinct", func() {
+		var (
+			incrExec *Executor // DistinctKeyedIncremental
+			sotwExec *Executor // NonLinearIncremental(DistinctKeyed) — SotW reference
+			accIncr  zset.ZSet // running sum of incremental output deltas = distinct_π(i[t])
+			accSotw  zset.ZSet // running sum of SotW diff output      = distinct_π(i[t])
+		)
+
+		BeforeEach(func() {
+			incrCircuit := circuit.DistinctKeyedIncremental("dk-incr")
+			sotwCircuit := circuit.NonLinearIncremental("dk-sotw", operator.NewDistinctKeyed())
+
+			var err error
+			incrExec, err = New(incrCircuit, logger.NewZapLogger(logLevel))
+			Expect(err).NotTo(HaveOccurred())
+			sotwExec, err = New(sotwCircuit, logger.NewZapLogger(logLevel))
+			Expect(err).NotTo(HaveOccurred())
+			accIncr = zset.New()
+			accSotw = zset.New()
+		})
+
+		// step feeds delta to both executors, accumulates both output delta streams,
+		// and asserts that both accumulators are always equal (= distinct_π(i[t])).
+		step := func(delta zset.ZSet) {
+			incrOut, err := incrExec.Execute(map[string]zset.ZSet{"delta": delta})
+			Expect(err).NotTo(HaveOccurred())
+			sotwOut, err := sotwExec.Execute(map[string]zset.ZSet{"delta": delta})
+			Expect(err).NotTo(HaveOccurred())
+			accIncr = accIncr.Add(incrOut["out"])
+			accSotw = accSotw.Add(sotwOut["out"])
+			Expect(accIncr.Equal(accSotw)).To(BeTrue(),
+				"accumulated incremental output must equal accumulated SotW output")
+		}
+
+		It("basic CRUD sequence", func() {
+			rA1 := testutils.Record{ID: "a", Value: 1}
+			rA2 := testutils.Record{ID: "a", Value: 2}
+			rB := testutils.Record{ID: "b", Value: 10}
+
+			// ADD (k=a, v=1).
+			d := zset.New()
+			d.Insert(rA1, 1)
+			step(d)
+
+			// UPDATE (k=a): remove v=1, add v=2.
+			d = zset.New()
+			d.Insert(rA1, -1)
+			d.Insert(rA2, 1)
+			step(d)
+
+			// ADD (k=b, v=10).
+			d = zset.New()
+			d.Insert(rB, 1)
+			step(d)
+
+			// DELETE (k=a, v=2).
+			d = zset.New()
+			d.Insert(rA2, -1)
+			step(d)
+		})
+
+		It("lexmin handoff: removing current lexmin causes next to take over", func() {
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
+
+			// Add both; r1 is lexmin.
+			d := zset.New()
+			d.Insert(r1, 1)
+			d.Insert(r2, 1)
+			step(d)
+
+			// Remove r1; r2 must take over.
+			d = zset.New()
+			d.Insert(r1, -1)
+			step(d)
+
+			// Remove r2; key disappears.
+			d = zset.New()
+			d.Insert(r2, -1)
+			step(d)
+		})
+
+		It("idempotent delta: same ADD twice produces empty second output", func() {
+			r := testutils.Record{ID: "a", Value: 1}
+			d := zset.New()
+			d.Insert(r, 1)
+
+			step(d)
+
+			// Second identical delta: weight goes 1→2, lexmin unchanged.
+			incrOut, err := incrExec.Execute(map[string]zset.ZSet{"delta": d})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(incrOut["out"].IsZero()).To(BeTrue())
+		})
+
+		It("simultaneous key collision: only lexmin survives", func() {
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
+
+			// Both arrive in the same delta.
+			d := zset.New()
+			d.Insert(r1, 1)
+			d.Insert(r2, 1)
+			step(d)
+		})
+
+		It("empty deltas produce no output", func() {
+			step(zset.New())
+			step(zset.New())
 		})
 	})
 })

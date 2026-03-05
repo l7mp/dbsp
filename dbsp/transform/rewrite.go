@@ -70,11 +70,11 @@ func PostRules() []RewriteRule {
 func EliminateDI(c *circuit.Circuit) bool {
 	changed := false
 	for _, node := range c.Nodes() {
-		if node.Kind != circuit.NodeDifferentiate {
+		if node.Operator.Kind() != operator.KindDifferentiate {
 			continue
 		}
 		pred := uniquePredecessor(c, node.ID)
-		if pred == nil || pred.Kind != circuit.NodeIntegrate {
+		if pred == nil || pred.Operator.Kind() != operator.KindIntegrate {
 			continue
 		}
 		// Found I → D pattern. Bypass D first (downstream), then I (upstream).
@@ -95,11 +95,11 @@ func EliminateDI(c *circuit.Circuit) bool {
 func EliminateID(c *circuit.Circuit) bool {
 	changed := false
 	for _, node := range c.Nodes() {
-		if node.Kind != circuit.NodeIntegrate {
+		if node.Operator.Kind() != operator.KindIntegrate {
 			continue
 		}
 		pred := uniquePredecessor(c, node.ID)
-		if pred == nil || pred.Kind != circuit.NodeDifferentiate {
+		if pred == nil || pred.Operator.Kind() != operator.KindDifferentiate {
 			continue
 		}
 		// Found D → I pattern. Bypass I first (downstream), then D (upstream).
@@ -194,7 +194,7 @@ func SwapDifferentiateLinear(c *circuit.Circuit) bool {
 			continue
 		}
 		pred := uniquePredecessor(c, node.ID)
-		if pred == nil || pred.Kind != circuit.NodeDifferentiate {
+		if pred == nil || pred.Operator.Kind() != operator.KindDifferentiate {
 			continue
 		}
 		// Found D → Q_linear. Swap to Q_linear → D.
@@ -210,7 +210,7 @@ func SwapDifferentiateLinear(c *circuit.Circuit) bool {
 func SwapLinearIntegrate(c *circuit.Circuit) bool {
 	changed := false
 	for _, node := range c.Nodes() {
-		if node.Kind != circuit.NodeIntegrate {
+		if node.Operator.Kind() != operator.KindIntegrate {
 			continue
 		}
 		pred := uniquePredecessor(c, node.ID)
@@ -241,27 +241,22 @@ func uniquePredecessor(c *circuit.Circuit, nodeID string) *circuit.Node {
 	return c.Node(predID)
 }
 
-// swapContents swaps the Kind and Operator fields of two nodes.
+// swapContents swaps the Operator fields of two nodes.
 // This effectively reorders adjacent unary nodes without rewiring edges.
 func swapContents(a, b *circuit.Node) {
-	a.Kind, b.Kind = b.Kind, a.Kind
 	a.Operator, b.Operator = b.Operator, a.Operator
 }
 
 // isDistinct returns true if the node is a Distinct operator.
 func isDistinct(n *circuit.Node) bool {
-	if n.Kind != circuit.NodeOperator || n.Operator == nil {
-		return false
-	}
-	_, ok := n.Operator.(*operator.Distinct)
-	return ok
+	return n.Operator != nil && n.Operator.Kind() == operator.KindDistinct
 }
 
 // isDistinctCommutable returns true if the node is a unary linear operator that
 // distinct can be pushed past (Props 6.1/6.2): Select (σ) and Project (π).
 // Negate is excluded because it flips weight signs, breaking distinct semantics.
 func isDistinctCommutable(n *circuit.Node) bool {
-	if n.Kind != circuit.NodeOperator || n.Operator == nil {
+	if n.Operator == nil {
 		return false
 	}
 	switch n.Operator.(type) {
@@ -275,8 +270,5 @@ func isDistinctCommutable(n *circuit.Node) bool {
 // isUnaryLinear returns true if the node is a unary linear operator.
 // D and I commute with all linear operators (Prop 5.2).
 func isUnaryLinear(n *circuit.Node) bool {
-	if n.Kind != circuit.NodeOperator || n.Operator == nil {
-		return false
-	}
-	return n.Operator.Linearity() == operator.Linear && n.Operator.Arity() == 1
+	return n.Operator != nil && n.Operator.Linearity() == operator.Linear && n.Operator.Arity() == 1
 }

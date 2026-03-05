@@ -2,7 +2,6 @@ package engine
 
 import (
 	"github.com/l7mp/dbsp/dbsp/circuit"
-	"github.com/l7mp/dbsp/dbsp/executor"
 	"github.com/l7mp/dbsp/dbsp/zset"
 )
 
@@ -10,9 +9,6 @@ import (
 type ExecutionSnapshot struct {
 	// Values maps node IDs to their computed Z-set values.
 	Values map[string]zset.ZSet
-
-	// State is the executor's persistent state (integrators, delays, etc.).
-	State *executor.State
 
 	// Schedule is the full topological execution order.
 	Schedule []string

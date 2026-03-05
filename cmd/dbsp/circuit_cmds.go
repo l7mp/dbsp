@@ -110,7 +110,7 @@ func nodeCommand(state *appState) *cobra.Command {
 	}
 
 	addCmd := &cobra.Command{
-		Use:   "add <circuit> <node> <kind> [args...]",
+		Use:   "add <circuit> <node> <operator-kind> [args...]",
 		Short: "Add a node to a circuit",
 		Args:  cobra.MinimumNArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -157,7 +157,7 @@ func nodeCommand(state *appState) *cobra.Command {
 	}
 
 	updateCmd := &cobra.Command{
-		Use:   "update <circuit> <node> <kind> [args...]",
+		Use:   "update <circuit> <node> <operator-kind> [args...]",
 		Short: "Update a node in a circuit",
 		Args:  cobra.MinimumNArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -350,37 +350,32 @@ func requireCircuit(state *appState, name string) (*circuit.Circuit, error) {
 }
 
 func buildNode(name, kind string, args []string) (*circuit.Node, error) {
-	switch kind {
-	case "input":
-		return circuit.Input(name), nil
-	case "output":
-		return circuit.Output(name), nil
-	case "delay":
-		return circuit.Delay(name), nil
-	case "integrate":
-		return circuit.Integrate(name), nil
-	case "differentiate":
-		return circuit.Differentiate(name), nil
-	case "delta0":
-		return circuit.Delta0(name), nil
-	case "operator":
-		if len(args) == 0 {
-			return nil, fmt.Errorf("operator name required")
-		}
-		op, err := buildOperator(name, args[0], args[1:])
-		if err != nil {
-			return nil, err
-		}
-		return circuit.Op(name, op), nil
-	default:
-		return nil, fmt.Errorf("unknown node kind %q", kind)
+	op, err := buildOperator(kind, args)
+	if err != nil {
+		return nil, err
 	}
+	return circuit.Op(name, op), nil
 }
 
-func buildOperator(nodeName, opType string, args []string) (operator.Operator, error) {
+func buildOperator(opType string, args []string) (operator.Operator, error) {
 	switch strings.ToLower(opType) {
+	case "input":
+		return operator.NewInput(), nil
+	case "output":
+		return operator.NewOutput(), nil
+	case "delay":
+		emit, _ := operator.NewDelay()
+		return emit, nil
+	case "integrate":
+		return operator.NewIntegrate(), nil
+	case "differentiate":
+		return operator.NewDifferentiate(), nil
+	case "delta0":
+		return operator.NewDelta0(), nil
 	case "plus":
 		return operator.NewPlus(), nil
+	case "minus":
+		return operator.NewMinus(), nil
 	case "negate":
 		return operator.NewNegate(), nil
 	case "lc":
@@ -395,11 +390,13 @@ func buildOperator(nodeName, opType string, args []string) (operator.Operator, e
 			}
 			coeffs[i] = c
 		}
-		return operator.NewLinearCombination(nodeName, coeffs), nil
+		return operator.NewLinearCombination(coeffs), nil
 	case "distinct":
-		return operator.NewDistinct(nodeName), nil
+		return operator.NewDistinct(), nil
+	case "distinct_pi", "distinct-pi":
+		return operator.NewDistinctKeyed(), nil
 	case "cartesian":
-		return operator.NewCartesianProduct(nodeName), nil
+		return operator.NewCartesianProduct(), nil
 	case "@filter", "filter", "select":
 		if len(args) == 0 {
 			return nil, fmt.Errorf("filter expression required")
@@ -408,7 +405,7 @@ func buildOperator(nodeName, opType string, args []string) (operator.Operator, e
 		if err != nil {
 			return nil, err
 		}
-		return operator.NewSelect(nodeName, expr), nil
+		return operator.NewSelect(expr), nil
 	case "@project", "project":
 		if len(args) == 0 {
 			return nil, fmt.Errorf("project expression required")
@@ -417,12 +414,12 @@ func buildOperator(nodeName, opType string, args []string) (operator.Operator, e
 		if err != nil {
 			return nil, err
 		}
-		return operator.NewProject(nodeName, expr), nil
+		return operator.NewProject(expr), nil
 	case "unwind":
 		if len(args) == 0 {
 			return nil, fmt.Errorf("unwind field required")
 		}
-		op := operator.NewUnwind(nodeName, args[0])
+		op := operator.NewUnwind(args[0])
 		if len(args) > 1 {
 			op = op.WithIndexField(args[1])
 		}
