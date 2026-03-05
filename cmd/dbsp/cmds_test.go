@@ -41,6 +41,11 @@ var _ = Describe("ZSet commands", func() {
 			Expect(run("zset", "create", "foo", "--table", "t")).
 				To(MatchError(ContainSubstring("not yet implemented")))
 		})
+
+		It("accepts --pk shorthand expression", func() {
+			Expect(run("zset", "create", "foo", "--pk", "$.id")).To(Succeed())
+		})
+
 	})
 
 	Describe("insert", func() {
@@ -196,6 +201,59 @@ var _ = Describe("ZSet commands", func() {
 
 		It("errors on unknown name", func() {
 			Expect(run("zset", "delete", "nope")).To(MatchError(ContainSubstring("not found")))
+		})
+	})
+
+	Describe("primary key binding", func() {
+		k8sPKExpr := `{"@cond":[{"@exists":"metadata.namespace"},{"@concat":["$.metadata.name","/","$.metadata.namespace"]},{"@concat":["$.metadata.name","/",""]}]}`
+
+		It("computes PrimaryKey from --pk expression", func() {
+			Expect(run("zset", "create", "foo", "--pk", "$.id")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":123,"x":1},1)`)).To(Succeed())
+
+			entries := sortedEntries(state.zsets["foo"].data)
+			pk, err := entries[0].Document.PrimaryKey()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pk).To(Equal("123"))
+		})
+
+		It("returns PrimaryKey error when evaluation fails", func() {
+			Expect(run("zset", "create", "foo", "--pk", "$.missing.deep")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
+
+			entries := sortedEntries(state.zsets["foo"].data)
+			_, err := entries[0].Document.PrimaryKey()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("primary key expression evaluate"))
+		})
+
+		It("builds Kubernetes primary key name/namespace with @exists + @concat", func() {
+			Expect(run("zset", "create", "k8s", "--pk", k8sPKExpr)).To(Succeed())
+			Expect(run("zset", "insert", "k8s", `({"metadata":{"name":"pod-a","namespace":"ns-a"}},1)`)).To(Succeed())
+			Expect(run("zset", "insert", "k8s", `({"metadata":{"name":"pod-b"}},1)`)).To(Succeed())
+			Expect(run("zset", "insert", "k8s", `({"metadata":{"name":"pod-c","namespace":42}},1)`)).To(Succeed())
+
+			entries := sortedEntries(state.zsets["k8s"].data)
+			pks := map[string]bool{}
+			for _, e := range entries {
+				pk, err := e.Document.PrimaryKey()
+				Expect(err).NotTo(HaveOccurred())
+				pks[pk] = true
+			}
+
+			Expect(pks).To(HaveKey("pod-a/ns-a"))
+			Expect(pks).To(HaveKey("pod-b/"))
+			Expect(pks).To(HaveKey("pod-c/42"))
+		})
+
+		It("returns PrimaryKey error when metadata.name is missing", func() {
+			Expect(run("zset", "create", "k8s-bad", "--pk", k8sPKExpr)).To(Succeed())
+			Expect(run("zset", "insert", "k8s-bad", `({"metadata":{"namespace":"ns-a"}},1)`)).To(Succeed())
+
+			entries := sortedEntries(state.zsets["k8s-bad"].data)
+			_, err := entries[0].Document.PrimaryKey()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("primary key expression evaluate"))
 		})
 	})
 })

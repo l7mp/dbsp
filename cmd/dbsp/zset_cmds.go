@@ -11,8 +11,11 @@ import (
 
 	"encoding/json"
 
+	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/datamodel/unstructured"
 	"github.com/l7mp/dbsp/dbsp/zset"
+	"github.com/l7mp/dbsp/expression"
+	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
 )
 
 // boundZSet couples a Z-set to an optional table name for future schema
@@ -20,6 +23,11 @@ import (
 type boundZSet struct {
 	tableName string
 	data      zset.ZSet
+	pkFunc    func(datamodel.Document) (string, error)
+}
+
+func (bz *boundZSet) newDocument(fields map[string]any) datamodel.Document {
+	return unstructured.New(fields, bz.pkFunc)
 }
 
 func zsetRootCommand(state *appState) *cobra.Command {
@@ -52,17 +60,32 @@ func createZSetCmd(state *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			pkExpr, err := cmd.Flags().GetString("pk")
+			if err != nil {
+				return err
+			}
 			if tableName != "" {
 				return fmt.Errorf("table-bound zsets not yet implemented")
 			}
 			if _, exists := state.zsets[name]; exists {
 				return fmt.Errorf("zset %s already exists", name)
 			}
-			state.zsets[name] = &boundZSet{data: zset.New()}
+
+			var pkFunc func(datamodel.Document) (string, error)
+			if strings.TrimSpace(pkExpr) != "" {
+				expr, err := compilePrimaryKeyExpression(pkExpr)
+				if err != nil {
+					return fmt.Errorf("invalid --pk expression: %w", err)
+				}
+				pkFunc = primaryKeyFuncFromExpression(expr)
+			}
+
+			state.zsets[name] = &boundZSet{data: zset.New(), pkFunc: pkFunc}
 			return nil
 		},
 	}
 	cmd.Flags().String("table", "", "Bind Z-set to a table (not yet implemented)")
+	cmd.Flags().String("pk", "", "Primary-key expression for unstructured documents")
 	return cmd
 }
 
@@ -140,7 +163,7 @@ Multiple documents:
 				return err
 			}
 			for _, e := range entries {
-				bz.data.Insert(unstructured.New(e.fields, nil), zset.Weight(e.weight))
+				bz.data.Insert(bz.newDocument(e.fields), zset.Weight(e.weight))
 			}
 			return nil
 		},
@@ -164,7 +187,7 @@ func weightCmd(state *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			doc := unstructured.New(entry.fields, nil)
+			doc := bz.newDocument(entry.fields)
 			delta := zset.Weight(entry.weight) - bz.data.Lookup(doc.Hash())
 			if delta != 0 {
 				bz.data.Insert(doc, delta)
@@ -229,11 +252,56 @@ Multiple documents:
 			}
 			bz.data = zset.New()
 			for _, e := range entries {
-				bz.data.Insert(unstructured.New(e.fields, nil), zset.Weight(e.weight))
+				bz.data.Insert(bz.newDocument(e.fields), zset.Weight(e.weight))
 			}
 			return nil
 		},
 	}
+}
+
+func primaryKeyFuncFromExpression(expr expression.Expression) func(datamodel.Document) (string, error) {
+	return func(doc datamodel.Document) (string, error) {
+		value, err := expr.Evaluate(expression.NewContext(doc.Copy()))
+		if err != nil {
+			return "", fmt.Errorf("primary key expression evaluate: %w", err)
+		}
+		if value == nil {
+			return "", fmt.Errorf("primary key expression evaluate: returned nil")
+		}
+
+		switch v := value.(type) {
+		case string:
+			return v, nil
+		case []byte:
+			return string(v), nil
+		default:
+			b, err := json.Marshal(v)
+			if err != nil {
+				return fmt.Sprintf("%v", v), nil
+			}
+			return string(b), nil
+		}
+	}
+}
+
+func compilePrimaryKeyExpression(raw string) (expression.Expression, error) {
+	trimmed := strings.TrimSpace(raw)
+	expr, err := exprdbsp.CompileString(trimmed)
+	if err == nil {
+		return expr, nil
+	}
+
+	// Convenience: allow shorthand like $.id without JSON quoting.
+	quoted, marshalErr := json.Marshal(trimmed)
+	if marshalErr != nil {
+		return nil, err
+	}
+	expr2, err2 := exprdbsp.Compile(quoted)
+	if err2 == nil {
+		return expr2, nil
+	}
+
+	return nil, err
 }
 
 // parseZSetEntries parses either a single tuple (json,weight) or a list
