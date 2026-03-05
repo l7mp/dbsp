@@ -36,7 +36,12 @@ Subcommands (circuit, zset, executor, sql) are also available directly.`,
 					return err
 				}
 				defer file.Close()
-				return runScript(newState(), file, args[0])
+				err = runScript(newState(), file, args[0])
+				if err != nil {
+					// Script command failures should not print root usage.
+					cmd.SilenceUsage = true
+				}
+				return err
 			}
 			// Interactive mode.
 			state := newState()
@@ -50,6 +55,7 @@ Subcommands (circuit, zset, executor, sql) are also available directly.`,
 			return app.Start()
 		},
 	}
+	root.SilenceErrors = true
 
 	root.Flags().BoolVar(&noReadline, "no-readline", false, "Disable readline (interactive mode only)")
 

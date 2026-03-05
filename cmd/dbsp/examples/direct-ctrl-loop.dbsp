@@ -4,13 +4,15 @@ circuit create sotw-loop
 
 circuit node add sotw-loop W input
 circuit node add sotw-loop sum plus
+circuit node add sotw-loop distinct distinct_pi
 circuit node add sotw-loop delay delay
 circuit node add sotw-loop C project {"@set":["key",true]}
 circuit node add sotw-loop Y output
 
 circuit edge add sotw-loop W sum 0
 circuit edge add sotw-loop C sum 1
-circuit edge add sotw-loop sum delay 0
+circuit edge add sotw-loop sum distinct 0
+circuit edge add sotw-loop distinct delay 0
 circuit edge add sotw-loop delay Y 0
 circuit edge add sotw-loop delay C 0
 
@@ -23,16 +25,21 @@ circuit validate sotw-loop
 executor create sotw-ctrl --circuit sotw-loop
 
 # Step 1: inject W
-zset create w1
-zset set w1 ({"key":false},1)
+zset create w1 --pk="$.name"
+zset set w1 ({"name":"id","key":false},1)
 executor execute sotw-ctrl W=w1 Y=Y
 zset print Y
 
 # Re-trigger to get past the delay
+zset clear w1
 executor execute sotw-ctrl W=w1 Y=Y
 zset print Y
 
 # Step 2: inject W
+executor execute sotw-ctrl W=w1 Y=Y
+zset print Y
+
+# Step 3: inject W
 executor execute sotw-ctrl W=w1 Y=Y
 zset print Y
 
@@ -45,12 +52,12 @@ circuit validate delta-direct
 executor create delta-ctrl --circuit delta-direct
 
 # Step 1: inject W
-zset clear w1
-zset insert w1 ({"key":false},1)
+zset set w1 ({"name":"id","key":false},1)
 executor execute delta-ctrl W=w1 Y=Y
 zset print Y
 
 # Re-trigger to get past the delay
+zset clear w1
 executor execute delta-ctrl W=w1 Y=Y
 zset print Y
 
