@@ -104,6 +104,19 @@ func (z ZSet) Subtract(other ZSet) ZSet {
 	return z.Add(other.Negate())
 }
 
+// Scale returns a new Z-set with every weight multiplied by c. Entries whose
+// scaled weight is zero are dropped to maintain the Z-set invariant.
+func (z ZSet) Scale(c Weight) ZSet {
+	result := New()
+	for key, e := range z.entries {
+		w := e.Weight * c
+		if w != 0 {
+			result.entries[key] = &Elem{Document: e.Document, Weight: w}
+		}
+	}
+	return result
+}
+
 // Clone creates a copy.
 func (z ZSet) Clone() ZSet {
 	result := New()

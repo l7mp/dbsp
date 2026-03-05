@@ -48,6 +48,62 @@ func (o *Negate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 
 func (o *Negate) setLogger(l logr.Logger) { o.logger = l }
 
+// LinearCombination returns Σ coeffs[i] · inputs[i].
+// It is the most general n-ary linear operator: subtraction is coeffs=[+1,-1],
+// addition is coeffs=[+1,+1], and arbitrary integer multiples are supported.
+type LinearCombination struct {
+	jsonUnsupported
+	name   string
+	coeffs []int
+	logger logr.Logger
+}
+
+// NewLinearCombination creates a new LinearCombination operator. coeffs must
+// not be empty; each element is the integer multiplier for the corresponding
+// input port.
+func NewLinearCombination(name string, coeffs []int, opts ...Option) *LinearCombination {
+	o := &LinearCombination{name: name, coeffs: coeffs}
+	for _, opt := range opts {
+		opt.apply(o)
+	}
+	o.logger = logger.NormalizeLogger(o.logger)
+	return o
+}
+
+// Name implements Operator.
+func (o *LinearCombination) Name() string { return o.name }
+
+// String implements fmt.Stringer.
+func (o *LinearCombination) String() string {
+	return fmt.Sprintf("LC(%s, %v)", o.name, o.coeffs)
+}
+
+// Arity implements Operator.
+func (o *LinearCombination) Arity() int { return len(o.coeffs) }
+
+// Linearity implements Operator.
+func (o *LinearCombination) Linearity() Linearity { return Linear }
+
+// Apply implements Operator.
+func (o *LinearCombination) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+	result := zset.New()
+	for i, z := range inputs {
+		c := o.coeffs[i]
+		switch {
+		case c == 1:
+			result = result.Add(z)
+		case c == -1:
+			result = result.Add(z.Negate())
+		case c != 0:
+			result = result.Add(z.Scale(zset.Weight(c)))
+		}
+	}
+	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	return result, nil
+}
+
+func (o *LinearCombination) setLogger(l logr.Logger) { o.logger = l }
+
 // Plus returns A + B.
 type Plus struct {
 	jsonUnsupported

@@ -177,6 +177,29 @@ var _ = Describe("ZSet", func() {
 		})
 	})
 
+	Describe("Scale", func() {
+		It("multiplies all weights by a positive constant", func() {
+			z := New()
+			z.Insert(testutils.StringElem("x"), 3)
+			z.Insert(testutils.StringElem("y"), 2)
+			scaled := z.Scale(4)
+			Expect(scaled.Lookup(testutils.StringElem("x").Hash())).To(Equal(Weight(12)))
+			Expect(scaled.Lookup(testutils.StringElem("y").Hash())).To(Equal(Weight(8)))
+		})
+
+		It("negates when scaled by -1", func() {
+			z := New()
+			z.Insert(testutils.StringElem("x"), 5)
+			Expect(z.Scale(-1).Lookup(testutils.StringElem("x").Hash())).To(Equal(Weight(-5)))
+		})
+
+		It("produces an empty Z-set when scaled by 0", func() {
+			z := New()
+			z.Insert(testutils.StringElem("x"), 5)
+			Expect(z.Scale(0).Size()).To(Equal(0))
+		})
+	})
+
 	Describe("Clone", func() {
 		It("creates an independent copy", func() {
 			z := New()

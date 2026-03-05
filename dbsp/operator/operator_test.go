@@ -69,6 +69,70 @@ var _ = Describe("Operators", func() {
 		})
 	})
 
+	Describe("LinearCombination", func() {
+		var (
+			x, y, z zset.ZSet
+			rx, ry  testutils.Record
+		)
+		BeforeEach(func() {
+			rx = testutils.Record{ID: "x", Value: 1}
+			ry = testutils.Record{ID: "y", Value: 2}
+			x = zset.New()
+			x.Insert(rx, 3)
+			y = zset.New()
+			y.Insert(ry, 4)
+			z = zset.New()
+			z.Insert(rx, 1)
+		})
+
+		It("has linear linearity and correct arity", func() {
+			op := NewLinearCombination("lc", []int{1, -1})
+			Expect(op.Linearity()).To(Equal(Linear))
+			Expect(op.Arity()).To(Equal(2))
+		})
+
+		It("computes X + Y with coefficients [+1, +1]", func() {
+			op := NewLinearCombination("add", []int{1, 1})
+			result, err := op.Apply(x, y)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(3)))
+			Expect(result.Lookup(ry.Hash())).To(Equal(zset.Weight(4)))
+		})
+
+		It("computes X - Y with coefficients [+1, -1]", func() {
+			op := NewLinearCombination("sub", []int{1, -1})
+			result, err := op.Apply(x, x)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(0)))
+		})
+
+		It("computes X + Y - Z with coefficients [+1, +1, -1]", func() {
+			op := NewLinearCombination("lc3", []int{1, 1, -1})
+			Expect(op.Arity()).To(Equal(3))
+			result, err := op.Apply(x, y, z)
+			Expect(err).NotTo(HaveOccurred())
+			// rx: weight 3 + 0 - 1 = 2
+			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(2)))
+			// ry: weight 0 + 4 - 0 = 4
+			Expect(result.Lookup(ry.Hash())).To(Equal(zset.Weight(4)))
+		})
+
+		It("scales with coefficient 2", func() {
+			op := NewLinearCombination("double", []int{2})
+			result, err := op.Apply(x)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(6)))
+		})
+
+		It("drops inputs with coefficient 0", func() {
+			op := NewLinearCombination("zero", []int{0, 1})
+			result, err := op.Apply(x, y)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(0)))
+			Expect(result.Lookup(ry.Hash())).To(Equal(zset.Weight(4)))
+		})
+	})
+
 	Describe("Select", func() {
 		It("filters elements by predicate", func() {
 			predicate := expression.Func(func(ctx *expression.EvalContext) (any, error) {

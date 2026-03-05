@@ -383,6 +383,19 @@ func buildOperator(nodeName, opType string, args []string) (operator.Operator, e
 		return operator.NewPlus(), nil
 	case "negate":
 		return operator.NewNegate(), nil
+	case "lc":
+		if len(args) == 0 {
+			return nil, fmt.Errorf("lc requires at least one coefficient (e.g. +1 -1)")
+		}
+		coeffs := make([]int, len(args))
+		for i, a := range args {
+			c, err := strconv.Atoi(a)
+			if err != nil {
+				return nil, fmt.Errorf("lc: invalid coefficient %q: must be an integer", a)
+			}
+			coeffs[i] = c
+		}
+		return operator.NewLinearCombination(nodeName, coeffs), nil
 	case "distinct":
 		return operator.NewDistinct(nodeName), nil
 	case "cartesian":
