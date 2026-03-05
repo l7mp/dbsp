@@ -44,12 +44,12 @@ var _ = Describe("JOIN workflow", func() {
 		// Flat JSON with unqualified field names matches what the compiled circuit
 		// expects from Unstructured documents after CartesianProduct + Select.
 		Expect(run("zset", "create", "products_z")).To(Succeed())
-		Expect(run("zset", "insert", "products_z", `{"pid":1,"name":"Widget","price":9.99}`)).To(Succeed())
-		Expect(run("zset", "insert", "products_z", `{"pid":2,"name":"Gadget","price":24.99}`)).To(Succeed())
+		Expect(run("zset", "insert", "products_z", `({"pid":1,"name":"Widget","price":9.99},1)`)).To(Succeed())
+		Expect(run("zset", "insert", "products_z", `({"pid":2,"name":"Gadget","price":24.99},1)`)).To(Succeed())
 
 		Expect(run("zset", "create", "orders_z")).To(Succeed())
-		Expect(run("zset", "insert", "orders_z", `{"oid":101,"product_id":1,"qty":3}`)).To(Succeed())
-		Expect(run("zset", "insert", "orders_z", `{"oid":102,"product_id":2,"qty":1}`)).To(Succeed())
+		Expect(run("zset", "insert", "orders_z", `({"oid":101,"product_id":1,"qty":3},1)`)).To(Succeed())
+		Expect(run("zset", "insert", "orders_z", `({"oid":102,"product_id":2,"qty":1},1)`)).To(Succeed())
 
 		// --- SotW via executor ---
 		Expect(run("executor", "create", "sotw_exec", "--circuit", "join_q")).To(Succeed())
@@ -75,7 +75,7 @@ var _ = Describe("JOIN workflow", func() {
 
 		// --- Step 2: delta — one new order, empty products delta ---
 		Expect(run("zset", "create", "delta_orders")).To(Succeed())
-		Expect(run("zset", "insert", "delta_orders", `{"oid":103,"product_id":1,"qty":7}`)).To(Succeed())
+		Expect(run("zset", "insert", "delta_orders", `({"oid":103,"product_id":1,"qty":7},1)`)).To(Succeed())
 		Expect(run("zset", "create", "empty_z")).To(Succeed())
 
 		Expect(run("executor", "execute", "inc_exec",

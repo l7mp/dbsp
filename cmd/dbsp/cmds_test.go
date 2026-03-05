@@ -48,69 +48,140 @@ var _ = Describe("ZSet commands", func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
 		})
 
-		It("inserts a document with default weight 1", func() {
-			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
+		It("inserts a single document", func() {
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
 			Expect(state.zsets["foo"].data.Size()).To(Equal(1))
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(1)))
 		})
 
-		It("inserts a document with a custom weight", func() {
-			Expect(run("zset", "insert", "foo", `{"id":1}`, "--weight", "-2")).To(Succeed())
+		It("inserts a single document with a custom weight", func() {
+			Expect(run("zset", "insert", "foo", `({"id":1},-2)`)).To(Succeed())
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(-2)))
 		})
 
 		It("accumulates weight for the same document", func() {
-			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
-			Expect(run("zset", "insert", "foo", `{"id":1}`, "--weight", "2")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":1},2)`)).To(Succeed())
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(3)))
 		})
 
 		It("removes the entry when cumulative weight reaches zero", func() {
-			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
-			Expect(run("zset", "insert", "foo", `{"id":1}`, "--weight", "-1")).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":1},-1)`)).To(Succeed())
 			Expect(state.zsets["foo"].data.Size()).To(Equal(0))
 		})
 
 		It("errors on unknown zset name", func() {
-			Expect(run("zset", "insert", "nope", `{"id":1}`)).
+			Expect(run("zset", "insert", "nope", `({"id":1},1)`)).
 				To(MatchError(ContainSubstring("not found")))
+		})
+
+		It("inserts multiple documents from a list literal", func() {
+			Expect(run("zset", "insert", "foo", `[({"id":1},2),({"id":2},3)]`)).To(Succeed())
+			Expect(state.zsets["foo"].data.Size()).To(Equal(2))
+			entries := sortedEntries(state.zsets["foo"].data)
+			Expect(entries[0].Weight).To(Equal(zset.Weight(2)))
+			Expect(entries[1].Weight).To(Equal(zset.Weight(3)))
+		})
+
+		It("accumulates list-form inserts into existing entries", func() {
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `[({"id":1},4)]`)).To(Succeed())
+			entries := sortedEntries(state.zsets["foo"].data)
+			Expect(entries[0].Weight).To(Equal(zset.Weight(5)))
 		})
 	})
 
 	Describe("weight", func() {
 		BeforeEach(func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
-			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
 		})
 
-		It("changes the weight of an entry by 1-based index", func() {
-			Expect(run("zset", "weight", "foo", "1", "5")).To(Succeed())
+		It("sets the absolute weight of a document", func() {
+			Expect(run("zset", "weight", "foo", `({"id":1},5)`)).To(Succeed())
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(5)))
 		})
 
-		It("errors on out-of-range index", func() {
-			Expect(run("zset", "weight", "foo", "99", "1")).To(MatchError(ContainSubstring("out of range")))
+		It("inserts a new document if it did not exist", func() {
+			Expect(run("zset", "weight", "foo", `({"id":99},3)`)).To(Succeed())
+			Expect(state.zsets["foo"].data.Size()).To(Equal(2))
+		})
+
+		It("removes a document when weight is set to zero", func() {
+			Expect(run("zset", "weight", "foo", `({"id":1},0)`)).To(Succeed())
+			Expect(state.zsets["foo"].data.Size()).To(Equal(0))
 		})
 	})
 
 	Describe("negate", func() {
 		It("flips all weights", func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
-			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
 			Expect(run("zset", "negate", "foo")).To(Succeed())
 			entries := sortedEntries(state.zsets["foo"].data)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(-1)))
 		})
 	})
 
+	Describe("set", func() {
+		BeforeEach(func() {
+			Expect(run("zset", "create", "foo")).To(Succeed())
+		})
+
+		It("replaces contents with the given weighted entries", func() {
+			Expect(run("zset", "set", "foo", `[( {"id":1} , 2 ),( {"id":2} , 3 )]`)).To(Succeed())
+			Expect(state.zsets["foo"].data.Size()).To(Equal(2))
+			entries := sortedEntries(state.zsets["foo"].data)
+			Expect(entries[0].Weight).To(Equal(zset.Weight(2)))
+			Expect(entries[1].Weight).To(Equal(zset.Weight(3)))
+		})
+
+		It("replaces existing contents (not accumulates)", func() {
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
+			Expect(run("zset", "set", "foo", `[({"id":2},5)]`)).To(Succeed())
+			Expect(state.zsets["foo"].data.Size()).To(Equal(1))
+			entries := sortedEntries(state.zsets["foo"].data)
+			Expect(entries[0].Weight).To(Equal(zset.Weight(5)))
+		})
+
+		It("supports negative weights", func() {
+			Expect(run("zset", "set", "foo", `[({"id":1},1),({"id":2},-1)]`)).To(Succeed())
+			Expect(state.zsets["foo"].data.Size()).To(Equal(2))
+		})
+
+		It("handles nested JSON values", func() {
+			Expect(run("zset", "set", "foo", `[({"a":{"b":1}},3)]`)).To(Succeed())
+			Expect(state.zsets["foo"].data.Size()).To(Equal(1))
+		})
+
+		It("also accepts a single-tuple form", func() {
+			Expect(run("zset", "set", "foo", `({"id":1},7)`)).To(Succeed())
+			Expect(state.zsets["foo"].data.Size()).To(Equal(1))
+			entries := sortedEntries(state.zsets["foo"].data)
+			Expect(entries[0].Weight).To(Equal(zset.Weight(7)))
+		})
+
+		It("errors on malformed input", func() {
+			Expect(run("zset", "set", "foo", `not-a-list`)).To(MatchError(ContainSubstring("expected")))
+			Expect(run("zset", "set", "foo", `[(bad-json,1)]`)).To(MatchError(ContainSubstring("JSON")))
+			Expect(run("zset", "set", "foo", `[({"id":1},bad)]`)).To(MatchError(ContainSubstring("weight")))
+		})
+
+		It("errors on unknown zset name", func() {
+			Expect(run("zset", "set", "nope", `[({"id":1},1)]`)).
+				To(MatchError(ContainSubstring("not found")))
+		})
+	})
+
 	Describe("clear", func() {
 		It("removes all entries", func() {
 			Expect(run("zset", "create", "foo")).To(Succeed())
-			Expect(run("zset", "insert", "foo", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "foo", `({"id":1},1)`)).To(Succeed())
 			Expect(run("zset", "clear", "foo")).To(Succeed())
 			Expect(state.zsets["foo"].data.Size()).To(Equal(0))
 		})
@@ -255,7 +326,7 @@ var _ = Describe("Executor commands", func() {
 		BeforeEach(func() {
 			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
 			Expect(run("zset", "create", "input-data")).To(Succeed())
-			Expect(run("zset", "insert", "input-data", `{"id":1}`)).To(Succeed())
+			Expect(run("zset", "insert", "input-data", `({"id":1},1)`)).To(Succeed())
 		})
 
 		It("stores the output Z-set under the assigned name", func() {
