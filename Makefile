@@ -7,7 +7,7 @@ build:
 	go build -o $(BIN) $(CMD)
 
 test:
-	go test ./...
+	go test ./... -v -count 1 
 
 clean:
 	rm -f $(BIN)
