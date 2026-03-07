@@ -3,82 +3,29 @@ package operator
 import (
 	"fmt"
 
-	"github.com/go-logr/logr"
-
 	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/dbsp/zset"
 	"github.com/l7mp/dbsp/expression"
-	"github.com/l7mp/dbsp/internal/logger"
 )
-
-// Negate returns -Z.
-type Negate struct {
-	jsonUnsupported
-	logger logr.Logger
-}
-
-// NewNegate creates a new Negate operator.
-func NewNegate(opts ...Option) *Negate {
-	o := &Negate{}
-	for _, opt := range opts {
-		opt.apply(o)
-	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
-}
-
-// String implements fmt.Stringer.
-func (o *Negate) String() string { return "-" }
-
-// Arity implements Operator.
-func (o *Negate) Arity() int { return 1 }
-
-// Linearity implements Operator.
-func (o *Negate) Linearity() Linearity { return Linear }
-func (o *Negate) Kind() Kind           { return KindNegate }
-
-// Apply implements Operator.
-func (o *Negate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
-	result := inputs[0].Negate()
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
-	return result, nil
-}
-
-func (o *Negate) Set(_ zset.ZSet)         {}
-func (o *Negate) setLogger(l logr.Logger) { o.logger = l }
 
 // LinearCombination returns Σ coeffs[i] · inputs[i].
 // It is the most general n-ary linear operator: subtraction is coeffs=[+1,-1],
 // addition is coeffs=[+1,+1], and arbitrary integer multiples are supported.
 type LinearCombination struct {
-	jsonUnsupported
+	linearOp
 	coeffs []int
-	logger logr.Logger
 }
 
 // NewLinearCombination creates a new LinearCombination operator. coeffs must
 // not be empty; each element is the integer multiplier for the corresponding
 // input port.
 func NewLinearCombination(coeffs []int, opts ...Option) *LinearCombination {
-	o := &LinearCombination{coeffs: coeffs}
-	for _, opt := range opts {
-		opt.apply(o)
+	c := append([]int(nil), coeffs...)
+	return &LinearCombination{
+		linearOp: newLinearOp(KindLinearCombination, len(c), fmt.Sprintf("LC(%v)", c), opts),
+		coeffs:   c,
 	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
 }
-
-// String implements fmt.Stringer.
-func (o *LinearCombination) String() string {
-	return fmt.Sprintf("LC(%v)", o.coeffs)
-}
-
-// Arity implements Operator.
-func (o *LinearCombination) Arity() int { return len(o.coeffs) }
-
-// Linearity implements Operator.
-func (o *LinearCombination) Linearity() Linearity { return Linear }
-func (o *LinearCombination) Kind() Kind           { return KindLinearCombination }
 
 // Apply implements Operator.
 func (o *LinearCombination) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -98,8 +45,20 @@ func (o *LinearCombination) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
-func (o *LinearCombination) Set(_ zset.ZSet)         {}
-func (o *LinearCombination) setLogger(l logr.Logger) { o.logger = l }
+// Negate returns -Z.
+type Negate struct{ linearOp }
+
+// NewNegate creates a new Negate operator.
+func NewNegate(opts ...Option) *Negate {
+	return &Negate{newLinearOp(KindNegate, 1, "-", opts)}
+}
+
+// Apply implements Operator.
+func (o *Negate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+	result := inputs[0].Negate()
+	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	return result, nil
+}
 
 // NewPlus creates a binary addition operator (coefficients [+1, +1]).
 func NewPlus(opts ...Option) *LinearCombination {
@@ -112,44 +71,25 @@ func NewMinus(opts ...Option) *LinearCombination {
 }
 
 // NewSum is a backward-compatible alias for NewPlus.
-func NewSum(opts ...Option) *LinearCombination {
-	return NewPlus(opts...)
-}
+func NewSum(opts ...Option) *LinearCombination { return NewPlus(opts...) }
 
 // NewSubtract is a backward-compatible alias for NewMinus.
-func NewSubtract(opts ...Option) *LinearCombination {
-	return NewMinus(opts...)
-}
+func NewSubtract(opts ...Option) *LinearCombination { return NewMinus(opts...) }
 
 // Select filters by predicate.
 type Select struct {
-	jsonUnsupported
+	linearOp
 	predicate expression.Expression
 	weightFn  func(weight zset.Weight) bool
-	logger    logr.Logger
 }
 
 // NewSelect creates a new Select operator.
 func NewSelect(predicate expression.Expression, opts ...Option) *Select {
-	o := &Select{predicate: predicate}
-	for _, opt := range opts {
-		opt.apply(o)
+	return &Select{
+		linearOp:  newLinearOp(KindSelect, 1, fmt.Sprintf("σ(%s)", predicate), opts),
+		predicate: predicate,
 	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
 }
-
-// String implements fmt.Stringer.
-func (o *Select) String() string {
-	return fmt.Sprintf("σ(%s)", o.predicate)
-}
-
-// Arity implements Operator.
-func (o *Select) Arity() int { return 1 }
-
-// Linearity implements Operator.
-func (o *Select) Linearity() Linearity { return Linear }
-func (o *Select) Kind() Kind           { return KindSelect }
 
 // Apply implements Operator.
 func (o *Select) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -179,37 +119,19 @@ func (o *Select) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
-func (o *Select) Set(_ zset.ZSet)         {}
-func (o *Select) setLogger(l logr.Logger) { o.logger = l }
-
 // Project transforms elements.
 type Project struct {
-	jsonUnsupported
+	linearOp
 	projection expression.Expression // Must return datamodel.Document.
-	logger     logr.Logger
 }
 
 // NewProject creates a new Project operator.
 func NewProject(projection expression.Expression, opts ...Option) *Project {
-	o := &Project{projection: projection}
-	for _, opt := range opts {
-		opt.apply(o)
+	return &Project{
+		linearOp:   newLinearOp(KindProject, 1, fmt.Sprintf("π(%s)", projection), opts),
+		projection: projection,
 	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
 }
-
-// String implements fmt.Stringer.
-func (o *Project) String() string {
-	return fmt.Sprintf("π(%s)", o.projection)
-}
-
-// Arity implements Operator.
-func (o *Project) Arity() int { return 1 }
-
-// Linearity implements Operator.
-func (o *Project) Linearity() Linearity { return Linear }
-func (o *Project) Kind() Kind           { return KindProject }
 
 // Apply implements Operator.
 func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -242,9 +164,6 @@ func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
-func (o *Project) Set(_ zset.ZSet)         {}
-func (o *Project) setLogger(l logr.Logger) { o.logger = l }
-
 // Unwind flattens an array field into multiple documents.
 // For each element in the array, it produces a copy of the document
 // with the array field replaced by that single element.
@@ -254,21 +173,18 @@ func (o *Project) setLogger(l logr.Logger) { o.logger = l }
 //	Input:  {id: "x", tags: ["a", "b"]}
 //	Output: {id: "x", tags: "a"}, {id: "x", tags: "b"}
 type Unwind struct {
-	jsonUnsupported
+	linearOp
 	fieldPath  string // The array field to unwind.
 	indexField string // Optional: field to store the array index.
-	logger     logr.Logger
 }
 
 // NewUnwind creates a new Unwind operator.
 // fieldPath is the name of the array field to unwind.
 func NewUnwind(fieldPath string, opts ...Option) *Unwind {
-	o := &Unwind{fieldPath: fieldPath}
-	for _, opt := range opts {
-		opt.apply(o)
+	return &Unwind{
+		linearOp:  newLinearOp(KindUnwind, 1, "", opts),
+		fieldPath: fieldPath,
 	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
 }
 
 // WithIndexField sets an optional field to store the array index.
@@ -277,20 +193,13 @@ func (o *Unwind) WithIndexField(field string) *Unwind {
 	return o
 }
 
-// String implements fmt.Stringer.
+// String overrides opBase.String because indexField may be set after construction.
 func (o *Unwind) String() string {
 	if o.indexField != "" {
 		return fmt.Sprintf("Unwind(field=%s, index=%s)", o.fieldPath, o.indexField)
 	}
 	return fmt.Sprintf("Unwind(field=%s)", o.fieldPath)
 }
-
-// Arity implements Operator.
-func (o *Unwind) Arity() int { return 1 }
-
-// Linearity implements Operator.
-func (o *Unwind) Linearity() Linearity { return Linear }
-func (o *Unwind) Kind() Kind           { return KindUnwind }
 
 // Apply implements Operator.
 func (o *Unwind) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -343,6 +252,3 @@ func (o *Unwind) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
 	return result, nil
 }
-
-func (o *Unwind) Set(_ zset.ZSet)         {}
-func (o *Unwind) setLogger(l logr.Logger) { o.logger = l }

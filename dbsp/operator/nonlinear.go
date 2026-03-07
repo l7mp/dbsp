@@ -3,40 +3,17 @@ package operator
 import (
 	"fmt"
 
-	"github.com/go-logr/logr"
-
 	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/dbsp/zset"
-	"github.com/l7mp/dbsp/internal/logger"
 )
 
 // Distinct converts Z-set to set (all positive weights become 1).
-type Distinct struct {
-	jsonUnsupported
-	logger logr.Logger
-}
+type Distinct struct{ nonLinearOp }
 
 // NewDistinct creates a new Distinct operator.
 func NewDistinct(opts ...Option) *Distinct {
-	o := &Distinct{}
-	for _, opt := range opts {
-		opt.apply(o)
-	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
+	return &Distinct{newNonLinearOp(KindDistinct, 1, "Distinct", opts)}
 }
-
-// String implements fmt.Stringer.
-func (o *Distinct) String() string {
-	return "Distinct"
-}
-
-// Arity implements Operator.
-func (o *Distinct) Arity() int { return 1 }
-
-// Linearity implements Operator.
-func (o *Distinct) Linearity() Linearity { return NonLinear }
-func (o *Distinct) Kind() Kind           { return KindDistinct }
 
 // Apply implements Operator.
 func (o *Distinct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
@@ -51,36 +28,15 @@ func (o *Distinct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
-func (o *Distinct) Set(_ zset.ZSet)         {}
-func (o *Distinct) setLogger(l logr.Logger) { o.logger = l }
-
 // DistinctKeyed is the SotW distinct_π operator. It selects at most one
 // element per primary key from a Z-set: the lexicographic minimum by Hash()
 // among all elements with positive weight.
-type DistinctKeyed struct {
-	jsonUnsupported
-	logger logr.Logger
-}
+type DistinctKeyed struct{ nonLinearOp }
 
 // NewDistinctKeyed creates a new DistinctKeyed operator.
 func NewDistinctKeyed(opts ...Option) *DistinctKeyed {
-	o := &DistinctKeyed{}
-	for _, opt := range opts {
-		opt.apply(o)
-	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
+	return &DistinctKeyed{newNonLinearOp(KindDistinctKeyed, 1, "DistinctKeyed", opts)}
 }
-
-// String implements fmt.Stringer.
-func (o *DistinctKeyed) String() string { return "DistinctKeyed" }
-
-// Arity implements Operator.
-func (o *DistinctKeyed) Arity() int { return 1 }
-
-// Linearity implements Operator.
-func (o *DistinctKeyed) Linearity() Linearity { return NonLinear }
-func (o *DistinctKeyed) Kind() Kind           { return KindDistinctKeyed }
 
 // Apply implements Operator. For each primary key, it inserts the element with
 // the lexicographically smallest Hash() among all positive-weight elements.
@@ -114,9 +70,6 @@ func (o *DistinctKeyed) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
-func (o *DistinctKeyed) Set(_ zset.ZSet)         {}
-func (o *DistinctKeyed) setLogger(l logr.Logger) { o.logger = l }
-
 // HKeyed is the incremental distinct_π operator. It is self-contained: it
 // maintains its own accumulated weight table (weights) and a secondary index
 // (pkIndex) of the currently live elements per primary key.  No external
@@ -127,31 +80,15 @@ func (o *DistinctKeyed) setLogger(l logr.Logger) { o.logger = l }
 // HKeyed is marked NonLinear so the incrementalizer does not attempt to wrap
 // it again with D ∘ O ∘ I.
 type HKeyed struct {
-	jsonUnsupported
+	nonLinearOp
 	pkIndex map[string]map[string]datamodel.Document // pk → hash → Document (positive-weight only)
 	weights map[string]zset.Weight                   // hash → accumulated weight
-	logger  logr.Logger
 }
 
 // NewHKeyed creates a new HKeyed operator.
 func NewHKeyed(opts ...Option) *HKeyed {
-	o := &HKeyed{}
-	for _, opt := range opts {
-		opt.apply(o)
-	}
-	o.logger = logger.NormalizeLogger(o.logger)
-	return o
+	return &HKeyed{nonLinearOp: newNonLinearOp(KindHKeyed, 1, "HKeyed", opts)}
 }
-
-// String implements fmt.Stringer.
-func (o *HKeyed) String() string { return "HKeyed" }
-
-// Arity implements Operator.
-func (o *HKeyed) Arity() int { return 1 }
-
-// Linearity implements Operator.
-func (o *HKeyed) Linearity() Linearity { return NonLinear }
-func (o *HKeyed) Kind() Kind           { return KindHKeyed }
 
 // Set initializes HKeyed state from v. Set(zset.New()) clears all state.
 // v is treated as the accumulated weight table: each element's weight is
@@ -245,8 +182,6 @@ func (o *HKeyed) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
 	return result, nil
 }
-
-func (o *HKeyed) setLogger(l logr.Logger) { o.logger = l }
 
 // pkLexmin returns the lexicographically minimum document (by Hash) in the
 // given map, or nil if the map is empty.

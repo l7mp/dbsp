@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/l7mp/dbsp/dbsp/zset"
+	"github.com/l7mp/dbsp/internal/logger"
 )
 
 // loggerSetter is implemented by operators that accept a logger.
@@ -95,7 +96,7 @@ func (k Kind) String() string {
 	case KindDistinct:
 		return "distinct"
 	case KindDistinctKeyed:
-		return "distinct_keyed"
+		return "distinct_pi"
 	case KindHKeyed:
 		return "hkeyed"
 	default:
@@ -172,3 +173,73 @@ type Operator interface {
 
 // Reset resets op to its zero state by calling op.Set(zset.New()).
 func Reset(op Operator) { op.Set(zset.New()) }
+
+// baseOp is embedded by every operator to provide a shared logger, a no-op
+// Set implementation for stateless operators, and JSON marshal/unmarshal via
+// the embedded jsonOp (which carries the wire type string).
+// Operators with stateful Set override it; operators with extra JSON fields
+// override MarshalJSON/UnmarshalJSON.
+type baseOp struct {
+	jsonOp
+	logger logr.Logger
+}
+
+func (b *baseOp) setLogger(l logr.Logger) { b.logger = l }
+func (b *baseOp) Set(_ zset.ZSet)         {}
+
+// newBaseOp returns a baseOp initialised with the given wire type string and
+// options applied.
+func newBaseOp(opType string, opts []Option) baseOp {
+	b := baseOp{jsonOp: jsonOp{Type: opType}}
+	for _, opt := range opts {
+		opt.apply(&b)
+	}
+	b.logger = logger.NormalizeLogger(b.logger)
+	return b
+}
+
+// opBase extends baseOp with the metadata that every concrete operator carries:
+// its Kind, arity, display string, and Linearity. Promoted methods implement
+// the corresponding Operator interface methods so concrete types only need to
+// provide Apply (and, where necessary, Set and JSON marshal/unmarshal).
+type opBase struct {
+	baseOp
+	kind      Kind
+	arity     int
+	display   string
+	linearity Linearity
+}
+
+func (o *opBase) String() string       { return o.display }
+func (o *opBase) Arity() int           { return o.arity }
+func (o *opBase) Linearity() Linearity { return o.linearity }
+func (o *opBase) Kind() Kind           { return o.kind }
+
+func newOpBase(kind Kind, arity int, display string, lin Linearity, opts []Option) opBase {
+	return opBase{
+		baseOp:    newBaseOp(kind.String(), opts),
+		kind:      kind,
+		arity:     arity,
+		display:   display,
+		linearity: lin,
+	}
+}
+
+// linearOp, bilinearOp, and nonLinearOp are thin wrappers around opBase that
+// fix the linearity at construction time. Concrete operator types embed the
+// appropriate wrapper so their struct declaration documents the linearity class.
+type linearOp struct{ opBase }
+type bilinearOp struct{ opBase }
+type nonLinearOp struct{ opBase }
+
+func newLinearOp(kind Kind, arity int, display string, opts []Option) linearOp {
+	return linearOp{newOpBase(kind, arity, display, Linear, opts)}
+}
+
+func newBilinearOp(kind Kind, arity int, display string, opts []Option) bilinearOp {
+	return bilinearOp{newOpBase(kind, arity, display, Bilinear, opts)}
+}
+
+func newNonLinearOp(kind Kind, arity int, display string, opts []Option) nonLinearOp {
+	return nonLinearOp{newOpBase(kind, arity, display, NonLinear, opts)}
+}

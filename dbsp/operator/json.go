@@ -7,7 +7,9 @@ import (
 	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
 )
 
-// jsonOp is the wire format for all operators.
+// jsonOp is the wire format for all operators. It implements MarshalJSON and
+// UnmarshalJSON so it can be embedded directly in operator structs whose only
+// wire representation is a {"type":"..."} object (no extra fields).
 type jsonOp struct {
 	Type       string          `json:"type"`
 	Coeffs     []int           `json:"coeffs,omitempty"`
@@ -17,13 +19,18 @@ type jsonOp struct {
 	IndexField string          `json:"indexField,omitempty"`
 }
 
-// MarshalJSON implements json.Marshaler.
-func (o *Negate) MarshalJSON() ([]byte, error) {
-	return json.Marshal(jsonOp{Type: "negate"})
+// MarshalJSON implements json.Marshaler. Uses a local type alias to avoid
+// infinite recursion.
+func (j jsonOp) MarshalJSON() ([]byte, error) {
+	type wire jsonOp
+	return json.Marshal(wire(j))
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (o *Negate) UnmarshalJSON([]byte) error { return nil }
+func (j *jsonOp) UnmarshalJSON(data []byte) error {
+	type wire jsonOp
+	return json.Unmarshal(data, (*wire)(j))
+}
 
 // MarshalJSON implements json.Marshaler.
 func (o *LinearCombination) MarshalJSON() ([]byte, error) {
@@ -37,34 +44,6 @@ func (o *LinearCombination) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	o.coeffs = append([]int(nil), p.Coeffs...)
-	return nil
-}
-
-// MarshalJSON implements json.Marshaler.
-func (o *CartesianProduct) MarshalJSON() ([]byte, error) {
-	return json.Marshal(jsonOp{Type: "cartesian"})
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (o *CartesianProduct) UnmarshalJSON(data []byte) error {
-	var p jsonOp
-	if err := json.Unmarshal(data, &p); err != nil {
-		return err
-	}
-	return nil
-}
-
-// MarshalJSON implements json.Marshaler.
-func (o *Distinct) MarshalJSON() ([]byte, error) {
-	return json.Marshal(jsonOp{Type: "distinct"})
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (o *Distinct) UnmarshalJSON(data []byte) error {
-	var p jsonOp
-	if err := json.Unmarshal(data, &p); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -175,6 +154,10 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		return NewCartesianProduct(), nil
 	case "distinct":
 		return NewDistinct(), nil
+	case "distinct_pi":
+		return NewDistinctKeyed(), nil
+	case "hkeyed":
+		return NewHKeyed(), nil
 	case "select":
 		if len(p.Predicate) == 0 {
 			return nil, fmt.Errorf("select operator: predicate required")
