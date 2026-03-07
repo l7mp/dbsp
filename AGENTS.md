@@ -4,20 +4,38 @@ This file guides agentic coding agents working in this repository.
 
 ## Project Snapshot
 
-- Name: DBSP (incremental computation library in Go).
-- Module: `github.com/l7mp/dbsp`.
-- Go: `go 1.24.0` with toolchain `go1.24.9`.
-- Testing: Ginkgo v2 + Gomega (BDD style).
+- Project: DBSP, an incremental computation library in Go.
+- Module path: `github.com/l7mp/dbsp`.
+- Go version: `go 1.24.0` with toolchain `go1.24.9`.
+- Test stack: Ginkgo v2 + Gomega (`go test` runner).
 
-## Build, Test, Lint
+## Build, Lint, and Test Commands
 
-Use `go test` as the primary build/test command. There is no repo-provided lint config.
+Prefer `go test` and package-scoped commands. Keep commands deterministic.
 
 ### Build
 
 ```bash
-go test ./...
+# Build all packages (compilation check)
+go test ./... -run '^$'
+
+# Build CLI binary (from Makefile)
+make build
 ```
+
+### Lint / Static Analysis
+
+```bash
+# Format + organize imports (required after Go edits)
+goimports -w .
+
+# Basic static checks
+go vet ./...
+```
+
+Notes:
+- There is no repository-specific lint config file.
+- If `staticcheck` is installed locally, it can be used as an optional extra check.
 
 ### Test (all)
 
@@ -25,132 +43,138 @@ go test ./...
 go test ./...
 ```
 
+### Test (all, no cache, verbose)
+
+```bash
+go test ./... -v -count=1
+# equivalent helper target
+make test
+```
+
 ### Test (single package)
 
-```bash
-go test ./zset
-go test ./operator
-go test ./circuit
-go test ./transform
-go test ./execute
-go test ./sql
-go test ./relational
-```
-
-### Test (single test)
-
-Ginkgo v2 tests use `go test` with `-run` and a regex that matches `Describe`/`It` names.
+Use real package paths from this repository:
 
 ```bash
-go test ./operator -run "Select"
+go test ./dbsp/zset
+go test ./dbsp/operator
+go test ./dbsp/circuit
+go test ./dbsp/transform
+go test ./dbsp/executor
+go test ./compiler/sql
+go test ./engine
+go test ./cmd/dbsp
 ```
 
-### Test (verbose)
+### Test (single test / focused run)
+
+For Ginkgo suites, run a specific package and filter with regex:
 
 ```bash
-go test -v ./...
+# Match suite/test names via -run regex
+go test ./dbsp/operator -run 'Select'
+
+# Explicitly target ginkgo test descriptions
+go test ./dbsp/operator -ginkgo.focus='negates all weights'
+
+# Combine both when needed
+go test ./dbsp/operator -run 'Operators' -ginkgo.focus='LinearCombination'
 ```
 
-### Formatting
-
-Use `goimports` to format and organize imports.
-
-```bash
-goimports -w .
-```
+Tips:
+- `-run` filters Go test names and works with Ginkgo-generated test entry points.
+- `-ginkgo.focus` filters `Describe` / `Context` / `It` text.
+- Use package-level execution first, then tighten filters.
 
 ## Repository-Specific Rules
 
-- There are no Cursor rules in `.cursor/rules/` or `.cursorrules`.
-- There are no Copilot rules in `.github/copilot-instructions.md`.
+- Cursor rules check: no `.cursor/rules/` and no `.cursorrules` found.
+- Copilot rules check: no `.github/copilot-instructions.md` found.
 
 ## Architecture Quick Map
 
-- `zset/`: Z-sets (weighted multisets), core data structure. Elements implement `Key()`.
-- `expr/`: Expressions for predicates and projections. `Evaluate(elem) (any, error)`.
-- `operator/`: Linear, bilinear, non-linear operators.
-- `circuit/`: Directed graph model (Input, Output, Operator, Delay, Integrate, Differentiate, Delta0).
-- `transform/`: Algorithm 6.4 incrementalization.
-- `execute/`: Runtime executor.
-- `relational/`: SQL-like row helpers.
-- `sql/`: SQL compiler/executor.
+- `dbsp/zset`: Weighted multisets (Z-sets), foundational data structure.
+- `dbsp/operator`: Operators classified by linearity.
+- `dbsp/circuit`: Circuit graph model (inputs, outputs, ops, delay/integrate/differentiate nodes).
+- `dbsp/transform`: Incrementalization logic (Algorithm 6.4 style transform).
+- `dbsp/executor`: Runtime execution engine for circuits.
+- `compiler/sql`: SQL planner/compiler layers.
+- `engine`: Top-level engine orchestration.
+- `expression` and `expression/dbsp`: Expression model and DBSP integration.
+- `datamodel/*`: Relational/unstructured data helpers.
 
 ## Code Style Guidelines
 
-### Formatting and Imports
+### Imports and Formatting
 
-- Use `goimports` for formatting and import grouping.
-- Keep imports minimal and sorted by `goimports`.
-- Avoid manual alignment in Go (no extra spacing for columns).
-- Keep line length readable; prefer wrapping logical clauses.
+- Always run `goimports -w .` after edits; do not hand-sort imports.
+- Keep imports minimal; remove unused imports promptly.
+- Follow standard Go formatting (`gofmt`-compatible layout).
+- Avoid manual column alignment or cosmetic whitespace churn.
 
-### Comments
+### Naming Conventions
 
-- Follow Go style guide: full sentences ending with periods.
-- Mathematical notation in comments is accepted: `σ`, `×`, `∫`, `D`, `z⁻¹`, `δ₀`.
-- Use comments to explain non-obvious logic or math, not to restate code.
-
-### Naming
-
-- Use Go idioms: `CamelCase` for exported, `camelCase` for unexported.
-- Prefer short, clear names in local scopes; be explicit in public APIs.
-- Domain names used in this repo: `zset`, `circuit`, `operator`, `transform`, `execute`.
-- Prefer `delta` or `Δ` in comments for changes, and `state` or `s` for full streams.
+- Exported identifiers use `CamelCase`; unexported use `camelCase`.
+- Prefer short local names and explicit public API names.
+- Use domain terms consistently: `zset`, `delta`, `state`, `circuit`, `operator`.
+- Keep acronyms Go-idiomatic (`ID`, `SQL`, etc.).
 
 ### Types and Interfaces
 
-- Elements implement `Key()` for identity in Z-sets.
-- Prefer small interfaces; accept interfaces, return concrete types when possible.
-- Use `any` only when the API is intentionally generic; document expectations.
-- Keep Z-set operations consistent with algebraic properties (linearity, bilinearity).
+- Prefer concrete return types unless abstraction is required.
+- Accept interfaces when consuming behavior; return concrete types when practical.
+- Keep interfaces small and focused.
+- Use `any` only where polymorphism is intentional and documented.
+- Preserve algebraic behavior expectations in Z-set and operator code.
 
 ### Error Handling
 
-- Return errors explicitly; do not panic for expected failures.
-- Wrap errors with context using `fmt.Errorf("...: %w", err)`.
-- Avoid sentinel errors unless already established; prefer `errors.Is`/`errors.As`.
-- Check errors immediately; avoid shadowing `err` in long blocks.
+- Return errors for expected failures; do not panic in normal control flow.
+- Add context when propagating errors: `fmt.Errorf("compile query: %w", err)`.
+- Prefer `errors.Is` / `errors.As` for matching.
+- Handle errors immediately; avoid deep nesting and `err` shadowing.
 
-### Testing
+### Comments and Documentation
 
-- Use Ginkgo v2 + Gomega style:
+- Write complete sentences ending with punctuation.
+- Comment non-obvious invariants, math, and edge-case logic.
+- Avoid comments that restate obvious code.
+- Mathematical symbols used in this codebase are acceptable (`σ`, `×`, `∫`, `D`, `z⁻¹`, `δ₀`).
 
-```go
-var _ = Describe("Feature", func() {
-    It("should do something", func() {
-        Expect(result).To(Equal(expected))
-    })
-})
-```
+### Testing Style
 
-- Key pattern: verify normal execution equals incremental execution.
-- Prefer small, composable fixtures over large shared state.
+- Use Ginkgo v2 + Gomega idioms.
+- Prefer focused, composable fixtures over large shared mutable setup.
+- Validate both normal and incremental behavior where relevant.
+- Keep test names descriptive and behavior-oriented.
 
-### Circuit and Operator Conventions
+## Domain Conventions (DBSP)
 
-- Linear operators are their own incremental version: `O^Δ = O`.
-- Bilinear operators use the three-term expansion with integrators.
-- Non-linear operators wrap with `∫` then `D`.
-- Every circuit cycle must include a delay (`z⁻¹`); use `circuit.Validate()`.
-
-### SQL Package Notes
-
-- SQL layer builds circuits via compilation and execution; keep it deterministic.
-- Prefer explicit encoding/decoding boundaries in `sql/encoding.go`.
+- Linear operators are self-incremental (`O^Δ = O`).
+- Bilinear operators follow three-term delta expansion.
+- Non-linear operators are handled through integrate/differentiate transforms.
+- Every circuit cycle must include a delay node; use validation utilities.
 
 ## Workflow Expectations for Agents
 
-- Read `CLAUDE.md` and `README.md` for project context.
-- Use `goimports -w .` after Go edits.
-- Avoid adding new dependencies unless required; update `go.mod`/`go.sum` together.
-- Do not modify generated or test fixtures unless the task requires it.
-- Keep changes scoped to the request; do not refactor unrelated code.
+- Read `README.md`, `CLAUDE.md`, and this file before large changes.
+- Keep changes scoped; avoid unrelated refactors.
+- Do not add dependencies unless required; update `go.mod` and `go.sum` together.
+- Avoid touching generated artifacts or fixtures unless task-specific.
+- Prefer package-local verification for faster iteration, then run broader tests.
 
-## Useful Reference Commands
+## Useful Command Reference
 
 ```bash
-go test ./...
-go test ./operator -run "Select"
-go test -v ./...
+# Core loop
+go test ./dbsp/operator -run 'Select'
+go test ./dbsp/operator -ginkgo.focus='LinearCombination'
+go test ./... -v -count=1
+go vet ./...
 goimports -w .
+
+# Makefile helpers
+make build
+make test
+make clean
 ```
