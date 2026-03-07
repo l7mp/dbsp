@@ -7,12 +7,9 @@ import "github.com/l7mp/dbsp/dbsp/operator"
 // to determine the type, and node.Operator.Linearity() to determine how
 // incrementalization treats it.
 type Node struct {
-	ID       string
-	Operator operator.Operator
+	ID string
+	operator.Operator
 }
-
-// Kind returns the embedded operator's Kind.
-func (n *Node) Kind() operator.Kind { return n.Operator.Kind() }
 
 // Input creates a circuit-input node backed by InputOp.
 func Input(id string) *Node {

@@ -156,6 +156,28 @@ func nodeCommand(state *appState) *cobra.Command {
 		},
 	}
 
+	setCmd := &cobra.Command{
+		Use:   "set <circuit> <node> <zset>",
+		Short: "Set a node's operator state from a Z-set",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := requireCircuit(state, args[0])
+			if err != nil {
+				return err
+			}
+			node := c.Node(args[1])
+			if node == nil {
+				return fmt.Errorf("node %s not found", args[1])
+			}
+			bz, err := requireZSet(state, args[2])
+			if err != nil {
+				return err
+			}
+			node.Set(bz.data)
+			return nil
+		},
+	}
+
 	updateCmd := &cobra.Command{
 		Use:   "update <circuit> <node> <operator-kind> [args...]",
 		Short: "Update a node in a circuit",
@@ -176,7 +198,7 @@ func nodeCommand(state *appState) *cobra.Command {
 		},
 	}
 
-	root.AddCommand(addCmd, getCmd, deleteCmd, updateCmd)
+	root.AddCommand(addCmd, getCmd, setCmd, deleteCmd, updateCmd)
 	return root
 }
 

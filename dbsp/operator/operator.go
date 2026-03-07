@@ -10,6 +10,30 @@ import (
 	"github.com/l7mp/dbsp/internal/logger"
 )
 
+// Operator is a computation on Z-sets.
+type Operator interface {
+	fmt.Stringer
+	json.Marshaler
+	json.Unmarshaler
+
+	// Kind returns the operator's type identifier.
+	Kind() Kind
+
+	// Arity returns the number of inputs.
+	Arity() int
+
+	// Linearity returns the operator's linearity classification.
+	Linearity() Linearity
+
+	// Set initializes or resets the operator's internal state to v.
+	// Stateless operators implement this as a no-op.
+	// Set(zset.New()) is equivalent to a full reset.
+	Set(v zset.ZSet)
+
+	// Apply executes the operator on the given inputs.
+	Apply(inputs ...zset.ZSet) (zset.ZSet, error)
+}
+
 // loggerSetter is implemented by operators that accept a logger.
 type loggerSetter interface {
 	setLogger(logr.Logger)
@@ -145,30 +169,6 @@ func (l Linearity) String() string {
 	default:
 		return "Unknown"
 	}
-}
-
-// Operator is a computation on Z-sets.
-type Operator interface {
-	fmt.Stringer
-	json.Marshaler
-	json.Unmarshaler
-
-	// Kind returns the operator's type identifier.
-	Kind() Kind
-
-	// Arity returns the number of inputs.
-	Arity() int
-
-	// Linearity returns the operator's linearity classification.
-	Linearity() Linearity
-
-	// Set initializes or resets the operator's internal state to v.
-	// Stateless operators implement this as a no-op.
-	// Set(zset.New()) is equivalent to a full reset.
-	Set(v zset.ZSet)
-
-	// Apply executes the operator on the given inputs.
-	Apply(inputs ...zset.ZSet) (zset.ZSet, error)
 }
 
 // Reset resets op to its zero state by calling op.Set(zset.New()).

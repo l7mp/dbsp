@@ -295,6 +295,21 @@ var _ = Describe("Circuit commands", func() {
 			Expect(run("circuit", "node", "delete", "c", "in")).To(Succeed())
 			Expect(state.circuits["c"].Node("in")).To(BeNil())
 		})
+
+		It("sets a node state from a Z-set", func() {
+			Expect(run("circuit", "node", "add", "c", "int", "integrate")).To(Succeed())
+			Expect(run("zset", "create", "seed")).To(Succeed())
+			Expect(run("zset", "set", "seed", `({"id":1},2)`)).To(Succeed())
+
+			Expect(run("circuit", "node", "set", "c", "int", "seed")).To(Succeed())
+
+			node := state.circuits["c"].Node("int")
+			out, err := node.Apply(zset.New())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out.Size()).To(Equal(1))
+			entries := sortedEntries(out)
+			Expect(entries[0].Weight).To(Equal(zset.Weight(2)))
+		})
 	})
 
 	Describe("edge operations", func() {
