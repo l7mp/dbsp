@@ -99,7 +99,7 @@ func printZSetCmd(state *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printZSetEntries(bz.data)
+			return printZSetEntries(args[0], bz.data)
 		},
 	}
 }
@@ -425,11 +425,15 @@ func sortedEntries(z zset.ZSet) []zset.Elem {
 	return entries
 }
 
-// printZSetEntries prints each entry with a 1-based index, JSON, and weight.
-func printZSetEntries(z zset.ZSet) error {
+// printZSetEntries prints the named Z-set and its entries.
+func printZSetEntries(name string, z zset.ZSet) error {
 	entries := sortedEntries(z)
+	label := "entries"
+	if len(entries) == 1 {
+		label = "entry"
+	}
+	fmt.Fprintf(os.Stdout, "zset %s (%d %s):\n", name, len(entries), label)
 	if len(entries) == 0 {
-		fmt.Fprintln(os.Stdout, "(empty)")
 		return nil
 	}
 	for i, e := range entries {
