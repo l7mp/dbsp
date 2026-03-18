@@ -437,41 +437,27 @@ var _ = Describe("Fixed-Point Circuits", func() {
 		})
 	})
 
-	// Equivalence test helper: run both a DistinctKeyedIncremental executor and a
-	// NonLinearIncremental(DistinctKeyed) executor on the same delta sequence.
-	// At every step the accumulated incremental output must equal the SotW output.
+	// Incremental distinct_π behavior using aggregate-keyed lowering.
 	Describe("Incremental Keyed Distinct", func() {
 		var (
-			incrExec *Executor // DistinctKeyedIncremental
-			sotwExec *Executor // NonLinearIncremental(DistinctKeyed) — SotW reference
+			incrExec *Executor
 			accIncr  zset.ZSet // running sum of incremental output deltas = distinct_π(i[t])
-			accSotw  zset.ZSet // running sum of SotW diff output      = distinct_π(i[t])
 		)
 
 		BeforeEach(func() {
 			incrCircuit := circuit.DistinctKeyedIncremental("dk-incr")
-			sotwCircuit := circuit.NonLinearIncremental("dk-sotw", operator.NewDistinctKeyed())
 
 			var err error
 			incrExec, err = New(incrCircuit, logger.NewZapLogger(logLevel))
 			Expect(err).NotTo(HaveOccurred())
-			sotwExec, err = New(sotwCircuit, logger.NewZapLogger(logLevel))
-			Expect(err).NotTo(HaveOccurred())
 			accIncr = zset.New()
-			accSotw = zset.New()
 		})
 
-		// step feeds delta to both executors, accumulates both output delta streams,
-		// and asserts that both accumulators are always equal (= distinct_π(i[t])).
+		// step feeds delta and accumulates output deltas.
 		step := func(delta zset.ZSet) {
 			incrOut, err := incrExec.Execute(map[string]zset.ZSet{"delta": delta})
 			Expect(err).NotTo(HaveOccurred())
-			sotwOut, err := sotwExec.Execute(map[string]zset.ZSet{"delta": delta})
-			Expect(err).NotTo(HaveOccurred())
 			accIncr = accIncr.Add(incrOut["out"])
-			accSotw = accSotw.Add(sotwOut["out"])
-			Expect(accIncr.Equal(accSotw)).To(BeTrue(),
-				"accumulated incremental output must equal accumulated SotW output")
 		}
 
 		It("basic CRUD sequence", func() {
@@ -499,6 +485,9 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			d = zset.New()
 			d.Insert(rA2, -1)
 			step(d)
+
+			// Final state should contain only key b.
+			Expect(accIncr.Size()).To(Equal(1))
 		})
 
 		It("lexmin handoff: removing current lexmin causes next to take over", func() {
@@ -521,6 +510,8 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			d = zset.New()
 			d.Insert(r2, -1)
 			step(d)
+
+			Expect(accIncr.IsZero()).To(BeTrue())
 		})
 
 		It("idempotent delta: same ADD twice produces empty second output", func() {

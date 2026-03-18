@@ -416,7 +416,36 @@ func buildOperator(opType string, args []string) (operator.Operator, error) {
 	case "distinct":
 		return operator.NewDistinct(), nil
 	case "distinct_pi", "distinct-pi":
-		return operator.NewDistinctKeyed(), nil
+		return operator.NewDistinctPi(), nil
+	case "hkeyed":
+		return operator.NewDistinctPi(), nil
+	case "aggregate", "groupby":
+		if len(args) < 3 {
+			return nil, fmt.Errorf("aggregate_keyed requires at least 3 args: <key-expr> <value-expr> <reduce-expr> [out-field|set-expr]")
+		}
+		keyExpr, err := exprdbsp.CompileString(args[0])
+		if err != nil {
+			return nil, fmt.Errorf("aggregate_keyed: key expression: %w", err)
+		}
+		valueExpr, err := exprdbsp.CompileString(args[1])
+		if err != nil {
+			return nil, fmt.Errorf("aggregate_keyed: value expression: %w", err)
+		}
+		reduceExpr, err := exprdbsp.CompileString(normalizeAggregateReduceArg(args[2]))
+		if err != nil {
+			return nil, fmt.Errorf("aggregate_keyed: reduce expression: %w", err)
+		}
+		if len(args) > 3 {
+			if len(args[3]) > 0 && args[3][0] == '{' {
+				setExpr, err := exprdbsp.CompileString(args[3])
+				if err != nil {
+					return nil, fmt.Errorf("aggregate_keyed: set expression: %w", err)
+				}
+				return operator.NewAggregateWithSet(keyExpr, valueExpr, reduceExpr, setExpr), nil
+			}
+			return operator.NewAggregate(keyExpr, valueExpr, reduceExpr, args[3]), nil
+		}
+		return operator.NewAggregate(keyExpr, valueExpr, reduceExpr, "value"), nil
 	case "cartesian":
 		return operator.NewCartesianProduct(), nil
 	case "@filter", "filter", "select":
@@ -448,6 +477,21 @@ func buildOperator(opType string, args []string) (operator.Operator, error) {
 		return op, nil
 	default:
 		return nil, fmt.Errorf("unknown operator %q", opType)
+	}
+}
+
+func normalizeAggregateReduceArg(arg string) string {
+	switch arg {
+	case "@sum", "sum":
+		return `{"@sum":["$."]}`
+	case "@len", "len":
+		return `{"@len":"$."}`
+	case "@lexmin", "lexmin":
+		return `{"@lexmin":["$."]}`
+	case "@lexmax", "lexmax":
+		return `{"@lexmax":["$."]}`
+	default:
+		return arg
 	}
 }
 

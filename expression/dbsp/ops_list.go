@@ -1,6 +1,7 @@
 package dbsp
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/l7mp/dbsp/expression"
@@ -222,6 +223,43 @@ func (e *minExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 
 func (e *minExpr) String() string { return fmt.Sprintf("@min(%v)", e.args) }
 
+// lexMinExpr implements @lexmin - returns the lexicographically minimal element.
+type lexMinExpr struct {
+	args []Expression
+}
+
+func (e *lexMinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	values, err := evaluateLexArgs(ctx, e.args, "@lexmin")
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	best := values[0]
+	bestKey, err := lexKey(best)
+	if err != nil {
+		return nil, fmt.Errorf("@lexmin[0]: %w", err)
+	}
+
+	for i := 1; i < len(values); i++ {
+		k, err := lexKey(values[i])
+		if err != nil {
+			return nil, fmt.Errorf("@lexmin[%d]: %w", i, err)
+		}
+		if k < bestKey {
+			best = values[i]
+			bestKey = k
+		}
+	}
+
+	ctx.Logger().V(8).Info("eval", "op", "@lexmin", "result", best)
+	return best, nil
+}
+
+func (e *lexMinExpr) String() string { return fmt.Sprintf("@lexmin(%v)", e.args) }
+
 // maxExpr implements @max - returns the maximum value in a list.
 type maxExpr struct {
 	args []Expression
@@ -269,6 +307,43 @@ func (e *maxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 }
 
 func (e *maxExpr) String() string { return fmt.Sprintf("@max(%v)", e.args) }
+
+// lexMaxExpr implements @lexmax - returns the lexicographically maximal element.
+type lexMaxExpr struct {
+	args []Expression
+}
+
+func (e *lexMaxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	values, err := evaluateLexArgs(ctx, e.args, "@lexmax")
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	best := values[0]
+	bestKey, err := lexKey(best)
+	if err != nil {
+		return nil, fmt.Errorf("@lexmax[0]: %w", err)
+	}
+
+	for i := 1; i < len(values); i++ {
+		k, err := lexKey(values[i])
+		if err != nil {
+			return nil, fmt.Errorf("@lexmax[%d]: %w", i, err)
+		}
+		if k > bestKey {
+			best = values[i]
+			bestKey = k
+		}
+	}
+
+	ctx.Logger().V(8).Info("eval", "op", "@lexmax", "result", best)
+	return best, nil
+}
+
+func (e *lexMaxExpr) String() string { return fmt.Sprintf("@lexmax(%v)", e.args) }
 
 // inExpr implements @in - checks if an element is in a list.
 type inExpr struct {
@@ -352,6 +427,43 @@ func evaluateNumericList(ctx *expression.EvalContext, args []Expression, opName 
 	return result, nil
 }
 
+func evaluateListArgs(ctx *expression.EvalContext, args []Expression, opName string) ([]any, error) {
+	result := make([]any, len(args))
+	for i, elem := range args {
+		v, err := elem.Evaluate(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", opName, i, err)
+		}
+		result[i] = v
+	}
+	return result, nil
+}
+
+func evaluateLexArgs(ctx *expression.EvalContext, args []Expression, opName string) ([]any, error) {
+	values, err := evaluateListArgs(ctx, args, opName)
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 1 {
+		if list, err := AsList(values[0]); err == nil {
+			return list, nil
+		}
+	}
+	return values, nil
+}
+
+func lexKey(v any) (string, error) {
+	type hasher interface{ Hash() string }
+	if h, ok := v.(hasher); ok {
+		return h.Hash(), nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("cannot serialize value: %w", err)
+	}
+	return string(b), nil
+}
+
 func init() {
 	MustRegister("@map", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)
@@ -394,6 +506,20 @@ func init() {
 			return nil, fmt.Errorf("@max: %w", err)
 		}
 		return &maxExpr{args: list}, nil
+	})
+	MustRegister("@lexmin", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@lexmin: %w", err)
+		}
+		return &lexMinExpr{args: list}, nil
+	})
+	MustRegister("@lexmax", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@lexmax: %w", err)
+		}
+		return &lexMaxExpr{args: list}, nil
 	})
 	MustRegister("@in", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)

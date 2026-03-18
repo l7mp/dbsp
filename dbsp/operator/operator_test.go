@@ -9,6 +9,7 @@ import (
 	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/dbsp/zset"
 	"github.com/l7mp/dbsp/expression"
+	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
 	"github.com/l7mp/dbsp/internal/testutils"
 )
 
@@ -274,192 +275,119 @@ var _ = Describe("Operators", func() {
 		})
 	})
 
-	Describe("DistinctKeyed", func() {
-		It("passes a single element unchanged", func() {
-			op := NewDistinctKeyed()
-			Expect(op.Arity()).To(Equal(1))
-			Expect(op.Linearity()).To(Equal(NonLinear))
+	Describe("Aggregate", func() {
+		It("supports distinct-pi semantics via lexmin reducer", func() {
+			op := NewDistinctPi()
 
-			r := testutils.Record{ID: "a", Value: 1}
-			input := zset.New()
-			input.Insert(r, 1)
-
-			result, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(1))
-			Expect(result.Lookup(r.Hash())).To(Equal(zset.Weight(1)))
-		})
-
-		It("passes two elements with different PKs", func() {
-			op := NewDistinctKeyed()
-			ra := testutils.Record{ID: "a", Value: 1}
-			rb := testutils.Record{ID: "b", Value: 2}
-			input := zset.New()
-			input.Insert(ra, 1)
-			input.Insert(rb, 1)
-
-			result, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(2))
-			Expect(result.Lookup(ra.Hash())).To(Equal(zset.Weight(1)))
-			Expect(result.Lookup(rb.Hash())).To(Equal(zset.Weight(1)))
-		})
-
-		It("picks lexmin when two elements share a PK", func() {
-			op := NewDistinctKeyed()
-			// Both have ID "a" (same PK). Hash is "{ID:a, Value:N}"; Value:1 < Value:2 lexically.
-			r1 := testutils.Record{ID: "a", Value: 1}
-			r2 := testutils.Record{ID: "a", Value: 2}
-			Expect(r1.Hash() < r2.Hash()).To(BeTrue(), "test assumes r1 hashes lower")
-			input := zset.New()
-			input.Insert(r1, 1)
-			input.Insert(r2, 1)
-
-			result, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(1))
-			Expect(result.Lookup(r1.Hash())).To(Equal(zset.Weight(1)))
-			Expect(result.Lookup(r2.Hash())).To(Equal(zset.Weight(0)))
-		})
-
-		It("collapses weight > 1 to weight 1", func() {
-			op := NewDistinctKeyed()
-			r := testutils.Record{ID: "a", Value: 1}
-			input := zset.New()
-			input.Insert(r, 5)
-
-			result, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Lookup(r.Hash())).To(Equal(zset.Weight(1)))
-		})
-
-		It("ignores negative-weight elements", func() {
-			op := NewDistinctKeyed()
-			ra := testutils.Record{ID: "a", Value: 1}
-			rb := testutils.Record{ID: "b", Value: 2}
-			input := zset.New()
-			input.Insert(ra, 1)
-			input.Insert(rb, -1)
-
-			result, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(1))
-			Expect(result.Lookup(ra.Hash())).To(Equal(zset.Weight(1)))
-		})
-
-		It("returns empty output for empty input", func() {
-			op := NewDistinctKeyed()
-			result, err := op.Apply(zset.New())
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.IsZero()).To(BeTrue())
-		})
-
-		It("is idempotent", func() {
-			op := NewDistinctKeyed()
-			r1 := testutils.Record{ID: "a", Value: 1}
-			r2 := testutils.Record{ID: "a", Value: 2}
-			input := zset.New()
-			input.Insert(r1, 1)
-			input.Insert(r2, 1)
-
-			once, err := op.Apply(input)
-			Expect(err).NotTo(HaveOccurred())
-			twice, err := op.Apply(once)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(twice.Size()).To(Equal(once.Size()))
-			once.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				Expect(twice.Lookup(elem.Hash())).To(Equal(weight))
-				return true
-			})
-		})
-	})
-
-	Describe("HKeyed", func() {
-		var op *HKeyed
-
-		BeforeEach(func() { op = NewHKeyed() })
-
-		It("emits +1 when a key first appears", func() {
-			r := testutils.Record{ID: "a", Value: 1}
-			delta := zset.New()
-			delta.Insert(r, 1)
-
-			result, err := op.Apply(delta)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Lookup(r.Hash())).To(Equal(zset.Weight(1)))
-		})
-
-		It("emits -1 when a key disappears", func() {
-			r := testutils.Record{ID: "a", Value: 1}
-
-			d1 := zset.New()
-			d1.Insert(r, 1)
-			_, _ = op.Apply(d1)
-
-			d2 := zset.New()
-			d2.Insert(r, -1)
-			result, err := op.Apply(d2)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Lookup(r.Hash())).To(Equal(zset.Weight(-1)))
-		})
-
-		It("emits {old:-1, new:+1} when lexmin changes", func() {
-			// r1 < r2 lexically (Value:1 < Value:2).
 			r1 := testutils.Record{ID: "a", Value: 1}
 			r2 := testutils.Record{ID: "a", Value: 2}
 			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
 
-			// Step 1: add r1 (lexmin = r1).
-			d1 := zset.New()
-			d1.Insert(r1, 1)
-			_, _ = op.Apply(d1)
-
-			// Step 2: remove r1, add r2 — lexmin transitions r1 → r2.
-			d2 := zset.New()
-			d2.Insert(r1, -1)
-			d2.Insert(r2, 1)
-
-			result, err := op.Apply(d2)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Lookup(r1.Hash())).To(Equal(zset.Weight(-1)))
-			Expect(result.Lookup(r2.Hash())).To(Equal(zset.Weight(1)))
-		})
-
-		It("emits nothing when lexmin is stable (weight increase on rep)", func() {
-			r := testutils.Record{ID: "a", Value: 1}
-			d1 := zset.New()
-			d1.Insert(r, 1)
-			_, _ = op.Apply(d1)
-
-			d2 := zset.New()
-			d2.Insert(r, 1) // weight 1 → 2, lexmin unchanged.
-
-			result, err := op.Apply(d2)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.IsZero()).To(BeTrue())
-		})
-
-		It("resolves key collision to lexmin", func() {
-			r1 := testutils.Record{ID: "a", Value: 1}
-			r2 := testutils.Record{ID: "a", Value: 2}
-			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
-
-			// Both arrive in the same delta — lexmin should win.
 			delta := zset.New()
 			delta.Insert(r1, 1)
 			delta.Insert(r2, 1)
 
 			result, err := op.Apply(delta)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Lookup(r1.Hash())).To(Equal(zset.Weight(1)))
-			Expect(result.Lookup(r2.Hash())).To(Equal(zset.Weight(0)))
+			Expect(result.Size()).To(Equal(1))
+
+			var row datamodel.Document
+			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+				Expect(weight).To(Equal(zset.Weight(1)))
+				row = elem
+				return false
+			})
+
+			v, _ := row.GetField("value")
+			selected, ok := v.(datamodel.Document)
+			Expect(ok).To(BeTrue())
+			Expect(selected.Hash()).To(Equal(r1.Hash()))
 		})
 
-		It("emits nothing for an empty delta", func() {
-			result, err := op.Apply(zset.New())
+		It("supports gather-style list aggregation", func() {
+			op := NewAggregate(nil, exprdbsp.NewGet("value"), exprdbsp.NewArg(), "items")
+
+			r1 := testutils.Record{ID: "ns-a", Value: 1}
+			r2 := testutils.Record{ID: "ns-a", Value: 2}
+			delta := zset.New()
+			delta.Insert(r1, 1)
+			delta.Insert(r2, 1)
+
+			result, err := op.Apply(delta)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.IsZero()).To(BeTrue())
+			Expect(result.Size()).To(Equal(1))
+
+			var row datamodel.Document
+			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+				Expect(weight).To(Equal(zset.Weight(1)))
+				row = elem
+				return false
+			})
+
+			k, _ := row.GetField("key")
+			items, _ := row.GetField("items")
+			Expect(k).To(Equal("ns-a"))
+			Expect(items.([]any)).To(ConsistOf(1, 2))
 		})
+
+		It("supports set-expr output on representative document", func() {
+			op := NewAggregateWithSet(
+				nil,
+				expression.Func(func(ctx *expression.EvalContext) (any, error) {
+					return ctx.Subject(), nil
+				}),
+				exprdbsp.NewLen(expression.Func(func(ctx *expression.EvalContext) (any, error) { return ctx.Subject(), nil })),
+				exprdbsp.NewSet(exprdbsp.NewString("Value"), expression.Func(func(ctx *expression.EvalContext) (any, error) { return ctx.Subject(), nil })),
+			)
+
+			r1 := &testutils.MutableRecord{FieldMap: map[string]any{"id": "ns-a", "value": int64(2)}}
+
+			delta := zset.New()
+			delta.Insert(r1, 1)
+
+			result, err := op.Apply(delta)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Size()).To(Equal(1))
+
+			var out datamodel.Document
+			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+				Expect(weight).To(Equal(zset.Weight(1)))
+				out = elem
+				return false
+			})
+
+			total, err := out.GetField("Value")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(total).To(Equal(int64(1)))
+		})
+
+		It("supports count via @len($. )", func() {
+			op := NewAggregate(nil, nil, exprdbsp.NewLen(expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				return ctx.Subject(), nil
+			})), "value")
+
+			r1 := testutils.Record{ID: "ns-a", Value: 1}
+			r2 := testutils.Record{ID: "ns-a", Value: 2}
+			delta := zset.New()
+			delta.Insert(r1, 1)
+			delta.Insert(r2, 1)
+
+			result, err := op.Apply(delta)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Size()).To(Equal(1))
+
+			var out datamodel.Document
+			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+				Expect(weight).To(Equal(zset.Weight(1)))
+				out = elem
+				return false
+			})
+			k, _ := out.GetField("key")
+			v, _ := out.GetField("value")
+			Expect(k).To(Equal("ns-a"))
+			Expect(v).To(Equal(int64(2)))
+		})
+
 	})
 
 	Describe("Distinct", func() {

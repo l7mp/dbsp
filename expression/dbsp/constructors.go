@@ -23,6 +23,9 @@ func NewString(v string) Expression { return &stringExpr{operand: &constExpr{val
 // NewGet creates a field-get expression from a literal field name.
 func NewGet(field string) Expression { return &getExpr{field: &constExpr{value: field}} }
 
+// NewArg creates an @arg expression.
+func NewArg() Expression { return &argExpr{} }
+
 // NewSet creates a field-set expression.
 func NewSet(field, value Expression) Expression { return &setExpr{field: field, value: value} }
 
@@ -76,6 +79,18 @@ func NewOr(args ...Expression) Expression { return &orExpr{args: args} }
 
 // NewNot creates a logical NOT expression.
 func NewNot(operand Expression) Expression { return &notExpr{operand: operand} }
+
+// NewSum creates a sum expression.
+func NewSum(args ...Expression) Expression { return &sumExpr{args: args} }
+
+// NewLexMin creates a lexicographic minimum expression.
+func NewLexMin(args ...Expression) Expression { return &lexMinExpr{args: args} }
+
+// NewLexMax creates a lexicographic maximum expression.
+func NewLexMax(args ...Expression) Expression { return &lexMaxExpr{args: args} }
+
+// NewLen creates a list length expression.
+func NewLen(operand Expression) Expression { return &lenExpr{operand: operand} }
 
 // NewIsNull creates an is-null check expression.
 func NewIsNull(operand Expression) Expression { return &isNullExpr{operand: operand} }

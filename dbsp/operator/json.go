@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/l7mp/dbsp/expression"
 	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
 )
 
@@ -17,6 +18,12 @@ type jsonOp struct {
 	Projection json.RawMessage `json:"projection,omitempty"`
 	Field      string          `json:"field,omitempty"`
 	IndexField string          `json:"indexField,omitempty"`
+	SumField   string          `json:"sumField,omitempty"`
+	KeyExpr    json.RawMessage `json:"keyExpr,omitempty"`
+	ValueExpr  json.RawMessage `json:"valueExpr,omitempty"`
+	ReduceExpr json.RawMessage `json:"reduceExpr,omitempty"`
+	SetExpr    json.RawMessage `json:"setExpr,omitempty"`
+	OutField   string          `json:"outField,omitempty"`
 }
 
 // MarshalJSON implements json.Marshaler. Uses a local type alias to avoid
@@ -154,10 +161,32 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		return NewCartesianProduct(), nil
 	case "distinct":
 		return NewDistinct(), nil
-	case "distinct_pi":
-		return NewDistinctKeyed(), nil
-	case "hkeyed":
-		return NewHKeyed(), nil
+	case "distinct_pi", "hkeyed":
+		return NewDistinctPi(), nil
+	case "aggregate_keyed":
+		if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 || len(p.ReduceExpr) == 0 {
+			return nil, fmt.Errorf("aggregate_keyed operator: keyExpr, valueExpr, and reduceExpr are required")
+		}
+		keyExpr, err := exprdbsp.Compile(p.KeyExpr)
+		if err != nil {
+			return nil, fmt.Errorf("aggregate_keyed operator: compile keyExpr: %w", err)
+		}
+		valueExpr, err := exprdbsp.Compile(p.ValueExpr)
+		if err != nil {
+			return nil, fmt.Errorf("aggregate_keyed operator: compile valueExpr: %w", err)
+		}
+		reduceExpr, err := exprdbsp.Compile(p.ReduceExpr)
+		if err != nil {
+			return nil, fmt.Errorf("aggregate_keyed operator: compile reduceExpr: %w", err)
+		}
+		if len(p.SetExpr) != 0 {
+			setExpr, err := exprdbsp.Compile(p.SetExpr)
+			if err != nil {
+				return nil, fmt.Errorf("aggregate_keyed operator: compile setExpr: %w", err)
+			}
+			return NewAggregateWithSet(keyExpr, valueExpr, reduceExpr, setExpr), nil
+		}
+		return NewAggregate(keyExpr, valueExpr, reduceExpr, p.OutField), nil
 	case "select":
 		if len(p.Predicate) == 0 {
 			return nil, fmt.Errorf("select operator: predicate required")
@@ -185,4 +214,73 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 	default:
 		return nil, fmt.Errorf("unknown operator type %q", p.Type)
 	}
+}
+
+// MarshalJSON implements json.Marshaler.
+func (o *Aggregate) MarshalJSON() ([]byte, error) {
+	keyJSON, err := json.Marshal(o.keyExpr)
+	if err != nil {
+		return nil, fmt.Errorf("marshal aggregate_keyed keyExpr: %w", err)
+	}
+	valueJSON, err := json.Marshal(o.valueExpr)
+	if err != nil {
+		return nil, fmt.Errorf("marshal aggregate_keyed valueExpr: %w", err)
+	}
+	reduceJSON, err := json.Marshal(o.reduceExpr)
+	if err != nil {
+		return nil, fmt.Errorf("marshal aggregate_keyed reduceExpr: %w", err)
+	}
+	wire := jsonOp{Type: "aggregate_keyed", KeyExpr: keyJSON, ValueExpr: valueJSON, ReduceExpr: reduceJSON, OutField: o.outField}
+	if o.setExpr != nil {
+		setJSON, err := json.Marshal(o.setExpr)
+		if err != nil {
+			return nil, fmt.Errorf("marshal aggregate_keyed setExpr: %w", err)
+		}
+		wire.SetExpr = setJSON
+	}
+	return json.Marshal(wire)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (o *Aggregate) UnmarshalJSON(data []byte) error {
+	var p jsonOp
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 || len(p.ReduceExpr) == 0 {
+		return fmt.Errorf("aggregate_keyed: keyExpr, valueExpr, and reduceExpr are required")
+	}
+	var keyExpr expression.Expression
+	if string(p.KeyExpr) != "null" {
+		k, err := exprdbsp.Compile(p.KeyExpr)
+		if err != nil {
+			return fmt.Errorf("aggregate_keyed: compile keyExpr: %w", err)
+		}
+		keyExpr = k
+	}
+	valueExpr, err := exprdbsp.Compile(p.ValueExpr)
+	if err != nil {
+		return fmt.Errorf("aggregate_keyed: compile valueExpr: %w", err)
+	}
+	reduceExpr, err := exprdbsp.Compile(p.ReduceExpr)
+	if err != nil {
+		return fmt.Errorf("aggregate_keyed: compile reduceExpr: %w", err)
+	}
+	var setExpr expression.Expression
+	if len(p.SetExpr) != 0 {
+		s, err := exprdbsp.Compile(p.SetExpr)
+		if err != nil {
+			return fmt.Errorf("aggregate_keyed: compile setExpr: %w", err)
+		}
+		setExpr = s
+	}
+	o.keyExpr = keyExpr
+	o.valueExpr = valueExpr
+	o.reduceExpr = reduceExpr
+	o.setExpr = setExpr
+	o.outField = p.OutField
+	if o.outField == "" {
+		o.outField = "value"
+	}
+	return nil
 }

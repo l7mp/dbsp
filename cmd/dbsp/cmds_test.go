@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/l7mp/dbsp/dbsp/operator"
 	"github.com/l7mp/dbsp/dbsp/zset"
 )
 
@@ -309,6 +310,13 @@ var _ = Describe("Circuit commands", func() {
 			Expect(out.Size()).To(Equal(1))
 			entries := sortedEntries(out)
 			Expect(entries[0].Weight).To(Equal(zset.Weight(2)))
+		})
+
+		It("adds aggregate node using reducer shorthand", func() {
+			Expect(run("circuit", "node", "add", "c", "agg", "aggregate", `"$.namespace"`, `"$.cpu"`, "sum", `{"@set":["Value","$."]}`)).To(Succeed())
+			n := state.circuits["c"].Node("agg")
+			Expect(n).NotTo(BeNil())
+			Expect(n.Operator.Kind()).To(Equal(operator.KindAggregate))
 		})
 	})
 

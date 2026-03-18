@@ -378,6 +378,16 @@ var _ = Describe("Field Operators", func() {
 		Expect(result).To(Equal(int64(30)))
 	})
 
+	It("should evaluate $. as identity subject", func() {
+		expr, err := dbsp.Compile([]byte(`"$."`))
+		Expect(err).NotTo(HaveOccurred())
+
+		subj := map[string]any{"x": int64(1)}
+		result, err := expr.Evaluate(expression.NewContext(nil).WithSubject(subj))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(subj))
+	})
+
 	It("should return error for missing field", func() {
 		expr, err := dbsp.Compile([]byte(`{"@get": "missing"}`))
 		Expect(err).NotTo(HaveOccurred())
@@ -457,6 +467,24 @@ var _ = Describe("List Operators", func() {
 		Expect(result).To(Equal(int64(5)))
 	})
 
+	It("should evaluate @lexmin", func() {
+		expr, err := dbsp.Compile([]byte(`{"@lexmin": ["b", "a", "c"]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal("a"))
+	})
+
+	It("should evaluate @lexmax", func() {
+		expr, err := dbsp.Compile([]byte(`{"@lexmax": ["b", "a", "c"]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal("c"))
+	})
+
 	It("should evaluate @in (element found)", func() {
 		expr, err := dbsp.Compile([]byte(`{"@in": [2, [1, 2, 3]]}`))
 		Expect(err).NotTo(HaveOccurred())
@@ -503,6 +531,7 @@ var _ = Describe("List Operators", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal([]any{int64(3), int64(4)}))
 	})
+
 })
 
 var _ = Describe("Conditional Operators", func() {

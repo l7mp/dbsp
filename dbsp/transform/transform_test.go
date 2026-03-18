@@ -115,11 +115,11 @@ var _ = Describe("Incrementalize", func() {
 			Expect(outEdges[0].From).To(Equal("dist^Δ_diff"))
 		})
 
-		It("uses self-contained HKeyed for DistinctKeyed (distinct_pi)", func() {
+		It("uses self-contained aggregate for distinct_pi", func() {
 			// in -> distinct_pi -> out.
 			c := circuit.New("distinct-pi-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("dpi", operator.NewDistinctKeyed()))
+			c.AddNode(circuit.Op("dpi", operator.NewDistinctPi()))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "dpi", 0))
 			c.AddEdge(circuit.NewEdge("dpi", "out", 0))
@@ -127,25 +127,25 @@ var _ = Describe("Incrementalize", func() {
 			incr, err := Incrementalize(c)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should NOT use generic D∘O∘I pattern — no external int/delay/diff.
+			// Should NOT use generic D∘O∘I pattern — no external int/delay/op/diff.
 			Expect(incr.Node("dpi^Δ_int")).To(BeNil())
 			Expect(incr.Node("dpi^Δ_delay")).To(BeNil())
 			Expect(incr.Node("dpi^Δ_op")).To(BeNil())
 			Expect(incr.Node("dpi^Δ_diff")).To(BeNil())
 
-			// Should have a single HKeyed operator node.
-			Expect(incr.Node("dpi^Δ_H").Kind()).To(Equal(operator.KindHKeyed))
+			// Should have a single Aggregate operator node.
+			Expect(incr.Node("dpi^Δ").Kind()).To(Equal(operator.KindAggregate))
 
-			// H receives one input: delta (port 0).
-			hEdges := incr.EdgesTo("dpi^Δ_H")
-			Expect(hEdges).To(HaveLen(1))
-			Expect(hEdges[0].From).To(Equal("in"))
-			Expect(hEdges[0].Port).To(Equal(0))
+			// aggregate receives one input: delta (port 0).
+			aEdges := incr.EdgesTo("dpi^Δ")
+			Expect(aEdges).To(HaveLen(1))
+			Expect(aEdges[0].From).To(Equal("in"))
+			Expect(aEdges[0].Port).To(Equal(0))
 
-			// Output connects from H.
+			// Output connects from aggregate.
 			outEdges := incr.EdgesTo("out")
 			Expect(outEdges).To(HaveLen(1))
-			Expect(outEdges[0].From).To(Equal("dpi^Δ_H"))
+			Expect(outEdges[0].From).To(Equal("dpi^Δ"))
 		})
 	})
 

@@ -298,6 +298,8 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@len", `{"@len":"$.list"}`),
 			Entry("@min", `{"@min":[3,1,2]}`),
 			Entry("@max", `{"@max":[3,1,2]}`),
+			Entry("@lexmin", `{"@lexmin":["b","a","c"]}`),
+			Entry("@lexmax", `{"@lexmax":["b","a","c"]}`),
 			Entry("@in", `{"@in":[1,"$.list"]}`),
 			Entry("@range", `{"@range":5}`),
 			Entry("@now", `{"@now":null}`),

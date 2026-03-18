@@ -72,19 +72,18 @@ func BilinearIncremental(name string, bilinearOp operator.Operator) *Circuit {
 }
 
 // DistinctKeyedIncremental creates the incremental circuit for distinct_π.
-// HKeyed maintains its own integrated state (weights + pkIndex) internally,
-// so no external integrator or delay is required:
+// It uses the generic aggregate reducer equivalent for distinct_π.
 //
-//	delta ──→ HKeyed ──→ out
+//	delta ──→ aggregate_keyed(distinct_π) ──→ out
 func DistinctKeyedIncremental(name string) *Circuit {
 	c := New(name)
 
 	c.AddNode(Input("delta"))
-	c.AddNode(Op("H", operator.NewHKeyed()))
+	c.AddNode(Op("A", operator.NewDistinctPi()))
 	c.AddNode(Output("out"))
 
-	c.AddEdge(NewEdge("delta", "H", 0))
-	c.AddEdge(NewEdge("H", "out", 0))
+	c.AddEdge(NewEdge("delta", "A", 0))
+	c.AddEdge(NewEdge("A", "out", 0))
 
 	return c
 }
