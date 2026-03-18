@@ -8,9 +8,7 @@ import (
 
 // sqlBoolExpr implements @sqlbool to normalize SQL boolean semantics.
 // It maps nil to false, propagating only true when the operand is true.
-type sqlBoolExpr struct {
-	operand Expression
-}
+type sqlBoolExpr struct{ unaryOp }
 
 func (e *sqlBoolExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -30,14 +28,12 @@ func (e *sqlBoolExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *sqlBoolExpr) String() string { return fmt.Sprintf("@sqlbool(%v)", e.operand) }
-
 func init() {
 	MustRegister("@sqlbool", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@sqlbool: %w", err)
 		}
-		return &sqlBoolExpr{operand: operand}, nil
+		return &sqlBoolExpr{unaryOp{"@sqlbool", operand}}, nil
 	})
 }

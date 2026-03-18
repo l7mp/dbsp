@@ -48,9 +48,7 @@ func (e *condExpr) String() string {
 
 // switchExpr implements @switch - pattern matching.
 // Each element is a [case, expr] pair expression.
-type switchExpr struct {
-	args []Expression
-}
+type switchExpr struct{ variadicOp }
 
 func (e *switchExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	for i, elem := range e.args {
@@ -79,12 +77,8 @@ func (e *switchExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return nil, nil
 }
 
-func (e *switchExpr) String() string { return fmt.Sprintf("@switch(%v)", e.args) }
-
 // definedOrExpr implements @definedOr - returns the first non-nil value.
-type definedOrExpr struct {
-	args []Expression
-}
+type definedOrExpr struct{ variadicOp }
 
 func (e *definedOrExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	for i, elem := range e.args {
@@ -103,8 +97,6 @@ func (e *definedOrExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return nil, nil
 }
 
-func (e *definedOrExpr) String() string { return fmt.Sprintf("@definedOr(%v)", e.args) }
-
 func init() {
 	MustRegister("@cond", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)
@@ -118,13 +110,13 @@ func init() {
 		if err != nil {
 			return nil, fmt.Errorf("@switch: %w", err)
 		}
-		return &switchExpr{args: list}, nil
+		return &switchExpr{variadicOp{"@switch", list}}, nil
 	})
 	MustRegister("@definedOr", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@definedOr: %w", err)
 		}
-		return &definedOrExpr{args: list}, nil
+		return &definedOrExpr{variadicOp{"@definedOr", list}}, nil
 	})
 }

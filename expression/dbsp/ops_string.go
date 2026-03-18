@@ -9,13 +9,10 @@ import (
 )
 
 // regexpExpr implements @regexp - regex pattern matching.
-type regexpExpr struct {
-	pattern Expression
-	str     Expression
-}
+type regexpExpr struct{ binaryOp }
 
 func (e *regexpExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	patternVal, err := e.pattern.Evaluate(ctx)
+	patternVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@regexp: pattern: %w", err)
 	}
@@ -24,7 +21,7 @@ func (e *regexpExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@regexp: pattern must be string: %w", err)
 	}
 
-	strVal, err := e.str.Evaluate(ctx)
+	strVal, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@regexp: string: %w", err)
 	}
@@ -43,12 +40,8 @@ func (e *regexpExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *regexpExpr) String() string { return fmt.Sprintf("@regexp(%v, %v)", e.pattern, e.str) }
-
 // upperExpr implements @upper - converts string to uppercase.
-type upperExpr struct {
-	operand Expression
-}
+type upperExpr struct{ unaryOp }
 
 func (e *upperExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -64,12 +57,8 @@ func (e *upperExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *upperExpr) String() string { return fmt.Sprintf("@upper(%v)", e.operand) }
-
 // lowerExpr implements @lower - converts string to lowercase.
-type lowerExpr struct {
-	operand Expression
-}
+type lowerExpr struct{ unaryOp }
 
 func (e *lowerExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -85,12 +74,8 @@ func (e *lowerExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *lowerExpr) String() string { return fmt.Sprintf("@lower(%v)", e.operand) }
-
 // trimExpr implements @trim - removes leading and trailing whitespace.
-type trimExpr struct {
-	operand Expression
-}
+type trimExpr struct{ unaryOp }
 
 func (e *trimExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -106,13 +91,9 @@ func (e *trimExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *trimExpr) String() string { return fmt.Sprintf("@trim(%v)", e.operand) }
-
 // substringExpr implements @substring - extracts a substring.
 // Start is 1-based (SQL style). If start is negative, counts from end.
-type substringExpr struct {
-	args []Expression
-}
+type substringExpr struct{ variadicOp }
 
 func (e *substringExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if len(e.args) != 2 && len(e.args) != 3 {
@@ -176,12 +157,8 @@ func (e *substringExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *substringExpr) String() string { return fmt.Sprintf("@substring(%v)", e.args) }
-
 // replaceExpr implements @replace - replaces occurrences of a substring.
-type replaceExpr struct {
-	args []Expression
-}
+type replaceExpr struct{ variadicOp }
 
 func (e *replaceExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if len(e.args) != 3 && len(e.args) != 4 {
@@ -233,16 +210,11 @@ func (e *replaceExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *replaceExpr) String() string { return fmt.Sprintf("@replace(%v)", e.args) }
-
 // splitExpr implements @split - splits a string into a list.
-type splitExpr struct {
-	str Expression
-	sep Expression
-}
+type splitExpr struct{ binaryOp }
 
 func (e *splitExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	strVal, err := e.str.Evaluate(ctx)
+	strVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@split: string: %w", err)
 	}
@@ -251,7 +223,7 @@ func (e *splitExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@split: first argument must be string: %w", err)
 	}
 
-	sepVal, err := e.sep.Evaluate(ctx)
+	sepVal, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@split: separator: %w", err)
 	}
@@ -270,16 +242,11 @@ func (e *splitExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *splitExpr) String() string { return fmt.Sprintf("@split(%v, %v)", e.str, e.sep) }
-
 // joinExpr implements @join - joins a list into a string.
-type joinExpr struct {
-	list Expression
-	sep  Expression
-}
+type joinExpr struct{ binaryOp }
 
 func (e *joinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	listVal, err := e.list.Evaluate(ctx)
+	listVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@join: list: %w", err)
 	}
@@ -288,7 +255,7 @@ func (e *joinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@join: first argument must be list: %w", err)
 	}
 
-	sepVal, err := e.sep.Evaluate(ctx)
+	sepVal, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@join: separator: %w", err)
 	}
@@ -311,16 +278,11 @@ func (e *joinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *joinExpr) String() string { return fmt.Sprintf("@join(%v, %v)", e.list, e.sep) }
-
 // startsWithExpr implements @startswith.
-type startsWithExpr struct {
-	str    Expression
-	prefix Expression
-}
+type startsWithExpr struct{ binaryOp }
 
 func (e *startsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	strVal, err := e.str.Evaluate(ctx)
+	strVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@startswith: string: %w", err)
 	}
@@ -329,7 +291,7 @@ func (e *startsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@startswith: first argument must be string: %w", err)
 	}
 
-	prefixVal, err := e.prefix.Evaluate(ctx)
+	prefixVal, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@startswith: prefix: %w", err)
 	}
@@ -343,18 +305,11 @@ func (e *startsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *startsWithExpr) String() string {
-	return fmt.Sprintf("@startswith(%v, %v)", e.str, e.prefix)
-}
-
 // endsWithExpr implements @endswith.
-type endsWithExpr struct {
-	str    Expression
-	suffix Expression
-}
+type endsWithExpr struct{ binaryOp }
 
 func (e *endsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	strVal, err := e.str.Evaluate(ctx)
+	strVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@endswith: string: %w", err)
 	}
@@ -363,7 +318,7 @@ func (e *endsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@endswith: first argument must be string: %w", err)
 	}
 
-	suffixVal, err := e.suffix.Evaluate(ctx)
+	suffixVal, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@endswith: suffix: %w", err)
 	}
@@ -377,18 +332,11 @@ func (e *endsWithExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *endsWithExpr) String() string {
-	return fmt.Sprintf("@endswith(%v, %v)", e.str, e.suffix)
-}
-
 // containsExpr implements @contains.
-type containsExpr struct {
-	str Expression
-	sub Expression
-}
+type containsExpr struct{ binaryOp }
 
 func (e *containsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	strVal, err := e.str.Evaluate(ctx)
+	strVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@contains: string: %w", err)
 	}
@@ -397,7 +345,7 @@ func (e *containsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@contains: first argument must be string: %w", err)
 	}
 
-	subVal, err := e.sub.Evaluate(ctx)
+	subVal, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@contains: substring: %w", err)
 	}
@@ -411,8 +359,6 @@ func (e *containsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *containsExpr) String() string { return fmt.Sprintf("@contains(%v, %v)", e.str, e.sub) }
-
 func init() {
 	registerBinaryStrOp := func(name string, factory func(a, b Expression) Expression) {
 		MustRegister(name, func(args any) (Expression, error) {
@@ -424,12 +370,24 @@ func init() {
 		})
 	}
 
-	registerBinaryStrOp("@regexp", func(a, b Expression) Expression { return &regexpExpr{pattern: a, str: b} })
-	registerBinaryStrOp("@split", func(a, b Expression) Expression { return &splitExpr{str: a, sep: b} })
-	registerBinaryStrOp("@join", func(a, b Expression) Expression { return &joinExpr{list: a, sep: b} })
-	registerBinaryStrOp("@startswith", func(a, b Expression) Expression { return &startsWithExpr{str: a, prefix: b} })
-	registerBinaryStrOp("@endswith", func(a, b Expression) Expression { return &endsWithExpr{str: a, suffix: b} })
-	registerBinaryStrOp("@contains", func(a, b Expression) Expression { return &containsExpr{str: a, sub: b} })
+	registerBinaryStrOp("@regexp", func(a, b Expression) Expression {
+		return &regexpExpr{binaryOp{"@regexp", a, b}}
+	})
+	registerBinaryStrOp("@split", func(a, b Expression) Expression {
+		return &splitExpr{binaryOp{"@split", a, b}}
+	})
+	registerBinaryStrOp("@join", func(a, b Expression) Expression {
+		return &joinExpr{binaryOp{"@join", a, b}}
+	})
+	registerBinaryStrOp("@startswith", func(a, b Expression) Expression {
+		return &startsWithExpr{binaryOp{"@startswith", a, b}}
+	})
+	registerBinaryStrOp("@endswith", func(a, b Expression) Expression {
+		return &endsWithExpr{binaryOp{"@endswith", a, b}}
+	})
+	registerBinaryStrOp("@contains", func(a, b Expression) Expression {
+		return &containsExpr{binaryOp{"@contains", a, b}}
+	})
 
 	registerUnaryStrOp := func(name string, factory func(operand Expression) Expression) {
 		MustRegister(name, func(args any) (Expression, error) {
@@ -441,22 +399,22 @@ func init() {
 		})
 	}
 
-	registerUnaryStrOp("@upper", func(o Expression) Expression { return &upperExpr{operand: o} })
-	registerUnaryStrOp("@lower", func(o Expression) Expression { return &lowerExpr{operand: o} })
-	registerUnaryStrOp("@trim", func(o Expression) Expression { return &trimExpr{operand: o} })
+	registerUnaryStrOp("@upper", func(o Expression) Expression { return &upperExpr{unaryOp{"@upper", o}} })
+	registerUnaryStrOp("@lower", func(o Expression) Expression { return &lowerExpr{unaryOp{"@lower", o}} })
+	registerUnaryStrOp("@trim", func(o Expression) Expression { return &trimExpr{unaryOp{"@trim", o}} })
 
 	MustRegister("@substring", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)
 		if !ok || (len(list) != 2 && len(list) != 3) {
 			return nil, fmt.Errorf("@substring: expected [string, start] or [string, start, length] arguments")
 		}
-		return &substringExpr{args: list}, nil
+		return &substringExpr{variadicOp{"@substring", list}}, nil
 	})
 	MustRegister("@replace", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)
 		if !ok || (len(list) != 3 && len(list) != 4) {
 			return nil, fmt.Errorf("@replace: expected [string, old, new] or [string, old, new, count] arguments")
 		}
-		return &replaceExpr{args: list}, nil
+		return &replaceExpr{variadicOp{"@replace", list}}, nil
 	})
 }

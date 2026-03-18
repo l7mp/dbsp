@@ -93,9 +93,7 @@ func evaluateVariadicNumeric(ctx *expression.EvalContext, args []Expression, opN
 }
 
 // addExpr implements @add.
-type addExpr struct {
-	args []Expression
-}
+type addExpr struct{ variadicOp }
 
 func (e *addExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return evaluateVariadicNumeric(ctx, e.args, "@add",
@@ -104,13 +102,8 @@ func (e *addExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	)
 }
 
-func (e *addExpr) String() string { return fmt.Sprintf("@add(%v)", e.args) }
-
 // subExpr implements @sub.
-type subExpr struct {
-	left  Expression
-	right Expression
-}
+type subExpr struct{ binaryOp }
 
 func (e *subExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return evaluateBinaryNumeric(ctx, e.left, e.right, "@sub",
@@ -119,12 +112,8 @@ func (e *subExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	)
 }
 
-func (e *subExpr) String() string { return fmt.Sprintf("@sub(%v, %v)", e.left, e.right) }
-
 // mulExpr implements @mul.
-type mulExpr struct {
-	args []Expression
-}
+type mulExpr struct{ variadicOp }
 
 func (e *mulExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return evaluateVariadicNumeric(ctx, e.args, "@mul",
@@ -133,13 +122,8 @@ func (e *mulExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	)
 }
 
-func (e *mulExpr) String() string { return fmt.Sprintf("@mul(%v)", e.args) }
-
 // divExpr implements @div.
-type divExpr struct {
-	left  Expression
-	right Expression
-}
+type divExpr struct{ binaryOp }
 
 func (e *divExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	aVal, err := e.left.Evaluate(ctx)
@@ -178,13 +162,8 @@ func (e *divExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *divExpr) String() string { return fmt.Sprintf("@div(%v, %v)", e.left, e.right) }
-
 // modExpr implements @mod (modulo).
-type modExpr struct {
-	left  Expression
-	right Expression
-}
+type modExpr struct{ binaryOp }
 
 func (e *modExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	aVal, err := e.left.Evaluate(ctx)
@@ -216,12 +195,8 @@ func (e *modExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *modExpr) String() string { return fmt.Sprintf("@mod(%v, %v)", e.left, e.right) }
-
 // negExpr implements @neg (unary negation).
-type negExpr struct {
-	operand Expression
-}
+type negExpr struct{ unaryOp }
 
 func (e *negExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -245,50 +220,48 @@ func (e *negExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *negExpr) String() string { return fmt.Sprintf("@neg(%v)", e.operand) }
-
 func init() {
 	MustRegister("@add", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@add: %w", err)
 		}
-		return &addExpr{args: list}, nil
+		return &addExpr{variadicOp{"@add", list}}, nil
 	})
 	MustRegister("@sub", func(args any) (Expression, error) {
 		left, right, err := asBinaryExprs(args, "@sub")
 		if err != nil {
 			return nil, err
 		}
-		return &subExpr{left: left, right: right}, nil
+		return &subExpr{binaryOp{"@sub", left, right}}, nil
 	})
 	MustRegister("@mul", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@mul: %w", err)
 		}
-		return &mulExpr{args: list}, nil
+		return &mulExpr{variadicOp{"@mul", list}}, nil
 	})
 	MustRegister("@div", func(args any) (Expression, error) {
 		left, right, err := asBinaryExprs(args, "@div")
 		if err != nil {
 			return nil, err
 		}
-		return &divExpr{left: left, right: right}, nil
+		return &divExpr{binaryOp{"@div", left, right}}, nil
 	})
 	MustRegister("@mod", func(args any) (Expression, error) {
 		left, right, err := asBinaryExprs(args, "@mod")
 		if err != nil {
 			return nil, err
 		}
-		return &modExpr{left: left, right: right}, nil
+		return &modExpr{binaryOp{"@mod", left, right}}, nil
 	})
 	MustRegister("@neg", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@neg: %w", err)
 		}
-		return &negExpr{operand: operand}, nil
+		return &negExpr{unaryOp{"@neg", operand}}, nil
 	})
 }
 

@@ -7,9 +7,7 @@ import (
 )
 
 // andExpr implements @and with short-circuit evaluation.
-type andExpr struct {
-	args []Expression
-}
+type andExpr struct{ variadicOp }
 
 func (e *andExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if len(e.args) == 0 {
@@ -37,12 +35,8 @@ func (e *andExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return true, nil
 }
 
-func (e *andExpr) String() string { return fmt.Sprintf("@and(%v)", e.args) }
-
 // orExpr implements @or with short-circuit evaluation.
-type orExpr struct {
-	args []Expression
-}
+type orExpr struct{ variadicOp }
 
 func (e *orExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	if len(e.args) == 0 {
@@ -70,12 +64,8 @@ func (e *orExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return false, nil
 }
 
-func (e *orExpr) String() string { return fmt.Sprintf("@or(%v)", e.args) }
-
 // notExpr implements @not.
-type notExpr struct {
-	operand Expression
-}
+type notExpr struct{ unaryOp }
 
 func (e *notExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -93,28 +83,26 @@ func (e *notExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *notExpr) String() string { return fmt.Sprintf("@not(%v)", e.operand) }
-
 func init() {
 	MustRegister("@and", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@and: %w", err)
 		}
-		return &andExpr{args: list}, nil
+		return &andExpr{variadicOp{"@and", list}}, nil
 	})
 	MustRegister("@or", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@or: %w", err)
 		}
-		return &orExpr{args: list}, nil
+		return &orExpr{variadicOp{"@or", list}}, nil
 	})
 	MustRegister("@not", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@not: %w", err)
 		}
-		return &notExpr{operand: operand}, nil
+		return &notExpr{unaryOp{"@not", operand}}, nil
 	})
 }

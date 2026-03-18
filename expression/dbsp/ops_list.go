@@ -8,13 +8,10 @@ import (
 )
 
 // mapExpr implements @map - iterates over a list, evaluating an expression for each element.
-type mapExpr struct {
-	mapFn Expression
-	list  Expression
-}
+type mapExpr struct{ binaryOp }
 
 func (e *mapExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	listValue, err := e.list.Evaluate(ctx)
+	listValue, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@map: failed to evaluate list: %w", err)
 	}
@@ -27,7 +24,7 @@ func (e *mapExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	result := make([]any, len(list))
 	for i, item := range list {
 		itemCtx := ctx.WithSubject(item)
-		v, err := e.mapFn.Evaluate(itemCtx)
+		v, err := e.left.Evaluate(itemCtx)
 		if err != nil {
 			return nil, fmt.Errorf("@map[%d]: %w", i, err)
 		}
@@ -38,16 +35,11 @@ func (e *mapExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *mapExpr) String() string { return fmt.Sprintf("@map(%v, %v)", e.mapFn, e.list) }
-
 // filterExpr implements @filter - filters a list based on a predicate.
-type filterExpr struct {
-	predicate Expression
-	list      Expression
-}
+type filterExpr struct{ binaryOp }
 
 func (e *filterExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	listValue, err := e.list.Evaluate(ctx)
+	listValue, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@filter: failed to evaluate list: %w", err)
 	}
@@ -60,7 +52,7 @@ func (e *filterExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	result := make([]any, 0, len(list))
 	for i, item := range list {
 		itemCtx := ctx.WithSubject(item)
-		v, err := e.predicate.Evaluate(itemCtx)
+		v, err := e.left.Evaluate(itemCtx)
 		if err != nil {
 			return nil, fmt.Errorf("@filter[%d]: %w", i, err)
 		}
@@ -79,14 +71,8 @@ func (e *filterExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *filterExpr) String() string {
-	return fmt.Sprintf("@filter(%v, %v)", e.predicate, e.list)
-}
-
 // sumExpr implements @sum - sums all elements.
-type sumExpr struct {
-	args []Expression
-}
+type sumExpr struct{ variadicOp }
 
 func (e *sumExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	// Evaluate all args.
@@ -136,12 +122,8 @@ func (e *sumExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return sum, nil
 }
 
-func (e *sumExpr) String() string { return fmt.Sprintf("@sum(%v)", e.args) }
-
 // lenExpr implements @len - returns the length of a list or string.
-type lenExpr struct {
-	operand Expression
-}
+type lenExpr struct{ unaryOp }
 
 func (e *lenExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -173,12 +155,8 @@ func (e *lenExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	}
 }
 
-func (e *lenExpr) String() string { return fmt.Sprintf("@len(%v)", e.operand) }
-
 // minExpr implements @min - returns the minimum value in a list.
-type minExpr struct {
-	args []Expression
-}
+type minExpr struct{ variadicOp }
 
 func (e *minExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	list, err := evaluateNumericList(ctx, e.args, "@min")
@@ -221,12 +199,8 @@ func (e *minExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return minVal, nil
 }
 
-func (e *minExpr) String() string { return fmt.Sprintf("@min(%v)", e.args) }
-
 // lexMinExpr implements @lexmin - returns the lexicographically minimal element.
-type lexMinExpr struct {
-	args []Expression
-}
+type lexMinExpr struct{ variadicOp }
 
 func (e *lexMinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	values, err := evaluateLexArgs(ctx, e.args, "@lexmin")
@@ -258,12 +232,8 @@ func (e *lexMinExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return best, nil
 }
 
-func (e *lexMinExpr) String() string { return fmt.Sprintf("@lexmin(%v)", e.args) }
-
 // maxExpr implements @max - returns the maximum value in a list.
-type maxExpr struct {
-	args []Expression
-}
+type maxExpr struct{ variadicOp }
 
 func (e *maxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	list, err := evaluateNumericList(ctx, e.args, "@max")
@@ -306,12 +276,8 @@ func (e *maxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return maxVal, nil
 }
 
-func (e *maxExpr) String() string { return fmt.Sprintf("@max(%v)", e.args) }
-
 // lexMaxExpr implements @lexmax - returns the lexicographically maximal element.
-type lexMaxExpr struct {
-	args []Expression
-}
+type lexMaxExpr struct{ variadicOp }
 
 func (e *lexMaxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	values, err := evaluateLexArgs(ctx, e.args, "@lexmax")
@@ -343,21 +309,16 @@ func (e *lexMaxExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return best, nil
 }
 
-func (e *lexMaxExpr) String() string { return fmt.Sprintf("@lexmax(%v)", e.args) }
-
 // inExpr implements @in - checks if an element is in a list.
-type inExpr struct {
-	element Expression
-	list    Expression
-}
+type inExpr struct{ binaryOp }
 
 func (e *inExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	elemVal, err := e.element.Evaluate(ctx)
+	elemVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@in: element: %w", err)
 	}
 
-	listVal, err := e.list.Evaluate(ctx)
+	listVal, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@in: list: %w", err)
 	}
@@ -378,12 +339,8 @@ func (e *inExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return false, nil
 }
 
-func (e *inExpr) String() string { return fmt.Sprintf("@in(%v, %v)", e.element, e.list) }
-
 // rangeExpr implements @range - creates a range of integers [1..n].
-type rangeExpr struct {
-	operand Expression
-}
+type rangeExpr struct{ unaryOp }
 
 func (e *rangeExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -408,8 +365,6 @@ func (e *rangeExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	ctx.Logger().V(8).Info("eval", "op", "@range", "n", n, "result", result)
 	return result, nil
 }
-
-func (e *rangeExpr) String() string { return fmt.Sprintf("@range(%v)", e.operand) }
 
 // evaluateNumericList evaluates a list of expression args and validates they are numeric.
 func evaluateNumericList(ctx *expression.EvalContext, args []Expression, opName string) ([]any, error) {
@@ -470,69 +425,69 @@ func init() {
 		if !ok || len(list) != 2 {
 			return nil, fmt.Errorf("@map: expected [expression, list] arguments")
 		}
-		return &mapExpr{mapFn: list[0], list: list[1]}, nil
+		return &mapExpr{binaryOp{"@map", list[0], list[1]}}, nil
 	})
 	MustRegister("@filter", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)
 		if !ok || len(list) != 2 {
 			return nil, fmt.Errorf("@filter: expected [predicate, list] arguments")
 		}
-		return &filterExpr{predicate: list[0], list: list[1]}, nil
+		return &filterExpr{binaryOp{"@filter", list[0], list[1]}}, nil
 	})
 	MustRegister("@sum", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@sum: %w", err)
 		}
-		return &sumExpr{args: list}, nil
+		return &sumExpr{variadicOp{"@sum", list}}, nil
 	})
 	MustRegister("@len", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@len: %w", err)
 		}
-		return &lenExpr{operand: operand}, nil
+		return &lenExpr{unaryOp{"@len", operand}}, nil
 	})
 	MustRegister("@min", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@min: %w", err)
 		}
-		return &minExpr{args: list}, nil
+		return &minExpr{variadicOp{"@min", list}}, nil
 	})
 	MustRegister("@max", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@max: %w", err)
 		}
-		return &maxExpr{args: list}, nil
+		return &maxExpr{variadicOp{"@max", list}}, nil
 	})
 	MustRegister("@lexmin", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@lexmin: %w", err)
 		}
-		return &lexMinExpr{args: list}, nil
+		return &lexMinExpr{variadicOp{"@lexmin", list}}, nil
 	})
 	MustRegister("@lexmax", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@lexmax: %w", err)
 		}
-		return &lexMaxExpr{args: list}, nil
+		return &lexMaxExpr{variadicOp{"@lexmax", list}}, nil
 	})
 	MustRegister("@in", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)
 		if !ok || len(list) != 2 {
 			return nil, fmt.Errorf("@in: expected [element, list] arguments")
 		}
-		return &inExpr{element: list[0], list: list[1]}, nil
+		return &inExpr{binaryOp{"@in", list[0], list[1]}}, nil
 	})
 	MustRegister("@range", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@range: %w", err)
 		}
-		return &rangeExpr{operand: operand}, nil
+		return &rangeExpr{unaryOp{"@range", operand}}, nil
 	})
 }

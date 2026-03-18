@@ -7,9 +7,7 @@ import (
 )
 
 // isNullExpr implements @isnull.
-type isNullExpr struct {
-	operand Expression
-}
+type isNullExpr struct{ unaryOp }
 
 func (e *isNullExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -22,14 +20,12 @@ func (e *isNullExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *isNullExpr) String() string { return fmt.Sprintf("@isnull(%v)", e.operand) }
-
 func init() {
 	MustRegister("@isnull", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@isnull: %w", err)
 		}
-		return &isNullExpr{operand: operand}, nil
+		return &isNullExpr{unaryOp{"@isnull", operand}}, nil
 	})
 }

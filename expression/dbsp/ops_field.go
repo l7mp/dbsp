@@ -37,13 +37,10 @@ func (e *getExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *getExpr) String() string { return fmt.Sprintf("@get(%v)", e.field) }
 
 // setExpr implements @set - sets a field on the document (mutates in-place).
-type setExpr struct {
-	field Expression
-	value Expression
-}
+type setExpr struct{ binaryOp }
 
 func (e *setExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	fieldPathVal, err := e.field.Evaluate(ctx)
+	fieldPathVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@set: field path: %w", err)
 	}
@@ -52,7 +49,7 @@ func (e *setExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@set: field path must be string: %w", err)
 	}
 
-	value, err := e.value.Evaluate(ctx)
+	value, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@set: value: %w", err)
 	}
@@ -69,8 +66,6 @@ func (e *setExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	ctx.Logger().V(8).Info("eval", "op", "@set", "field", fieldPath, "value", value)
 	return doc, nil
 }
-
-func (e *setExpr) String() string { return fmt.Sprintf("@set(%v, %v)", e.field, e.value) }
 
 // getSubExpr implements @getsub - retrieves a field from the subject.
 type getSubExpr struct {
@@ -114,13 +109,10 @@ func (e *getSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 func (e *getSubExpr) String() string { return fmt.Sprintf("@getsub(%v)", e.field) }
 
 // setSubExpr implements @setsub - sets a field on the subject (mutates in-place).
-type setSubExpr struct {
-	field Expression
-	value Expression
-}
+type setSubExpr struct{ binaryOp }
 
 func (e *setSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	fieldPathVal, err := e.field.Evaluate(ctx)
+	fieldPathVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@setsub: field path: %w", err)
 	}
@@ -129,7 +121,7 @@ func (e *setSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@setsub: field path must be string: %w", err)
 	}
 
-	value, err := e.value.Evaluate(ctx)
+	value, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@setsub: value: %w", err)
 	}
@@ -156,17 +148,11 @@ func (e *setSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return nil, fmt.Errorf("@setsub: subject is not a document or map: %T", subject)
 }
 
-func (e *setSubExpr) String() string {
-	return fmt.Sprintf("@setsub(%v, %v)", e.field, e.value)
-}
-
 // existsExpr implements @exists - checks if a field exists in the document.
-type existsExpr struct {
-	field Expression
-}
+type existsExpr struct{ unaryOp }
 
 func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	fieldPath, err := evaluateFieldPath(ctx, e.field, "@exists")
+	fieldPath, err := evaluateFieldPath(ctx, e.operand, "@exists")
 	if err != nil {
 		return nil, err
 	}
@@ -182,8 +168,6 @@ func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	ctx.Logger().V(8).Info("eval", "op", "@exists", "field", fieldPath, "result", exists)
 	return exists, nil
 }
-
-func (e *existsExpr) String() string { return fmt.Sprintf("@exists(%v)", e.field) }
 
 // evaluateFieldPath evaluates a field path from an operand expression.
 func evaluateFieldPath(ctx *expression.EvalContext, field Expression, opName string) (string, error) {
@@ -211,7 +195,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		return &setExpr{field: left, value: right}, nil
+		return &setExpr{binaryOp{"@set", left, right}}, nil
 	})
 	MustRegister("@getsub", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
@@ -225,13 +209,13 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		return &setSubExpr{field: left, value: right}, nil
+		return &setSubExpr{binaryOp{"@setsub", left, right}}, nil
 	})
 	MustRegister("@exists", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@exists: %w", err)
 		}
-		return &existsExpr{field: operand}, nil
+		return &existsExpr{unaryOp{"@exists", operand}}, nil
 	})
 }

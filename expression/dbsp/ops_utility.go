@@ -11,17 +11,15 @@ import (
 )
 
 // noopExpr implements @noop - returns nil.
-type noopExpr struct{}
+type noopExpr struct{ nullaryOp }
 
 func (e *noopExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	ctx.Logger().V(8).Info("eval", "op", "@noop")
 	return nil, nil
 }
 
-func (e *noopExpr) String() string { return "@noop" }
-
 // argExpr implements @arg - returns the current subject from context.
-type argExpr struct{}
+type argExpr struct{ nullaryOp }
 
 func (e *argExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	subject := ctx.Subject()
@@ -29,12 +27,8 @@ func (e *argExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return subject, nil
 }
 
-func (e *argExpr) String() string { return "@arg" }
-
 // hashExpr implements @hash - creates a deterministic hash of the argument.
-type hashExpr struct {
-	operand Expression
-}
+type hashExpr struct{ unaryOp }
 
 func (e *hashExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -54,21 +48,16 @@ func (e *hashExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *hashExpr) String() string { return fmt.Sprintf("@hash(%v)", e.operand) }
-
 // rndExpr implements @rnd - returns a random number in [min, max].
-type rndExpr struct {
-	min Expression
-	max Expression
-}
+type rndExpr struct{ binaryOp }
 
 func (e *rndExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	minVal, err := e.min.Evaluate(ctx)
+	minVal, err := e.left.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@rnd: min: %w", err)
 	}
 
-	maxVal, err := e.max.Evaluate(ctx)
+	maxVal, err := e.right.Evaluate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("@rnd: max: %w", err)
 	}
@@ -101,12 +90,8 @@ func (e *rndExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *rndExpr) String() string { return fmt.Sprintf("@rnd(%v, %v)", e.min, e.max) }
-
 // concatExpr implements @concat - concatenates strings.
-type concatExpr struct {
-	args []Expression
-}
+type concatExpr struct{ variadicOp }
 
 func (e *concatExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	var result string
@@ -126,12 +111,8 @@ func (e *concatExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *concatExpr) String() string { return fmt.Sprintf("@concat(%v)", e.args) }
-
 // absExpr implements @abs - returns the absolute value.
-type absExpr struct {
-	operand Expression
-}
+type absExpr struct{ unaryOp }
 
 func (e *absExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -186,12 +167,8 @@ func (e *absExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return f, nil
 }
 
-func (e *absExpr) String() string { return fmt.Sprintf("@abs(%v)", e.operand) }
-
 // floorExpr implements @floor - rounds down to nearest integer.
-type floorExpr struct {
-	operand Expression
-}
+type floorExpr struct{ unaryOp }
 
 func (e *floorExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -212,12 +189,8 @@ func (e *floorExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *floorExpr) String() string { return fmt.Sprintf("@floor(%v)", e.operand) }
-
 // ceilExpr implements @ceil - rounds up to nearest integer.
-type ceilExpr struct {
-	operand Expression
-}
+type ceilExpr struct{ unaryOp }
 
 func (e *ceilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -238,12 +211,8 @@ func (e *ceilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *ceilExpr) String() string { return fmt.Sprintf("@ceil(%v)", e.operand) }
-
 // isNilExpr implements @isnil - checks if a value is nil.
-type isNilExpr struct {
-	operand Expression
-}
+type isNilExpr struct{ unaryOp }
 
 func (e *isNilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
@@ -256,62 +225,60 @@ func (e *isNilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *isNilExpr) String() string { return fmt.Sprintf("@isnil(%v)", e.operand) }
-
 func init() {
 	MustRegister("@noop", func(args any) (Expression, error) {
-		return &noopExpr{}, nil
+		return &noopExpr{nullaryOp{"@noop"}}, nil
 	})
 	MustRegister("@arg", func(args any) (Expression, error) {
-		return &argExpr{}, nil
+		return &argExpr{nullaryOp{"@arg"}}, nil
 	})
 	MustRegister("@hash", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@hash: %w", err)
 		}
-		return &hashExpr{operand: operand}, nil
+		return &hashExpr{unaryOp{"@hash", operand}}, nil
 	})
 	MustRegister("@rnd", func(args any) (Expression, error) {
 		left, right, err := asBinaryExprs(args, "@rnd")
 		if err != nil {
 			return nil, err
 		}
-		return &rndExpr{min: left, max: right}, nil
+		return &rndExpr{binaryOp{"@rnd", left, right}}, nil
 	})
 	MustRegister("@concat", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
 		if err != nil {
 			return nil, fmt.Errorf("@concat: %w", err)
 		}
-		return &concatExpr{args: list}, nil
+		return &concatExpr{variadicOp{"@concat", list}}, nil
 	})
 	MustRegister("@abs", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@abs: %w", err)
 		}
-		return &absExpr{operand: operand}, nil
+		return &absExpr{unaryOp{"@abs", operand}}, nil
 	})
 	MustRegister("@floor", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@floor: %w", err)
 		}
-		return &floorExpr{operand: operand}, nil
+		return &floorExpr{unaryOp{"@floor", operand}}, nil
 	})
 	MustRegister("@ceil", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@ceil: %w", err)
 		}
-		return &ceilExpr{operand: operand}, nil
+		return &ceilExpr{unaryOp{"@ceil", operand}}, nil
 	})
 	MustRegister("@isnil", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@isnil: %w", err)
 		}
-		return &isNilExpr{operand: operand}, nil
+		return &isNilExpr{unaryOp{"@isnil", operand}}, nil
 	})
 }

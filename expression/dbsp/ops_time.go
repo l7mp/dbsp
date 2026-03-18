@@ -7,7 +7,7 @@ import (
 )
 
 // nowExpr implements @now - returns the current UTC timestamp.
-type nowExpr struct{}
+type nowExpr struct{ nullaryOp }
 
 func (e *nowExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	result := time.Now().UTC().Format(time.RFC3339)
@@ -15,10 +15,8 @@ func (e *nowExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *nowExpr) String() string { return "@now" }
-
 func init() {
 	MustRegister("@now", func(args any) (Expression, error) {
-		return &nowExpr{}, nil
+		return &nowExpr{nullaryOp{"@now"}}, nil
 	})
 }

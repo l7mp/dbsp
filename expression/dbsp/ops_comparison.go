@@ -8,10 +8,7 @@ import (
 )
 
 // eqExpr implements @eq (equality).
-type eqExpr struct {
-	left  Expression
-	right Expression
-}
+type eqExpr struct{ binaryOp }
 
 func (e *eqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	aVal, err := e.left.Evaluate(ctx)
@@ -29,13 +26,8 @@ func (e *eqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *eqExpr) String() string { return fmt.Sprintf("@eq(%v, %v)", e.left, e.right) }
-
 // neqExpr implements @neq (not equal).
-type neqExpr struct {
-	left  Expression
-	right Expression
-}
+type neqExpr struct{ binaryOp }
 
 func (e *neqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	aVal, err := e.left.Evaluate(ctx)
@@ -53,55 +45,33 @@ func (e *neqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-func (e *neqExpr) String() string { return fmt.Sprintf("@neq(%v, %v)", e.left, e.right) }
-
 // gtExpr implements @gt (greater than).
-type gtExpr struct {
-	left  Expression
-	right Expression
-}
+type gtExpr struct{ binaryOp }
 
 func (e *gtExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return compareNumeric(ctx, e.left, e.right, "@gt", func(cmp int) bool { return cmp > 0 })
 }
 
-func (e *gtExpr) String() string { return fmt.Sprintf("@gt(%v, %v)", e.left, e.right) }
-
 // gteExpr implements @gte (greater than or equal).
-type gteExpr struct {
-	left  Expression
-	right Expression
-}
+type gteExpr struct{ binaryOp }
 
 func (e *gteExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return compareNumeric(ctx, e.left, e.right, "@gte", func(cmp int) bool { return cmp >= 0 })
 }
 
-func (e *gteExpr) String() string { return fmt.Sprintf("@gte(%v, %v)", e.left, e.right) }
-
 // ltExpr implements @lt (less than).
-type ltExpr struct {
-	left  Expression
-	right Expression
-}
+type ltExpr struct{ binaryOp }
 
 func (e *ltExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return compareNumeric(ctx, e.left, e.right, "@lt", func(cmp int) bool { return cmp < 0 })
 }
 
-func (e *ltExpr) String() string { return fmt.Sprintf("@lt(%v, %v)", e.left, e.right) }
-
 // lteExpr implements @lte (less than or equal).
-type lteExpr struct {
-	left  Expression
-	right Expression
-}
+type lteExpr struct{ binaryOp }
 
 func (e *lteExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return compareNumeric(ctx, e.left, e.right, "@lte", func(cmp int) bool { return cmp <= 0 })
 }
-
-func (e *lteExpr) String() string { return fmt.Sprintf("@lte(%v, %v)", e.left, e.right) }
 
 // compareNumeric compares two numeric values.
 func compareNumeric(ctx *expression.EvalContext, left, right Expression, opName string, cmpFn func(int) bool) (any, error) {
@@ -201,10 +171,10 @@ func init() {
 			return factory(left, right), nil
 		})
 	}
-	registerBinaryOp("@eq", func(l, r Expression) Expression { return &eqExpr{left: l, right: r} })
-	registerBinaryOp("@neq", func(l, r Expression) Expression { return &neqExpr{left: l, right: r} })
-	registerBinaryOp("@gt", func(l, r Expression) Expression { return &gtExpr{left: l, right: r} })
-	registerBinaryOp("@gte", func(l, r Expression) Expression { return &gteExpr{left: l, right: r} })
-	registerBinaryOp("@lt", func(l, r Expression) Expression { return &ltExpr{left: l, right: r} })
-	registerBinaryOp("@lte", func(l, r Expression) Expression { return &lteExpr{left: l, right: r} })
+	registerBinaryOp("@eq", func(l, r Expression) Expression { return &eqExpr{binaryOp{"@eq", l, r}} })
+	registerBinaryOp("@neq", func(l, r Expression) Expression { return &neqExpr{binaryOp{"@neq", l, r}} })
+	registerBinaryOp("@gt", func(l, r Expression) Expression { return &gtExpr{binaryOp{"@gt", l, r}} })
+	registerBinaryOp("@gte", func(l, r Expression) Expression { return &gteExpr{binaryOp{"@gte", l, r}} })
+	registerBinaryOp("@lt", func(l, r Expression) Expression { return &ltExpr{binaryOp{"@lt", l, r}} })
+	registerBinaryOp("@lte", func(l, r Expression) Expression { return &lteExpr{binaryOp{"@lte", l, r}} })
 }
