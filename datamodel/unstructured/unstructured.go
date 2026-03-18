@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ohler55/ojg/jp"
+
 	"github.com/l7mp/dbsp/datamodel"
 )
 
@@ -99,6 +101,21 @@ func (u *Unstructured) New() datamodel.Document {
 // GetField returns the value for a (possibly dotted) field path.
 // It returns datamodel.ErrFieldNotFound when the field does not exist.
 func (u *Unstructured) GetField(key string) (any, error) {
+	if strings.HasPrefix(key, "$") {
+		expr, err := jp.ParseString(key)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSONPath %q: %w", key, err)
+		}
+		results := expr.Get(u.fields)
+		if len(results) == 0 {
+			return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
+		}
+		if len(results) == 1 {
+			return results[0], nil
+		}
+		return results, nil
+	}
+
 	parts := strings.SplitN(key, ".", 2)
 	v, ok := u.fields[parts[0]]
 	if !ok {
@@ -116,8 +133,29 @@ func (u *Unstructured) GetField(key string) (any, error) {
 	return sub.GetField(parts[1])
 }
 
-// SetField sets the value for a top-level field name.
+// SetField sets the value for a top-level field name, dotted path, or JSONPath.
 func (u *Unstructured) SetField(key string, value any) error {
+	if strings.HasPrefix(key, "$") {
+		expr, err := jp.ParseString(key)
+		if err != nil {
+			return fmt.Errorf("invalid JSONPath %q: %w", key, err)
+		}
+		if err := expr.Set(u.fields, value); err != nil {
+			return fmt.Errorf("set JSONPath %q: %w", key, err)
+		}
+		return nil
+	}
+
+	if strings.Contains(key, ".") {
+		parts := strings.SplitN(key, ".", 2)
+		next, ok := u.fields[parts[0]].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			u.fields[parts[0]] = next
+		}
+		return (&Unstructured{fields: next}).SetField(parts[1], value)
+	}
+
 	u.fields[key] = value
 	return nil
 }
