@@ -3,103 +3,80 @@ package misc
 import (
 	"context"
 	"sync"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
 )
 
-func TestOneShotProducerEmitsExactlyOnce(t *testing.T) {
-	p, err := NewOneShotProducer(OneShotConfig{
-		InputName:  "in",
-		TriggerGVK: schema.GroupVersionKind{Group: "test.io", Version: "v1", Kind: "OneShotTrigger"},
-	})
-	if err != nil {
-		t.Fatalf("NewOneShotProducer failed: %v", err)
-	}
+var _ = Describe("Virtual source producers", func() {
+	It("emits exactly one event for one-shot producer", func() {
+		p, err := NewOneShotProducer(OneShotConfig{
+			InputName:  "in",
+			TriggerGVK: schema.GroupVersionKind{Group: "test.io", Version: "v1", Kind: "OneShotTrigger"},
+		})
+		Expect(err).NotTo(HaveOccurred())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	var mu sync.Mutex
-	count := 0
-	p.SetInputHandler(func(_ context.Context, in dbspruntime.Input) error {
-		mu.Lock()
-		defer mu.Unlock()
-		if in.Name != "in" {
-			t.Fatalf("unexpected input name: %s", in.Name)
-		}
-		count++
-		return nil
-	})
+		var mu sync.Mutex
+		count := 0
+		p.SetInputHandler(func(_ context.Context, in dbspruntime.Input) error {
+			mu.Lock()
+			defer mu.Unlock()
+			Expect(in.Name).To(Equal("in"))
+			count++
+			return nil
+		})
 
-	done := make(chan error, 1)
-	go func() { done <- p.Start(ctx) }()
+		done := make(chan error, 1)
+		go func() { done <- p.Start(ctx) }()
 
-	time.Sleep(40 * time.Millisecond)
-	mu.Lock()
-	got := count
-	mu.Unlock()
-	if got != 1 {
-		t.Fatalf("expected exactly one event, got %d", got)
-	}
+		Eventually(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return count
+		}, time.Second, 10*time.Millisecond).Should(Equal(1))
 
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("producer exited with error: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("producer did not stop")
-	}
-}
-
-func TestPeriodicProducerEmitsRepeatedly(t *testing.T) {
-	p, err := NewPeriodicProducer(PeriodicConfig{
-		InputName:  "in",
-		TriggerGVK: schema.GroupVersionKind{Group: "test.io", Version: "v1", Kind: "PeriodicTrigger"},
-		Period:     20 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatalf("NewPeriodicProducer failed: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var mu sync.Mutex
-	count := 0
-	p.SetInputHandler(func(_ context.Context, in dbspruntime.Input) error {
-		mu.Lock()
-		defer mu.Unlock()
-		if in.Name != "in" {
-			t.Fatalf("unexpected input name: %s", in.Name)
-		}
-		count++
-		return nil
+		cancel()
+		Eventually(done, time.Second).Should(Receive(BeNil()))
 	})
 
-	done := make(chan error, 1)
-	go func() { done <- p.Start(ctx) }()
+	It("emits repeated events for periodic producer", func() {
+		p, err := NewPeriodicProducer(PeriodicConfig{
+			InputName:  "in",
+			TriggerGVK: schema.GroupVersionKind{Group: "test.io", Version: "v1", Kind: "PeriodicTrigger"},
+			Period:     20 * time.Millisecond,
+		})
+		Expect(err).NotTo(HaveOccurred())
 
-	time.Sleep(90 * time.Millisecond)
-	mu.Lock()
-	got := count
-	mu.Unlock()
-	if got < 3 {
-		t.Fatalf("expected at least 3 periodic events, got %d", got)
-	}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("producer exited with error: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("producer did not stop")
-	}
-}
+		var mu sync.Mutex
+		count := 0
+		p.SetInputHandler(func(_ context.Context, in dbspruntime.Input) error {
+			mu.Lock()
+			defer mu.Unlock()
+			Expect(in.Name).To(Equal("in"))
+			count++
+			return nil
+		})
+
+		done := make(chan error, 1)
+		go func() { done <- p.Start(ctx) }()
+
+		Eventually(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return count
+		}, time.Second, 10*time.Millisecond).Should(BeNumerically(">=", 3))
+
+		cancel()
+		Eventually(done, time.Second).Should(Receive(BeNil()))
+	})
+})

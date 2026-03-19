@@ -3,7 +3,6 @@ package runtime_test
 import (
 	"context"
 	"errors"
-	"testing"
 	"time"
 
 	"github.com/l7mp/dbsp/connectors/misc"
@@ -12,225 +11,158 @@ import (
 	"github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
 	"github.com/l7mp/dbsp/dbsp/runtime"
 	"github.com/l7mp/dbsp/dbsp/zset"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestRuntimeRequiresCircuit(t *testing.T) {
-	t.Parallel()
-
-	r := runtime.NewRuntime(runtime.Config{})
-	err := r.Start(context.Background())
-	if !errors.Is(err, runtime.ErrRuntimeMissingCircuit) {
-		t.Fatalf("Start() error = %v, want ErrRuntimeMissingCircuit", err)
-	}
-}
-
-func TestRuntimeAddOnlyOnce(t *testing.T) {
-	t.Parallel()
-
-	c1 := mustNewCircuit(t)
-	c2 := mustNewCircuit(t)
-	r := runtime.NewRuntime(runtime.Config{})
-
-	if err := r.Add(c1); err != nil {
-		t.Fatalf("Add(first) error = %v", err)
-	}
-	if err := r.Add(c2); err != nil {
-		t.Fatalf("Add(second) error = %v", err)
-	}
-}
-
-func TestRuntimeProducerTriggersCircuitInProducerContext(t *testing.T) {
-	t.Parallel()
-
-	c := mustNewCircuit(t)
-	p := &scriptedProducer{}
-	consumer := newCollectingConsumer()
-
-	r := runtime.NewRuntime(runtime.Config{
-		Circuit:   c,
-		Producers: []runtime.Producer{p},
-		Consumers: []runtime.Consumer{consumer},
+var _ = Describe("Runtime", func() {
+	It("requires at least one circuit", func() {
+		r := runtime.NewRuntime(runtime.Config{})
+		err := r.Start(context.Background())
+		Expect(errors.Is(err, runtime.ErrRuntimeMissingCircuit)).To(BeTrue())
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() { errCh <- r.Start(ctx) }()
+	It("accepts multiple circuits via Add", func() {
+		c1 := mustNewCircuit()
+		c2 := mustNewCircuit()
+		r := runtime.NewRuntime(runtime.Config{})
 
-	out := waitCollectedRuntimeOutput(t, consumer.collected)
-	if out.Name != "output" {
-		t.Fatalf("output name = %q, want output", out.Name)
-	}
-
-	want := zset.New()
-	want.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
-	if !out.Data.Equal(want) {
-		t.Fatal("output payload mismatch")
-	}
-
-	if p.triggerGID == 0 || consumer.consumeGID == 0 {
-		t.Fatalf("expected trace values to be captured")
-	}
-	if p.triggerGID != consumer.consumeGID {
-		t.Fatalf("producer trace (%d) != consume trace (%d)", p.triggerGID, consumer.consumeGID)
-	}
-
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Start() error = %v, want nil", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for runtime shutdown")
-	}
-}
-
-func TestRuntimePropagatesConsumerError(t *testing.T) {
-	t.Parallel()
-
-	c := mustNewCircuit(t)
-	p := &scriptedProducer{}
-	consumer := &failingConsumer{err: errors.New("boom")}
-
-	r := runtime.NewRuntime(runtime.Config{
-		Circuit:   c,
-		Producers: []runtime.Producer{p},
-		Consumers: []runtime.Consumer{consumer},
+		Expect(r.Add(c1)).To(Succeed())
+		Expect(r.Add(c2)).To(Succeed())
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	It("runs consumer in producer-triggered context", func() {
+		c := mustNewCircuit()
+		p := &scriptedProducer{}
+		consumer := newCollectingConsumer()
 
-	err := r.Start(ctx)
-	if err == nil {
-		t.Fatal("Start() error = nil, want non-nil")
-	}
-	if !errors.Is(err, consumer.err) {
-		t.Fatalf("Start() error = %v, want wrapped consumer error", err)
-	}
-}
+		r := runtime.NewRuntime(runtime.Config{
+			Circuit:   c,
+			Producers: []runtime.Producer{p},
+			Consumers: []runtime.Consumer{consumer},
+		})
 
-func TestRuntimeSumsOutputsFromMultipleCircuits(t *testing.T) {
-	t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() { errCh <- r.Start(ctx) }()
 
-	c1 := mustNewCircuit(t)
-	c2 := mustNewCircuit(t)
-	p := &scriptedProducer{}
-	consumer := newCollectingConsumer()
-
-	r := runtime.NewRuntime(runtime.Config{
-		Circuits:  []*runtime.Circuit{c1, c2},
-		Producers: []runtime.Producer{p},
-		Consumers: []runtime.Consumer{consumer},
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() { errCh <- r.Start(ctx) }()
-
-	out := waitCollectedRuntimeOutput(t, consumer.collected)
-	want := zset.New()
-	want.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 2)
-	if !out.Data.Equal(want) {
-		t.Fatal("aggregated output payload mismatch")
-	}
-
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Start() error = %v, want nil", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for runtime shutdown")
-	}
-}
-
-func TestRuntimeEndToEndWithPipeConnectors(t *testing.T) {
-	t.Parallel()
-
-	c := mustNewCircuit(t)
-	in := make(chan runtime.Input, 1)
-	out := make(chan runtime.Output, 1)
-
-	p := misc.NewPipeProducer(in)
-	consumer := misc.NewPipeConsumer(out)
-
-	r := runtime.NewRuntime(runtime.Config{
-		Circuit:   c,
-		Producers: []runtime.Producer{p},
-		Consumers: []runtime.Consumer{consumer},
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() { errCh <- r.Start(ctx) }()
-
-	delta := zset.New()
-	delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
-	in <- runtime.Input{Name: "Pod", Data: delta}
-
-	select {
-	case got := <-out:
-		if got.Name != "output" {
-			t.Fatalf("output name = %q, want output", got.Name)
-		}
+		out := waitCollectedRuntimeOutput(consumer.collected)
+		Expect(out.Name).To(Equal("output"))
 
 		want := zset.New()
 		want.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
-		if !got.Data.Equal(want) {
-			t.Fatal("output payload mismatch")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for runtime output")
-	}
+		Expect(out.Data.Equal(want)).To(BeTrue())
 
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Start() error = %v, want nil", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for runtime shutdown")
-	}
-}
+		Expect(p.triggerGID).NotTo(BeZero())
+		Expect(consumer.consumeGID).NotTo(BeZero())
+		Expect(p.triggerGID).To(Equal(consumer.consumeGID))
 
-func mustNewCircuit(t *testing.T) *runtime.Circuit {
-	t.Helper()
+		cancel()
+		Eventually(errCh, 2*time.Second).Should(Receive(BeNil()))
+	})
 
-	q := mustCompileRuntimeQuery(t)
+	It("propagates consumer errors", func() {
+		c := mustNewCircuit()
+		p := &scriptedProducer{}
+		consumer := &failingConsumer{err: errors.New("boom")}
+
+		r := runtime.NewRuntime(runtime.Config{
+			Circuit:   c,
+			Producers: []runtime.Producer{p},
+			Consumers: []runtime.Consumer{consumer},
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		err := r.Start(ctx)
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, consumer.err)).To(BeTrue())
+	})
+
+	It("sums outputs from multiple circuits", func() {
+		c1 := mustNewCircuit()
+		c2 := mustNewCircuit()
+		p := &scriptedProducer{}
+		consumer := newCollectingConsumer()
+
+		r := runtime.NewRuntime(runtime.Config{
+			Circuits:  []*runtime.Circuit{c1, c2},
+			Producers: []runtime.Producer{p},
+			Consumers: []runtime.Consumer{consumer},
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() { errCh <- r.Start(ctx) }()
+
+		out := waitCollectedRuntimeOutput(consumer.collected)
+		want := zset.New()
+		want.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 2)
+		Expect(out.Data.Equal(want)).To(BeTrue())
+
+		cancel()
+		Eventually(errCh, 2*time.Second).Should(Receive(BeNil()))
+	})
+
+	It("supports end-to-end pipe producer and consumer", func() {
+		c := mustNewCircuit()
+		in := make(chan runtime.Input, 1)
+		out := make(chan runtime.Output, 1)
+
+		p := misc.NewPipeProducer(in)
+		consumer := misc.NewPipeConsumer(out)
+
+		r := runtime.NewRuntime(runtime.Config{
+			Circuit:   c,
+			Producers: []runtime.Producer{p},
+			Consumers: []runtime.Consumer{consumer},
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() { errCh <- r.Start(ctx) }()
+
+		delta := zset.New()
+		delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
+		in <- runtime.Input{Name: "Pod", Data: delta}
+
+		var got runtime.Output
+		Eventually(out, 2*time.Second).Should(Receive(&got))
+		Expect(got.Name).To(Equal("output"))
+
+		want := zset.New()
+		want.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
+		Expect(got.Data.Equal(want)).To(BeTrue())
+
+		cancel()
+		Eventually(errCh, 2*time.Second).Should(Receive(BeNil()))
+	})
+})
+
+func mustNewCircuit() *runtime.Circuit {
+	q := mustCompileRuntimeQuery()
 	c, err := runtime.NewCircuit(runtime.CircuitConfig{
 		Circuit:     q.Circuit,
 		InputMap:    q.InputMap,
 		OutputMap:   q.OutputMap,
 		Incremental: true,
 	})
-	if err != nil {
-		t.Fatalf("NewCircuit() error = %v", err)
-	}
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return c
 }
 
-func mustCompileRuntimeQuery(t *testing.T) *compiler.Query {
-	t.Helper()
+func mustCompileRuntimeQuery() *compiler.Query {
 	c := aggregation.New([]string{"Pod"}, []string{"output"})
 	q, err := c.CompileString(`[{"@project":{"$.":"$."}}]`)
-	if err != nil {
-		t.Fatalf("CompileString() error = %v", err)
-	}
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return q
 }
 
-func waitCollectedRuntimeOutput(t *testing.T, ch <-chan runtime.Output) runtime.Output {
-	t.Helper()
-	select {
-	case out := <-ch:
-		return out
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for runtime output")
-		return runtime.Output{}
-	}
+func waitCollectedRuntimeOutput(ch <-chan runtime.Output) runtime.Output {
+	var out runtime.Output
+	EventuallyWithOffset(1, ch, 2*time.Second).Should(Receive(&out))
+	return out
 }
 
 type scriptedProducer struct {

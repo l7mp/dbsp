@@ -2,19 +2,21 @@ package runtime_test
 
 import (
 	"context"
-	"testing"
 
 	"github.com/l7mp/dbsp/dbsp/runtime"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestInterfacesCompile(t *testing.T) {
-	t.Parallel()
-
-	var _ runtime.Runnable = (*fakeRunnable)(nil)
-	var _ runtime.Producer = (*fakeProducer)(nil)
-	var _ runtime.Consumer = (*fakeConsumer)(nil)
-	var _ runtime.Manager = (*fakeManager)(nil)
-}
+var _ = Describe("Runtime interfaces", func() {
+	It("compile with fake implementations", func() {
+		var _ runtime.Runnable = (*fakeRunnable)(nil)
+		var _ runtime.Producer = (*fakeProducer)(nil)
+		var _ runtime.Consumer = (*fakeConsumer)(nil)
+		var _ runtime.Manager = (*fakeManager)(nil)
+		Expect(true).To(BeTrue())
+	})
+})
 
 type fakeRunnable struct{}
 

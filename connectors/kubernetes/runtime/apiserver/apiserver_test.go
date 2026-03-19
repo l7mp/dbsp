@@ -3,184 +3,130 @@ package apiserver
 import (
 	"context"
 	"fmt"
-	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	"github.com/l7mp/connectors/kubernetes/runtime/store"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
-
-	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
-	"github.com/l7mp/connectors/kubernetes/runtime/store"
 )
 
-func TestAPIServerStartAndDiscovery(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+var _ = Describe("API server", func() {
+	It("starts and serves discovery", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		DeferCleanup(cancel)
 
-	api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
-	if err != nil {
-		t.Fatalf("new api: %v", err)
-	}
+		api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
+		Expect(err).NotTo(HaveOccurred())
 
-	config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
-	if err != nil {
-		t.Fatalf("new config: %v", err)
-	}
-	config.DiscoveryClient = api.GetDiscovery()
-	config.EnableOpenAPI = false
+		config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		config.DiscoveryClient = api.GetDiscovery()
+		config.EnableOpenAPI = false
 
-	s, err := NewAPIServer(config)
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
+		s, err := NewAPIServer(config)
+		Expect(err).NotTo(HaveOccurred())
 
-	gvk := viewv1a1.GroupVersionKind("test", "TestView")
-	if err := s.RegisterGVKs([]schema.GroupVersionKind{gvk}); err != nil {
-		t.Fatalf("register gvks: %v", err)
-	}
+		gvk := viewv1a1.GroupVersionKind("test", "TestView")
+		Expect(s.RegisterGVKs([]schema.GroupVersionKind{gvk})).To(Succeed())
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- s.Start(ctx) }()
+		errCh := make(chan error, 1)
+		go func() { errCh <- s.Start(ctx) }()
 
-	if !waitUntil(2*time.Second, 20*time.Millisecond, func() bool { return s.running }) {
-		t.Fatalf("server did not become running")
-	}
+		Eventually(func() bool { return s.running }, 2*time.Second, 20*time.Millisecond).Should(BeTrue())
 
-	addr := s.GetInsecureServerAddress()
-	if addr == "<unknown>" || addr == "" {
-		t.Fatalf("invalid insecure address: %q", addr)
-	}
+		addr := s.GetInsecureServerAddress()
+		Expect(addr).NotTo(BeEmpty())
+		Expect(addr).NotTo(Equal("<unknown>"))
 
-	dc, err := discovery.NewDiscoveryClientForConfig(&rest.Config{Host: fmt.Sprintf("http://%s", addr)})
-	if err != nil {
-		t.Fatalf("new discovery client: %v", err)
-	}
+		dc, err := discovery.NewDiscoveryClientForConfig(&rest.Config{Host: fmt.Sprintf("http://%s", addr)})
+		Expect(err).NotTo(HaveOccurred())
 
-	if !waitUntil(2*time.Second, 50*time.Millisecond, func() bool {
-		groups, resources, err := dc.ServerGroupsAndResources()
-		if err != nil || len(groups) == 0 {
-			return false
-		}
-		for _, g := range groups {
-			if g.Name != viewv1a1.Group("test") {
-				continue
+		Eventually(func() bool {
+			groups, resources, err := dc.ServerGroupsAndResources()
+			if err != nil || len(groups) == 0 {
+				return false
 			}
-			for _, rl := range resources {
-				if rl.GroupVersion != gvk.GroupVersion().String() {
+			for _, g := range groups {
+				if g.Name != viewv1a1.Group("test") {
 					continue
 				}
-				for _, r := range rl.APIResources {
-					if r.Kind == gvk.Kind {
-						return true
+				for _, rl := range resources {
+					if rl.GroupVersion != gvk.GroupVersion().String() {
+						continue
+					}
+					for _, r := range rl.APIResources {
+						if r.Kind == gvk.Kind {
+							return true
+						}
 					}
 				}
 			}
-		}
-		return false
-	}) {
-		t.Fatalf("registered GVK not discoverable")
-	}
+			return false
+		}, 2*time.Second, 50*time.Millisecond).Should(BeTrue())
 
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("server exit error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("server did not stop")
-	}
-}
+		cancel()
+		Eventually(errCh, 2*time.Second).Should(Receive(BeNil()))
+	})
 
-func TestRegisterAndUnregisterGVKs(t *testing.T) {
-	api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
-	if err != nil {
-		t.Fatalf("new api: %v", err)
-	}
+	It("registers and unregisters GVKs", func() {
+		api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
+		Expect(err).NotTo(HaveOccurred())
 
-	config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
-	if err != nil {
-		t.Fatalf("new config: %v", err)
-	}
-	config.DiscoveryClient = api.GetDiscovery()
-	config.EnableOpenAPI = false
+		config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		config.DiscoveryClient = api.GetDiscovery()
+		config.EnableOpenAPI = false
 
-	s, err := NewAPIServer(config)
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
+		s, err := NewAPIServer(config)
+		Expect(err).NotTo(HaveOccurred())
 
-	g1 := viewv1a1.GroupVersionKind("g1", "View1")
-	g2 := viewv1a1.GroupVersionKind("g2", "View2")
+		g1 := viewv1a1.GroupVersionKind("g1", "View1")
+		g2 := viewv1a1.GroupVersionKind("g2", "View2")
 
-	if err := s.RegisterGVKs([]schema.GroupVersionKind{g1, g2}); err != nil {
-		t.Fatalf("register gvks: %v", err)
-	}
+		Expect(s.RegisterGVKs([]schema.GroupVersionKind{g1, g2})).To(Succeed())
 
-	s.mu.RLock()
-	if _, ok := s.groupGVKs[g1.Group]; !ok {
-		t.Fatalf("group %s not registered", g1.Group)
-	}
-	if _, ok := s.groupGVKs[g2.Group]; !ok {
-		t.Fatalf("group %s not registered", g2.Group)
-	}
-	s.mu.RUnlock()
+		s.mu.RLock()
+		_, ok1 := s.groupGVKs[g1.Group]
+		_, ok2 := s.groupGVKs[g2.Group]
+		s.mu.RUnlock()
+		Expect(ok1).To(BeTrue())
+		Expect(ok2).To(BeTrue())
 
-	s.UnregisterGVKs([]schema.GroupVersionKind{g1, g2})
+		s.UnregisterGVKs([]schema.GroupVersionKind{g1, g2})
 
-	s.mu.RLock()
-	_, ok1 := s.groupGVKs[g1.Group]
-	_, ok2 := s.groupGVKs[g2.Group]
-	s.mu.RUnlock()
-	if ok1 || ok2 {
-		t.Fatalf("expected groups unregistered, got ok1=%v ok2=%v", ok1, ok2)
-	}
-}
+		s.mu.RLock()
+		_, ok1 = s.groupGVKs[g1.Group]
+		_, ok2 = s.groupGVKs[g2.Group]
+		s.mu.RUnlock()
+		Expect(ok1).To(BeFalse())
+		Expect(ok2).To(BeFalse())
+	})
 
-func TestFindAPIResourceViewOnly(t *testing.T) {
-	api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
-	if err != nil {
-		t.Fatalf("new api: %v", err)
-	}
+	It("finds only view API resources", func() {
+		api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
+		Expect(err).NotTo(HaveOccurred())
 
-	config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
-	if err != nil {
-		t.Fatalf("new config: %v", err)
-	}
-	config.DiscoveryClient = api.GetDiscovery()
-	config.EnableOpenAPI = false
+		config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		config.DiscoveryClient = api.GetDiscovery()
+		config.EnableOpenAPI = false
 
-	s, err := NewAPIServer(config)
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
+		s, err := NewAPIServer(config)
+		Expect(err).NotTo(HaveOccurred())
 
-	if _, err := s.findAPIResource(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Pod"}); err == nil {
-		t.Fatalf("expected native resource rejection")
-	}
+		_, err = s.findAPIResource(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Pod"})
+		Expect(err).To(HaveOccurred())
 
-	gvk := viewv1a1.GroupVersionKind("t", "MyView")
-	r, err := s.findAPIResource(gvk)
-	if err != nil {
-		t.Fatalf("find view resource failed: %v", err)
-	}
-	if r.APIResource == nil || r.APIResource.Kind != "MyView" {
-		t.Fatalf("unexpected API resource: %#v", r.APIResource)
-	}
-	if !r.HasStatus {
-		t.Fatalf("expected HasStatus=true for view resource")
-	}
-}
-
-func waitUntil(timeout, interval time.Duration, pred func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if pred() {
-			return true
-		}
-		time.Sleep(interval)
-	}
-	return pred()
-}
+		gvk := viewv1a1.GroupVersionKind("t", "MyView")
+		r, err := s.findAPIResource(gvk)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.APIResource).NotTo(BeNil())
+		Expect(r.APIResource.Kind).To(Equal("MyView"))
+		Expect(r.HasStatus).To(BeTrue())
+	})
+})

@@ -2,93 +2,63 @@ package misc
 
 import (
 	"context"
-	"testing"
 	"time"
 
 	"github.com/l7mp/dbsp/dbsp/runtime"
 	"github.com/l7mp/dbsp/dbsp/zset"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestPipeProducerForwardsInput(t *testing.T) {
-	t.Parallel()
+var _ = Describe("Pipe connector", func() {
+	It("forwards input from producer channel", func() {
+		in := make(chan runtime.Input, 1)
+		p := NewPipeProducer(in)
 
-	in := make(chan runtime.Input, 1)
-	p := NewPipeProducer(in)
+		errCh := make(chan error, 1)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	errCh := make(chan error, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+		gotCh := make(chan runtime.Input, 1)
+		p.SetInputHandler(func(_ context.Context, in runtime.Input) error {
+			gotCh <- in
+			return nil
+		})
 
-	gotCh := make(chan runtime.Input, 1)
-	p.SetInputHandler(func(_ context.Context, in runtime.Input) error {
-		gotCh <- in
-		return nil
+		go func() { errCh <- p.Start(ctx) }()
+
+		want := runtime.Input{Name: "in", Data: zset.New()}
+		in <- want
+
+		var got runtime.Input
+		Eventually(gotCh, time.Second).Should(Receive(&got))
+		Expect(got.Name).To(Equal(want.Name))
+		Expect(got.Data.Equal(want.Data)).To(BeTrue())
+
+		cancel()
+		Eventually(errCh, time.Second).Should(Receive(BeNil()))
 	})
 
-	go func() { errCh <- p.Start(ctx) }()
+	It("forwards output to consumer channel", func() {
 
-	want := runtime.Input{Name: "in", Data: zset.New()}
-	in <- want
+		out := make(chan runtime.Output, 1)
+		c := NewPipeConsumer(out)
 
-	select {
-	case got := <-gotCh:
-		if got.Name != want.Name {
-			t.Fatalf("input name = %q, want %q", got.Name, want.Name)
-		}
-		if !got.Data.Equal(want.Data) {
-			t.Fatal("input payload mismatch")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for forwarded input")
-	}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("producer exited with error: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("producer did not stop")
-	}
-}
+		errCh := make(chan error, 1)
+		go func() { errCh <- c.Start(ctx) }()
 
-func TestPipeConsumerForwardsOutput(t *testing.T) {
-	t.Parallel()
+		want := runtime.Output{Name: "out", Data: zset.New()}
+		Expect(c.Consume(ctx, want)).To(Succeed())
 
-	out := make(chan runtime.Output, 1)
-	c := NewPipeConsumer(out)
+		var got runtime.Output
+		Eventually(out, time.Second).Should(Receive(&got))
+		Expect(got.Name).To(Equal(want.Name))
+		Expect(got.Data.Equal(want.Data)).To(BeTrue())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- c.Start(ctx) }()
-
-	want := runtime.Output{Name: "out", Data: zset.New()}
-	if err := c.Consume(ctx, want); err != nil {
-		t.Fatalf("Consume() error = %v, want nil", err)
-	}
-
-	select {
-	case got := <-out:
-		if got.Name != want.Name {
-			t.Fatalf("output name = %q, want %q", got.Name, want.Name)
-		}
-		if !got.Data.Equal(want.Data) {
-			t.Fatal("output payload mismatch")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for forwarded output")
-	}
-
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("consumer exited with error: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("consumer did not stop")
-	}
-}
+		cancel()
+		Eventually(errCh, time.Second).Should(Receive(BeNil()))
+	})
+})
