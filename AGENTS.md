@@ -143,7 +143,9 @@ Tips:
 
 ### Testing Style
 
-- Use Ginkgo v2 + Gomega idioms.
+- **ALWAYS** write tests in Ginkgo v2 + Gomega style.
+- Avoid plain `testing`-only test cases for behavioral coverage.
+- Add or reuse a `*_suite_test.go` entrypoint in each package with tests.
 - Prefer focused, composable fixtures over large shared mutable setup.
 - Validate both normal and incremental behavior where relevant.
 - Keep test names descriptive and behavior-oriented.
