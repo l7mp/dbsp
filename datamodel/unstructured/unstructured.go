@@ -33,6 +33,33 @@ func New(fields map[string]any, pkFunc func(datamodel.Document) (string, error))
 	return &Unstructured{fields: f, pkFunc: pkFunc}
 }
 
+// Merge combines two unstructured documents, with right side overwriting key collisions.
+func Merge(left, right *Unstructured) *Unstructured {
+	if left == nil {
+		if right == nil {
+			return New(map[string]any{}, nil)
+		}
+		return right.Copy().(*Unstructured)
+	}
+	if right == nil {
+		return left.Copy().(*Unstructured)
+	}
+	res := left.Copy().(*Unstructured)
+	for k, v := range right.fields {
+		res.fields[k] = deepCopyAny(v)
+	}
+	return res
+}
+
+// Merge combines this document with another; right side overwrites on conflicts.
+func (u *Unstructured) Merge(other datamodel.Document) datamodel.Document {
+	ou, ok := other.(*Unstructured)
+	if !ok {
+		return u.Copy()
+	}
+	return Merge(u, ou)
+}
+
 // Hash returns a canonical JSON representation of the document's fields.
 // encoding/json marshals map keys in sorted order (since Go 1.12), so this
 // is deterministic.
@@ -55,24 +82,6 @@ func (u *Unstructured) PrimaryKey() (string, error) {
 // String returns the canonical JSON representation of the document.
 func (u *Unstructured) String() string {
 	return u.Hash()
-}
-
-// Concat merges other's fields into a deep copy of u; right wins on key
-// collision. The receiver's pkFunc is preserved in the result.
-func (u *Unstructured) Concat(other datamodel.Document) datamodel.Document {
-	result := &Unstructured{
-		fields: make(map[string]any, len(u.fields)),
-		pkFunc: u.pkFunc,
-	}
-	for k, v := range u.fields {
-		result.fields[k] = deepCopyAny(v)
-	}
-	if ou, ok := other.(*Unstructured); ok {
-		for k, v := range ou.fields {
-			result.fields[k] = deepCopyAny(v)
-		}
-	}
-	return result
 }
 
 // Copy returns a deep copy of the document with the same pkFunc. Nested

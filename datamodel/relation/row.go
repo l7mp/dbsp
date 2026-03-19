@@ -127,55 +127,6 @@ func (r *Row) New() datamodel.Document {
 	return &Row{Table: newTable, Data: make([]any, len(cols))}
 }
 
-func (r *Row) Concat(other datamodel.Document) datamodel.Document {
-	r2, ok := other.(*Row)
-	if !ok {
-		return r
-	}
-
-	// Create a temporary Schema and Table but do not register
-	schema := Schema{
-		Columns:   make([]Column, len(r.Table.Schema.Columns)+len(r2.Table.Schema.Columns)),
-		PKIndices: make([]int, len(r.Table.Schema.PKIndices)+len(r2.Table.Schema.PKIndices)),
-		Aliases:   make(map[string]string),
-	}
-	table := NewTable(fmt.Sprintf("%s-%s", r.Table.Name, r2.Table.Name), &schema)
-
-	// Column names are preserved with qualified names, if available.
-	for i, c := range r.Table.Schema.Columns {
-		schema.Columns[i] = Column{
-			Name:          c.Name,
-			QualifiedName: qualifyColumn(r.Table, c),
-			Type:          c.Type,
-		}
-	}
-	for i, c := range r2.Table.Schema.Columns {
-		schema.Columns[len(r.Table.Schema.Columns)+i] = Column{
-			Name:          c.Name,
-			QualifiedName: qualifyColumn(r2.Table, c),
-			Type:          c.Type,
-		}
-	}
-
-	// Primary keys are the concatenation of the constituent tables' primary key columns
-	for i, idx := range r.Table.Schema.PKIndices {
-		schema.PKIndices[i] = idx
-	}
-	for i, idx := range r2.Table.Schema.PKIndices {
-		schema.PKIndices[len(r.Table.Schema.PKIndices)+i] = len(r.Table.Schema.Columns) + idx
-	}
-
-	// Aliases are just the concatenated aliases prefixed with the table name
-	for alias, column := range r.Table.Schema.Aliases {
-		schema.Aliases[fmt.Sprintf("%s.%s", r.Table.Name, alias)] = fmt.Sprintf("%s.%s", r.Table.Name, column)
-	}
-	for alias, column := range r2.Table.Schema.Aliases {
-		schema.Aliases[fmt.Sprintf("%s.%s", r2.Table.Name, alias)] = fmt.Sprintf("%s.%s", r2.Table.Name, column)
-	}
-
-	return &Row{Table: table, Data: append(r.Data, r2.Data...)}
-}
-
 func (r *Row) GetField(field string) (any, error) {
 	schema := r.Table.Schema
 

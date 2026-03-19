@@ -24,12 +24,10 @@ func (b badDoc) Hash() string { return b.id }
 func (b badDoc) PrimaryKey() (string, error) {
 	return b.id, nil
 }
-func (b badDoc) String() string { return b.id }
-func (b badDoc) Concat(other datamodel.Document) datamodel.Document {
-	return b
-}
-func (b badDoc) Copy() datamodel.Document { return b }
-func (b badDoc) New() datamodel.Document  { return badDoc{} }
+func (b badDoc) String() string                                    { return b.id }
+func (b badDoc) Copy() datamodel.Document                          { return b }
+func (b badDoc) Merge(other datamodel.Document) datamodel.Document { return b }
+func (b badDoc) New() datamodel.Document                           { return badDoc{} }
 func (b badDoc) GetField(_ string) (any, error) {
 	return nil, datamodel.ErrFieldNotFound
 }

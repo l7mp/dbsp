@@ -23,14 +23,11 @@ type Document interface {
 	// key is unavailable (e.g., lost during schemaless processing).
 	PrimaryKey() (string, error)
 
-	// Concat concatenates this document with another, producing a new document that contains
-	// the fields of both. This is used by CartesianProduct to create flattened join results.
-	// The implementation is type-specific: for SQL Rows, it merges schemas and data; for
-	// other document types, it combines fields appropriately.
-	Concat(other Document) Document
-
 	// Copy returns a deep copy of the document when possible.
 	Copy() Document
+
+	// Merge combines this document with another document and returns the merged result.
+	Merge(other Document) Document
 
 	// New returns a new empty document of the same type.
 	New() Document

@@ -31,7 +31,7 @@ func product(a, b []datamodel.Document) []datamodel.Document {
 	result := make([]datamodel.Document, 0, len(a)*len(b))
 	for _, left := range a {
 		for _, right := range b {
-			result = append(result, left.Concat(right))
+			result = append(result, left.Merge(right))
 		}
 	}
 	return result
@@ -46,7 +46,7 @@ func joinOn(leftIdx int, rightIdx int, left, right []datamodel.Document) []datam
 			rrow := rowAsRow(rightDoc)
 			rval := rrow.Data[rightIdx]
 			if lval == rval {
-				result = append(result, leftDoc.Concat(rightDoc))
+				result = append(result, leftDoc.Merge(rightDoc))
 			}
 		}
 	}
@@ -70,7 +70,7 @@ var _ = Describe("Row", func() {
 			left := makeRow(leftTable, 1, "Alice")
 			right := makeRow(rightTable, "eng", 100)
 
-			combined := rowAsRow(left.Concat(right))
+			combined := rowAsRow(left.Merge(right))
 
 			Expect(combined.Table).NotTo(BeNil())
 			Expect(combined.Table.Name).To(Equal("employees-comp"))
@@ -83,13 +83,14 @@ var _ = Describe("Row", func() {
 			Expect(combined.Table.Schema.Columns[3].QualifiedName).To(Equal("comp.salary"))
 		})
 
-		It("returns the receiver when concatenating non-rows", func() {
+		It("returns a copy when merging non-rows", func() {
 			leftSchema := makeSchema(Column{Name: "id", Type: TypeInt})
 			leftTable := makeTable("t1", leftSchema)
 			left := makeRow(leftTable, 1)
 
-			result := left.Concat(badDoc{id: "x"})
-			Expect(result).To(BeIdenticalTo(left))
+			result := left.Merge(badDoc{id: "x"})
+			Expect(result).To(Equal(left))
+			Expect(result).NotTo(BeIdenticalTo(left))
 		})
 	})
 

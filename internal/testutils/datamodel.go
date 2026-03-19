@@ -13,13 +13,13 @@ type StringElem string
 func (s StringElem) Hash() string                { return string(s) }
 func (s StringElem) PrimaryKey() (string, error) { return string(s), nil }
 func (s StringElem) String() string              { return string(s) }
-func (s StringElem) Concat(other datamodel.Document) datamodel.Document {
+func (s StringElem) Copy() datamodel.Document    { return s }
+func (s StringElem) Merge(other datamodel.Document) datamodel.Document {
 	if o, ok := other.(StringElem); ok {
 		return StringElem(string(s) + "," + string(o))
 	}
 	return s
 }
-func (s StringElem) Copy() datamodel.Document       { return s }
 func (s StringElem) New() datamodel.Document        { return StringElem("") }
 func (s StringElem) GetField(_ string) (any, error) { return string(s), nil }
 func (s StringElem) SetField(_ string, _ any) error { return nil }
@@ -44,11 +44,11 @@ type Record struct {
 func (r Record) Hash() string                { return r.String() }
 func (r Record) PrimaryKey() (string, error) { return r.ID, nil }
 func (r Record) String() string              { return fmt.Sprintf("{ID:%s, Value:%d}", r.ID, r.Value) }
-func (r Record) Concat(other datamodel.Document) datamodel.Document {
+func (r Record) Copy() datamodel.Document    { return r }
+func (r Record) Merge(other datamodel.Document) datamodel.Document {
 	return Record{ID: r.ID + "," + other.Hash(), Value: r.Value}
 }
-func (r Record) Copy() datamodel.Document { return r }
-func (r Record) New() datamodel.Document  { return Record{} }
+func (r Record) New() datamodel.Document { return Record{} }
 
 func (r Record) GetField(key string) (any, error) {
 	switch key {
@@ -90,14 +90,13 @@ type ArrayRecord struct {
 func (r ArrayRecord) Hash() string                { return r.String() }
 func (r ArrayRecord) PrimaryKey() (string, error) { return r.ID, nil }
 func (r ArrayRecord) String() string              { return fmt.Sprintf("{ID:%s, Values:%v}", r.ID, r.Values) }
-func (r ArrayRecord) Concat(other datamodel.Document) datamodel.Document {
-	return ArrayRecord{ID: r.ID + "," + other.Hash(), Values: r.Values}
-}
-
 func (r ArrayRecord) Copy() datamodel.Document {
 	values := make([]any, len(r.Values))
 	copy(values, r.Values)
 	return ArrayRecord{ID: r.ID, Values: values}
+}
+func (r ArrayRecord) Merge(other datamodel.Document) datamodel.Document {
+	return ArrayRecord{ID: r.ID + "," + other.Hash(), Values: r.Values}
 }
 func (r ArrayRecord) New() datamodel.Document {
 	return ArrayRecord{}
@@ -151,8 +150,15 @@ func (r *MutableRecord) String() string {
 	return fmt.Sprintf("%v", r.FieldMap)
 }
 
-func (r *MutableRecord) Concat(other datamodel.Document) datamodel.Document {
-	newFields := make(map[string]any)
+func (r *MutableRecord) Copy() datamodel.Document {
+	newFields := make(map[string]any, len(r.FieldMap))
+	for k, v := range r.FieldMap {
+		newFields[k] = v
+	}
+	return &MutableRecord{FieldMap: newFields}
+}
+func (r *MutableRecord) Merge(other datamodel.Document) datamodel.Document {
+	newFields := make(map[string]any, len(r.FieldMap))
 	for k, v := range r.FieldMap {
 		newFields[k] = v
 	}
@@ -160,14 +166,6 @@ func (r *MutableRecord) Concat(other datamodel.Document) datamodel.Document {
 		for k, v := range or.FieldMap {
 			newFields[k] = v
 		}
-	}
-	return &MutableRecord{FieldMap: newFields}
-}
-
-func (r *MutableRecord) Copy() datamodel.Document {
-	newFields := make(map[string]any, len(r.FieldMap))
-	for k, v := range r.FieldMap {
-		newFields[k] = v
 	}
 	return &MutableRecord{FieldMap: newFields}
 }

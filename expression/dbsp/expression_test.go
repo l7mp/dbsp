@@ -39,16 +39,22 @@ func (d *TestDoc) PrimaryKey() (string, error) {
 	return "pk", nil
 }
 
-func (d *TestDoc) Concat(other datamodel.Document) datamodel.Document {
-	return d
-}
-
 func (d *TestDoc) Copy() datamodel.Document {
 	newFields := make(map[string]any, len(d.fields))
 	for k, v := range d.fields {
 		newFields[k] = v
 	}
 	return &TestDoc{fields: newFields}
+}
+
+func (d *TestDoc) Merge(other datamodel.Document) datamodel.Document {
+	nd := d.Copy().(*TestDoc)
+	if od, ok := other.(*TestDoc); ok {
+		for k, v := range od.fields {
+			nd.fields[k] = v
+		}
+	}
+	return nd
 }
 
 func (d *TestDoc) GetField(key string) (any, error) {
@@ -378,14 +384,14 @@ var _ = Describe("Field Operators", func() {
 		Expect(result).To(Equal(int64(30)))
 	})
 
-	It("should evaluate $. as identity subject", func() {
+	It("should evaluate $. as document copy", func() {
 		expr, err := dbsp.Compile([]byte(`"$."`))
 		Expect(err).NotTo(HaveOccurred())
 
-		subj := map[string]any{"x": int64(1)}
-		result, err := expr.Evaluate(expression.NewContext(nil).WithSubject(subj))
+		doc := NewTestDoc(map[string]any{"x": int64(1)})
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal(subj))
+		Expect(result).To(Equal(map[string]any{"x": float64(1)}))
 	})
 
 	It("should return error for missing field", func() {
@@ -514,7 +520,7 @@ var _ = Describe("List Operators", func() {
 
 	It("should evaluate @map", func() {
 		// Map each element by adding 10.
-		expr, err := dbsp.Compile([]byte(`{"@map": [{"@add": [{"@arg": null}, 10]}, [1, 2, 3]]}`))
+		expr, err := dbsp.Compile([]byte(`{"@map": [{"@add": ["$$.", 10]}, [1, 2, 3]]}`))
 		Expect(err).NotTo(HaveOccurred())
 
 		result, err := expr.Evaluate(expression.NewContext(nil))
@@ -524,7 +530,7 @@ var _ = Describe("List Operators", func() {
 
 	It("should evaluate @filter", func() {
 		// Filter elements > 2.
-		expr, err := dbsp.Compile([]byte(`{"@filter": [{"@gt": [{"@arg": null}, 2]}, [1, 2, 3, 4]]}`))
+		expr, err := dbsp.Compile([]byte(`{"@filter": [{"@gt": ["$$.", 2]}, [1, 2, 3, 4]]}`))
 		Expect(err).NotTo(HaveOccurred())
 
 		result, err := expr.Evaluate(expression.NewContext(nil))

@@ -27,6 +27,14 @@ func (a *Adaptor) PrimaryKey() (string, error) { return a.base.PrimaryKey() }
 
 func (a *Adaptor) String() string { return a.base.String() }
 
+func (a *Adaptor) Merge(other datamodel.Document) datamodel.Document {
+	b, ok := other.(*Adaptor)
+	if ok {
+		return &Adaptor{base: a.base.Merge(b.base), in: a.in, out: a.out}
+	}
+	return &Adaptor{base: a.base.Merge(other), in: a.in, out: a.out}
+}
+
 func (a *Adaptor) Copy() datamodel.Document {
 	return &Adaptor{base: a.base.Copy(), in: a.in, out: a.out}
 }
