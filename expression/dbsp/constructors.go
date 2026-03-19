@@ -23,8 +23,11 @@ func NewString(v string) Expression { return &stringExpr{operand: &constExpr{val
 // NewGet creates a field-get expression from a literal field name.
 func NewGet(field string) Expression { return &getExpr{field: &constExpr{value: field}} }
 
-// NewArg creates an @arg expression.
-func NewArg() Expression { return &argExpr{nullaryOp{"@arg"}} }
+// NewSubject creates an @subject expression.
+func NewSubject() Expression { return &subjectExpr{nullaryOp{"@subject"}} }
+
+// NewCopy creates an @copy expression.
+func NewCopy() Expression { return &copyExpr{nullaryOp{"@copy"}} }
 
 // NewSet creates a field-set expression.
 func NewSet(field, value Expression) Expression { return &setExpr{binaryOp{"@set", field, value}} }

@@ -305,7 +305,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("supports gather-style list aggregation", func() {
-			op := NewAggregate(nil, exprdbsp.NewGet("value"), exprdbsp.NewArg(), "items")
+			op := NewAggregate(nil, exprdbsp.NewGet("value"), exprdbsp.NewSubject(), "items")
 
 			r1 := testutils.Record{ID: "ns-a", Value: 1}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}

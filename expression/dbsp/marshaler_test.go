@@ -284,7 +284,8 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@endswith", `{"@endswith":["$.s","suf"]}`),
 			Entry("@contains", `{"@contains":["$.s","sub"]}`),
 			Entry("@noop", `{"@noop":null}`),
-			Entry("@arg", `{"@arg":null}`),
+			Entry("@subject", `{"@subject":null}`),
+			Entry("@copy", `{"@copy":null}`),
 			Entry("@hash", `{"@hash":"$.x"}`),
 			Entry("@rnd", `{"@rnd":[1,100]}`),
 			Entry("@concat", `{"@concat":["$.a","$.b"]}`),
@@ -292,7 +293,7 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@floor", `{"@floor":3.7}`),
 			Entry("@ceil", `{"@ceil":3.2}`),
 			Entry("@isnil", `{"@isnil":"$.x"}`),
-			Entry("@map", `{"@map":[{"@arg":null},"$.list"]}`),
+			Entry("@map", `{"@map":[{"@subject":null},"$.list"]}`),
 			Entry("@filter", `{"@filter":[true,"$.list"]}`),
 			Entry("@sum", `{"@sum":[1,2,3]}`),
 			Entry("@len", `{"@len":"$.list"}`),
@@ -348,12 +349,12 @@ var _ = Describe("JSON round-trip", func() {
 			Expect(string(b)).To(Equal(`{"@noop":null}`))
 		})
 
-		It("marshals @arg as nullary op", func() {
-			expr, err := dbsp.CompileString(`{"@arg":null}`)
+		It("marshals @subject as nullary op", func() {
+			expr, err := dbsp.CompileString(`{"@subject":null}`)
 			Expect(err).NotTo(HaveOccurred())
 			b, err := json.Marshal(expr)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(b)).To(Equal(`{"@arg":null}`))
+			Expect(string(b)).To(Equal(`{"@subject":null}`))
 		})
 
 		It("marshals @list with nested @get expressions", func() {

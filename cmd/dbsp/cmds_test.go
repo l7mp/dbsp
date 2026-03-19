@@ -313,7 +313,7 @@ var _ = Describe("Circuit commands", func() {
 		})
 
 		It("adds aggregate node using reducer shorthand", func() {
-			Expect(run("circuit", "node", "add", "c", "agg", "aggregate", `"$.namespace"`, `"$.cpu"`, "sum", `{"@set":["Value","$."]}`)).To(Succeed())
+			Expect(run("circuit", "node", "add", "c", "agg", "aggregate", `"$.namespace"`, `"$.cpu"`, "sum", `{"@set":["Value","$$."]}`)).To(Succeed())
 			n := state.circuits["c"].Node("agg")
 			Expect(n).NotTo(BeNil())
 			Expect(n.Operator.Kind()).To(Equal(operator.KindAggregate))

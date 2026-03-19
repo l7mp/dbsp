@@ -483,13 +483,13 @@ func buildOperator(opType string, args []string) (operator.Operator, error) {
 func normalizeAggregateReduceArg(arg string) string {
 	switch arg {
 	case "@sum", "sum":
-		return `{"@sum":["$."]}`
+		return `{"@sum":["$$."]}`
 	case "@len", "len":
-		return `{"@len":"$."}`
+		return `{"@len":"$$."}`
 	case "@lexmin", "lexmin":
-		return `{"@lexmin":["$."]}`
+		return `{"@lexmin":["$$."]}`
 	case "@lexmax", "lexmax":
-		return `{"@lexmax":["$."]}`
+		return `{"@lexmax":["$$."]}`
 	default:
 		return arg
 	}

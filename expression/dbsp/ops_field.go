@@ -1,12 +1,35 @@
 package dbsp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/l7mp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/expression"
 )
+
+// copyExpr implements @copy - returns document fields as map[string]any.
+type copyExpr struct{ nullaryOp }
+
+func (e *copyExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	doc := ctx.Document()
+	if doc == nil {
+		return nil, fmt.Errorf("@copy: no document in context")
+	}
+
+	data, err := doc.MarshalJSON()
+	if err != nil {
+		return nil, fmt.Errorf("@copy: marshal document: %w", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, fmt.Errorf("@copy: unmarshal document: %w", err)
+	}
+
+	ctx.Logger().V(8).Info("eval", "op", "@copy", "result", fields)
+	return fields, nil
+}
 
 // getExpr implements @get - retrieves a field from the document.
 type getExpr struct {
@@ -183,6 +206,12 @@ func evaluateFieldPath(ctx *expression.EvalContext, field Expression, opName str
 }
 
 func init() {
+	MustRegister("@copy", func(args any) (Expression, error) {
+		if args != nil {
+			return nil, fmt.Errorf("@copy: expected null argument")
+		}
+		return &copyExpr{nullaryOp{"@copy"}}, nil
+	})
 	MustRegister("@get", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {

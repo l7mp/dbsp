@@ -18,12 +18,12 @@ func (e *noopExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return nil, nil
 }
 
-// argExpr implements @arg - returns the current subject from context.
-type argExpr struct{ nullaryOp }
+// subjectExpr implements @subject - returns the current subject from context.
+type subjectExpr struct{ nullaryOp }
 
-func (e *argExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+func (e *subjectExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	subject := ctx.Subject()
-	ctx.Logger().V(8).Info("eval", "op", "@arg", "result", subject)
+	ctx.Logger().V(8).Info("eval", "op", "@subject", "result", subject)
 	return subject, nil
 }
 
@@ -229,8 +229,8 @@ func init() {
 	MustRegister("@noop", func(args any) (Expression, error) {
 		return &noopExpr{nullaryOp{"@noop"}}, nil
 	})
-	MustRegister("@arg", func(args any) (Expression, error) {
-		return &argExpr{nullaryOp{"@arg"}}, nil
+	MustRegister("@subject", func(args any) (Expression, error) {
+		return &subjectExpr{nullaryOp{"@subject"}}, nil
 	})
 	MustRegister("@hash", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)

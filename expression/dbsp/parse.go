@@ -48,7 +48,10 @@ func (p *Parser) parseValue(v any) (Expression, error) {
 
 	case string:
 		if val == "$." {
-			return p.callFactory("@arg", nil)
+			return p.callFactory("@copy", nil)
+		}
+		if val == "$$." {
+			return p.callFactory("@subject", nil)
 		}
 		// Check for $.field shorthand (document field).
 		if strings.HasPrefix(val, "$.") {
