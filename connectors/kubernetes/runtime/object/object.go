@@ -65,7 +65,7 @@ func NewViewObjectFromNativeObject(operator, view string, clientObj client.Objec
 
 // GetOperator returns the operator namespace the object belongs to.
 func GetOperator(obj Object) string {
-	return viewv1a1.GetOperator(obj.GroupVersionKind())
+	return viewv1a1.GetGroup(obj.GroupVersionKind())
 }
 
 // SetName is a shortcut to SetNamespace(ns) followed by SetNamespace(name).

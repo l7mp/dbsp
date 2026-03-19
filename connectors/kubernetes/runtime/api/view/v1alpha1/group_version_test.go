@@ -20,7 +20,7 @@ var _ = Describe("Views", func() {
 	It("should handle views", func() {
 		viewGVK := GroupVersionKind("test", "TestView")
 		Expect(IsViewKind(viewGVK)).To(BeTrue())
-		Expect(GetOperator(viewGVK)).To(Equal("test"))
+		Expect(GetGroup(viewGVK)).To(Equal("test"))
 		Expect(viewGVK.Kind).To(Equal("TestView"))
 		Expect(HasViewGroupVersionKind(viewGVK.Group, viewGVK)).To(BeTrue())
 		Expect(HasViewGroupVersion(viewGVK.Group, viewGVK.GroupVersion())).To(BeTrue())
@@ -35,7 +35,7 @@ var _ = Describe("GVK mapping", func() {
 		}}
 		viewGVK := MapIntoView("test", dep.GroupVersionKind())
 		Expect(IsViewKind(viewGVK)).To(BeTrue())
-		Expect(GetOperator(viewGVK)).To(Equal("test"))
+		Expect(GetGroup(viewGVK)).To(Equal("test"))
 		depGVK, err := MapFromView(viewGVK)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(IsViewKind(depGVK)).To(BeFalse())
@@ -49,7 +49,7 @@ var _ = Describe("GVK mapping", func() {
 		}}
 		viewGVK := MapIntoView("test", pod.GroupVersionKind())
 		Expect(IsViewKind(viewGVK)).To(BeTrue())
-		Expect(GetOperator(viewGVK)).To(Equal("test"))
+		Expect(GetGroup(viewGVK)).To(Equal("test"))
 		podGVK, err := MapFromView(viewGVK)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(IsViewKind(podGVK)).To(BeFalse())

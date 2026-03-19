@@ -15,29 +15,29 @@ const (
 )
 
 // Group returns the group for the view objects created by an operator.
-func Group(operator string) string {
-	return fmt.Sprintf("%s.%s", operator, GroupSuffix)
+func Group(group string) string {
+	return fmt.Sprintf("%s.%s", group, GroupSuffix)
 }
 
 // GroupVersion returns the group-version for the view objects created by an operator.
-func GroupVersion(operator string) schema.GroupVersion {
-	return schema.GroupVersion{Group: Group(operator), Version: Version}
+func GroupVersion(group string) schema.GroupVersion {
+	return schema.GroupVersion{Group: Group(group), Version: Version}
 }
 
 // GroupVersionKind returns the group-version-kind for the view objects created by an operator.
-func GroupVersionKind(operator, view string) schema.GroupVersionKind {
-	return GroupVersion(operator).WithKind(view)
+func GroupVersionKind(group, view string) schema.GroupVersionKind {
+	return GroupVersion(group).WithKind(view)
 }
 
 // MapIntoView maps a native object into an operator view resource.
-func MapIntoView(operator string, gvk schema.GroupVersionKind) schema.GroupVersionKind {
+func MapIntoView(viewGroup string, gvk schema.GroupVersionKind) schema.GroupVersionKind {
 	// specialcase corev1
 	group := gvk.Group
 	if group == "" {
 		group = "core"
 	}
 	return schema.GroupVersionKind{
-		Group:   fmt.Sprintf("%s.%s.%s", group, gvk.Version, Group(operator)),
+		Group:   fmt.Sprintf("%s.%s.%s", group, gvk.Version, Group(viewGroup)),
 		Version: Version,
 		Kind:    gvk.Kind,
 	}
@@ -64,8 +64,8 @@ func MapFromView(gvk schema.GroupVersionKind) (schema.GroupVersionKind, error) {
 	}, nil
 }
 
-// GetOperator returns the operator name for a view resource.
-func GetOperator(gvk schema.GroupVersionKind) string {
+// GetGroup returns the operator name for a view resource.
+func GetGroup(gvk schema.GroupVersionKind) string {
 	s := gvk.Group
 	if strings.HasSuffix(s, fullGroupSuffix) {
 		prefix := s[:len(s)-len(fullGroupSuffix)]
@@ -99,9 +99,3 @@ func HasViewGroupVersion(group string, gv schema.GroupVersion) bool {
 func HasViewGroupVersionKind(group string, gvk schema.GroupVersionKind) bool {
 	return HasViewGroupVersion(group, gvk.GroupVersion())
 }
-
-// // Scheme
-// func AddGroupToScheme(operator string, s *runtime.Scheme) error {
-// 	schemeBuilder := &scheme.Builder{GroupVersion: GroupVersion(operator)}
-// 	return schemeBuilder.AddToScheme(s)
-// }
