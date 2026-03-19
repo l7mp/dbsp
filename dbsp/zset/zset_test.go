@@ -3,7 +3,7 @@ package zset
 import (
 	"testing"
 
-	"github.com/l7mp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/internal/testutils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

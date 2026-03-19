@@ -1,7 +1,7 @@
 package operator
 
 import (
-	"github.com/l7mp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/datamodel"
 	"github.com/l7mp/dbsp/dbsp/zset"
 )
 

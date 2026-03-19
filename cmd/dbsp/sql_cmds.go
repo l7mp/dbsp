@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xwb1989/sqlparser"
 
-	compilersql "github.com/l7mp/dbsp/compiler/sql"
-	"github.com/l7mp/dbsp/datamodel/relation"
+	compilersql "github.com/l7mp/dbsp/dbsp/compiler/sql"
+	"github.com/l7mp/dbsp/dbsp/datamodel/relation"
 	"github.com/l7mp/dbsp/dbsp/executor"
 	"github.com/l7mp/dbsp/dbsp/transform"
 	"github.com/l7mp/dbsp/dbsp/zset"

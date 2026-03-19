@@ -6,10 +6,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/l7mp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/expression"
+	exprdbsp "github.com/l7mp/dbsp/dbsp/expression/dbsp"
 	"github.com/l7mp/dbsp/dbsp/zset"
-	"github.com/l7mp/dbsp/expression"
-	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
 	"github.com/l7mp/dbsp/internal/testutils"
 )
 

@@ -11,11 +11,11 @@ import (
 
 	"encoding/json"
 
-	"github.com/l7mp/dbsp/datamodel"
-	"github.com/l7mp/dbsp/datamodel/unstructured"
+	"github.com/l7mp/dbsp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
+	"github.com/l7mp/dbsp/dbsp/expression"
+	exprdbsp "github.com/l7mp/dbsp/dbsp/expression/dbsp"
 	"github.com/l7mp/dbsp/dbsp/zset"
-	"github.com/l7mp/dbsp/expression"
-	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
 )
 
 // boundZSet couples a Z-set to an optional table name for future schema

@@ -7,8 +7,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/l7mp/dbsp/dbsp/circuit"
+	"github.com/l7mp/dbsp/dbsp/expression"
 	"github.com/l7mp/dbsp/dbsp/operator"
-	"github.com/l7mp/dbsp/expression"
 )
 
 func TestTransform(t *testing.T) {

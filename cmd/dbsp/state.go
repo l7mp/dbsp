@@ -3,8 +3,8 @@ package main
 import (
 	"github.com/go-logr/logr"
 
-	"github.com/l7mp/dbsp/datamodel/relation"
 	"github.com/l7mp/dbsp/dbsp/circuit"
+	"github.com/l7mp/dbsp/dbsp/datamodel/relation"
 	"github.com/l7mp/dbsp/internal/logger"
 )
 

@@ -1,8 +1,8 @@
 package circuit
 
 import (
+	"github.com/l7mp/dbsp/dbsp/expression"
 	"github.com/l7mp/dbsp/dbsp/operator"
-	"github.com/l7mp/dbsp/expression"
 )
 
 // Join builds: σ_predicate(A × B).

@@ -9,10 +9,10 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/l7mp/dbsp/dbsp/circuit"
+	"github.com/l7mp/dbsp/dbsp/expression"
 	"github.com/l7mp/dbsp/dbsp/operator"
 	"github.com/l7mp/dbsp/dbsp/transform"
 	"github.com/l7mp/dbsp/dbsp/zset"
-	"github.com/l7mp/dbsp/expression"
 	"github.com/l7mp/dbsp/internal/logger"
 	"github.com/l7mp/dbsp/internal/testutils"
 )

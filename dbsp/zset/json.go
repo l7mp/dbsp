@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/l7mp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/datamodel"
 )
 
 // UnmarshalWithDocument decodes a ZSet using a concrete document implementation.

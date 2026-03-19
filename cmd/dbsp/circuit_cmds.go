@@ -11,9 +11,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/l7mp/dbsp/dbsp/circuit"
+	exprdbsp "github.com/l7mp/dbsp/dbsp/expression/dbsp"
 	"github.com/l7mp/dbsp/dbsp/operator"
 	"github.com/l7mp/dbsp/dbsp/transform"
-	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
 )
 
 func circuitRootCommand(state *appState) *cobra.Command {

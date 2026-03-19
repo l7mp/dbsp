@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/l7mp/dbsp/compiler"
-	"github.com/l7mp/dbsp/compiler/aggregation"
-	"github.com/l7mp/dbsp/datamodel/unstructured"
+	"github.com/l7mp/dbsp/dbsp/compiler"
+	"github.com/l7mp/dbsp/dbsp/compiler/aggregation"
+	"github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
 	"github.com/l7mp/dbsp/dbsp/runtime"
 	"github.com/l7mp/dbsp/dbsp/zset"
 )

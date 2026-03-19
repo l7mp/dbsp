@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/l7mp/dbsp/expression"
-	exprdbsp "github.com/l7mp/dbsp/expression/dbsp"
+	"github.com/l7mp/dbsp/dbsp/expression"
+	exprdbsp "github.com/l7mp/dbsp/dbsp/expression/dbsp"
 )
 
 // jsonOp is the wire format for all operators. It implements MarshalJSON and

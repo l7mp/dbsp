@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/l7mp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/datamodel"
 )
 
 // Weight is multiplicity in a Z-set.

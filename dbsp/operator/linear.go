@@ -3,9 +3,9 @@ package operator
 import (
 	"fmt"
 
-	"github.com/l7mp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/datamodel"
+	"github.com/l7mp/dbsp/dbsp/expression"
 	"github.com/l7mp/dbsp/dbsp/zset"
-	"github.com/l7mp/dbsp/expression"
 )
 
 // LinearCombination returns Σ coeffs[i] · inputs[i].
