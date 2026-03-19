@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dcontroller-
+  namespace: -system
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        args:
+        - "--config=controller_config.yaml"
+        volumeMounts:
+        - name: dcontroller-config
+          mountPath: /dcontroller_config.yaml
+          subPath: dcontroller_config.yaml
+      volumes:
+      - name: dcontroller-config
+        configMap:
+          name: dcontroller-config
