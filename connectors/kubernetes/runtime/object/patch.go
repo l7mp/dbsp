@@ -92,6 +92,38 @@ func patch(o, m any) any {
 	}
 }
 
+// RemoveNestedMap builds a merge-patch delete payload from a nested map.
+// Leaf values become nil, which represents deletion in RFC 7386 merge patches.
+func RemoveNestedMap(m map[string]any) map[string]any {
+	result := make(map[string]any)
+	for k, v := range m {
+		switch x := v.(type) {
+		case bool, int64, float64, string:
+			result[k] = nil
+		case map[string]any:
+			result[k] = RemoveNestedMap(x)
+		case []any:
+			result[k] = removeNestedList(x)
+		}
+	}
+	return result
+}
+
+func removeNestedList(l []any) []any {
+	result := make([]any, len(l))
+	for k, v := range l {
+		switch x := v.(type) {
+		case bool, int64, float64, string:
+			result[k] = nil
+		case map[string]any:
+			result[k] = RemoveNestedMap(x)
+		case []any:
+			result[k] = removeNestedList(x)
+		}
+	}
+	return result
+}
+
 // ApplyStrategicMergePatch is a partial local re-implementation of strategic merge patches.
 func ApplyStrategicMergePatch(original, patch *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	originalData, err := runtime.Encode(unstructured.UnstructuredJSONScheme, original)

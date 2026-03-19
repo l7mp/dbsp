@@ -49,6 +49,9 @@ type Config struct {
 	// CERT files for TLS
 	CertFile, KeyFile string
 
+	// EnableOpenAPI controls whether OpenAPI v2/v3 endpoints are configured.
+	EnableOpenAPI bool
+
 	// Logger provides a logger for the API server.
 	Logger logr.Logger
 }
@@ -90,6 +93,7 @@ func NewDefaultConfig(addr string, port int, client client.Client, httpMode, ins
 		HTTPMode:          httpMode,
 		Insecure:          insecure,
 		DelegatingClient:  client,
+		EnableOpenAPI:     true,
 		Logger:            log,
 	}, nil
 }

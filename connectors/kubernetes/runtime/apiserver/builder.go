@@ -194,20 +194,22 @@ func (s *APIServer) createServerConfig() (*genericapiserver.RecommendedConfig, e
 	// Override/set required fields for our dynamic server.
 	config.Serializer = s.codecs
 
-	// Build OpenAPI config specs: inject our dynamic OpenAPI handler.
-	namer := openapiendpoints.NewDefinitionNamer(s.scheme)
-	openAPIConfig := genericapiserver.DefaultOpenAPIConfig(s.getOpenAPIv2Handler(), namer)
-	openAPIConfig.Info = &spec.Info{
-		InfoProps: spec.InfoProps{
-			Title:   "Dynamic API Server for dcontroller",
-			Version: "v1.0.0",
-		},
-	}
-	config.OpenAPIConfig = openAPIConfig
+	if config.EnableOpenAPI {
+		// Build OpenAPI config specs: inject our dynamic OpenAPI handler.
+		namer := openapiendpoints.NewDefinitionNamer(s.scheme)
+		openAPIConfig := genericapiserver.DefaultOpenAPIConfig(s.getOpenAPIv2Handler(), namer)
+		openAPIConfig.Info = &spec.Info{
+			InfoProps: spec.InfoProps{
+				Title:   "Dynamic API Server for dcontroller",
+				Version: "v1.0.0",
+			},
+		}
+		config.OpenAPIConfig = openAPIConfig
 
-	openAPIV3Config := genericapiserver.DefaultOpenAPIV3Config(s.getOpenAPIv3Handler(), namer)
-	openAPIV3Config.Info = openAPIConfig.Info // Reuse the same info
-	config.OpenAPIV3Config = openAPIV3Config
+		openAPIV3Config := genericapiserver.DefaultOpenAPIV3Config(s.getOpenAPIv3Handler(), namer)
+		openAPIV3Config.Info = openAPIConfig.Info // Reuse the same info
+		config.OpenAPIV3Config = openAPIV3Config
+	}
 
 	return config.RecommendedConfig, nil
 }

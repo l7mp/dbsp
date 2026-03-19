@@ -162,6 +162,7 @@ Tips:
 - Do not add dependencies unless required; update `go.mod` and `go.sum` together.
 - Avoid touching generated artifacts or fixtures unless task-specific.
 - Prefer package-local verification for faster iteration, then run broader tests.
+- Do not use marshal/unmarshal conversion as a generic object adaptation trick (for example, converting between unstructured/document forms by serializing to JSON and parsing back) without explicit user approval first. If you think it is necessary, stop and ask.
 
 ## Useful Command Reference
 

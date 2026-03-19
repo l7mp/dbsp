@@ -3,28 +3,27 @@ package producer
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crevent "sigs.k8s.io/controller-runtime/pkg/event"
 	crpredicate "sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	kobject "github.com/l7mp/connectors/kubernetes/runtime/object"
 	kpredicate "github.com/l7mp/connectors/kubernetes/runtime/predicate"
-	dbunstructured "github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
+	"github.com/l7mp/connectors/kubernetes/runtime/store"
 	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
-	"github.com/l7mp/dbsp/dbsp/zset"
 )
 
 // Config configures a Kubernetes watch-backed DBSP producer.
 type Config struct {
-	Client client.WithWatch
-	List   client.ObjectList
+	Client    client.WithWatch
+	SourceGVK schema.GroupVersionKind
 
 	InputName     string
 	Namespace     string
@@ -45,7 +44,8 @@ type Producer struct {
 
 	mu      sync.RWMutex
 	handler dbspruntime.InputHandler
-	state   map[string]*unstructured.Unstructured
+
+	sourceCache map[schema.GroupVersionKind]*store.Store
 
 	log logr.Logger
 }
@@ -57,8 +57,11 @@ func New(cfg Config) (*Producer, error) {
 	if cfg.Client == nil {
 		return nil, fmt.Errorf("producer: nil client")
 	}
-	if cfg.List == nil {
-		return nil, fmt.Errorf("producer: nil list")
+	if cfg.SourceGVK.Kind == "" {
+		return nil, fmt.Errorf("producer: missing source GVK")
+	}
+	if cfg.InputName == "" {
+		return nil, fmt.Errorf("producer: missing explicit input name")
 	}
 
 	log := cfg.Logger
@@ -67,20 +70,15 @@ func New(cfg Config) (*Producer, error) {
 	}
 
 	inputName := cfg.InputName
-	if inputName == "" {
-		inputName = cfg.List.GetObjectKind().GroupVersionKind().Kind
-		inputName = strings.TrimSuffix(inputName, "List")
-		if inputName == "" {
-			inputName = "input"
-		}
-	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(cfg.SourceGVK)
 
 	p := &Producer{
-		client:    cfg.Client,
-		list:      cfg.List,
-		inputName: inputName,
-		state:     map[string]*unstructured.Unstructured{},
-		log:       log.WithName("kubernetes-producer").WithValues("input", inputName),
+		client:      cfg.Client,
+		list:        list,
+		inputName:   inputName,
+		sourceCache: map[schema.GroupVersionKind]*store.Store{},
+		log:         log.WithName("kubernetes-producer").WithValues("input", inputName),
 	}
 
 	if cfg.Namespace != "" {
@@ -154,43 +152,22 @@ func (p *Producer) handleEvent(ctx context.Context, evt watch.Event) error {
 		return nil
 	}
 
-	key := objectKey(obj)
 	var old *unstructured.Unstructured
-	if cached, found := p.state[key]; found && cached != nil {
-		old = cached.DeepCopy()
+	gvk := obj.GroupVersionKind()
+	if cache, ok := p.sourceCache[gvk]; ok {
+		if cached, exists, _ := cache.Get(obj); exists && cached != nil {
+			old = cached.DeepCopy()
+		}
 	}
 
 	if !p.allow(evt.Type, old, obj) {
-		if evt.Type == watch.Deleted {
-			delete(p.state, key)
-		} else {
-			p.state[key] = obj.DeepCopy()
-		}
 		return nil
 	}
 
-	zs := zset.New()
-	newDoc := toDocument(obj)
-
-	switch evt.Type {
-	case watch.Added:
-		zs.Insert(newDoc, 1)
-		p.state[key] = obj.DeepCopy()
-	case watch.Modified:
-		if old != nil {
-			zs.Insert(toDocument(old), -1)
-		}
-		zs.Insert(newDoc, 1)
-		p.state[key] = obj.DeepCopy()
-	case watch.Deleted:
-		if old != nil {
-			zs.Insert(toDocument(old), -1)
-		} else {
-			zs.Insert(newDoc, -1)
-		}
-		delete(p.state, key)
-	default:
-		return nil
+	delta := watchEventToDelta(evt.Type, obj)
+	zs, err := p.convertDeltaToZSet(delta)
+	if err != nil {
+		return err
 	}
 
 	if zs.IsZero() {
@@ -205,6 +182,19 @@ func (p *Producer) handleEvent(ctx context.Context, evt watch.Event) error {
 	}
 
 	return h(ctx, dbspruntime.Input{Name: p.inputName, Data: zs})
+}
+
+func watchEventToDelta(t watch.EventType, obj *unstructured.Unstructured) kobject.Delta {
+	switch t {
+	case watch.Added:
+		return kobject.Delta{Type: kobject.Added, Object: obj}
+	case watch.Modified:
+		return kobject.Delta{Type: kobject.Updated, Object: obj}
+	case watch.Deleted:
+		return kobject.Delta{Type: kobject.Deleted, Object: obj}
+	default:
+		return kobject.NilDelta
+	}
 }
 
 func (p *Producer) allow(t watch.EventType, oldObj, newObj *unstructured.Unstructured) bool {
@@ -237,11 +227,5 @@ func (p *Producer) allow(t watch.EventType, oldObj, newObj *unstructured.Unstruc
 }
 
 func objectKey(obj *unstructured.Unstructured) string {
-	gvk := obj.GroupVersionKind().String()
-	return fmt.Sprintf("%s/%s/%s", gvk, obj.GetNamespace(), obj.GetName())
-}
-
-func toDocument(obj *unstructured.Unstructured) *dbunstructured.Unstructured {
-	content := runtime.DeepCopyJSON(obj.UnstructuredContent())
-	return dbunstructured.New(content, nil)
+	return client.ObjectKeyFromObject(obj).String()
 }

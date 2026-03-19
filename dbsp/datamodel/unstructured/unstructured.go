@@ -107,6 +107,15 @@ func (u *Unstructured) New() datamodel.Document {
 	}
 }
 
+// Fields returns a deep copy of the document fields map.
+func (u *Unstructured) Fields() map[string]any {
+	f := make(map[string]any, len(u.fields))
+	for k, v := range u.fields {
+		f[k] = deepCopyAny(v)
+	}
+	return f
+}
+
 // GetField returns the value for a (possibly dotted) field path.
 // It returns datamodel.ErrFieldNotFound when the field does not exist.
 func (u *Unstructured) GetField(key string) (any, error) {
