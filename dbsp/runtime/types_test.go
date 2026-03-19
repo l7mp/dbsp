@@ -25,20 +25,21 @@ func (f *fakeRunnable) Start(ctx context.Context) error {
 
 type fakeProducer struct {
 	fakeRunnable
-	out chan runtime.Input
+	h runtime.InputHandler
 }
 
-func (f *fakeProducer) Output() <-chan runtime.Input {
-	return f.out
+func (f *fakeProducer) SetInputHandler(h runtime.InputHandler) {
+	f.h = h
 }
 
 type fakeConsumer struct {
 	fakeRunnable
-	in chan runtime.Output
+	last runtime.Output
 }
 
-func (f *fakeConsumer) Input() chan<- runtime.Output {
-	return f.in
+func (f *fakeConsumer) Consume(_ context.Context, out runtime.Output) error {
+	f.last = out
+	return nil
 }
 
 type fakeManager struct {

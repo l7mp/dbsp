@@ -51,8 +51,8 @@ func (o *InputOp) UnmarshalJSON(data []byte) error {
 	return o.baseOp.UnmarshalJSON(data)
 }
 
-// OutputOp is a circuit-output boundary operator (arity 1, Primitive).
-// Apply(in) returns in unchanged; the executor collects values[id] from the output nodes.
+// OutputOp is a circuit-output boundary operator (Primitive).
+// Apply sums all incoming inputs. With one input, this is identity.
 type OutputOp struct {
 	baseOp
 }
@@ -67,9 +67,16 @@ func (o *OutputOp) String() string       { return "Output" }
 func (o *OutputOp) Arity() int           { return 1 }
 func (o *OutputOp) Linearity() Linearity { return Primitive }
 
-// Apply returns in unchanged.
+// Apply returns the sum of all inputs.
 func (o *OutputOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
-	return inputs[0], nil
+	if len(inputs) == 0 {
+		return zset.New(), nil
+	}
+	out := zset.New()
+	for _, in := range inputs {
+		out = out.Add(in)
+	}
+	return out, nil
 }
 
 // DelayOp is the emit half of a z⁻¹ delay (arity 0, Primitive).

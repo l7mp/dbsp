@@ -23,6 +23,9 @@ func (o Output) AsInput() Input {
 	return Input{Name: o.Name, Data: o.Data}
 }
 
+// InputHandler consumes one producer event.
+type InputHandler func(context.Context, Input) error
+
 // Runnable is a long-lived component with context-managed lifetime.
 //
 // Start blocks until completion, context cancellation, or error.
@@ -30,23 +33,22 @@ type Runnable interface {
 	Start(ctx context.Context) error
 }
 
-// Producer emits runtime inputs.
+// Producer emits runtime inputs by invoking a registered input handler.
+//
+// Producer implementations must call the handler synchronously in their own
+// goroutine context when an input event is triggered.
 type Producer interface {
 	Runnable
-	Output() <-chan Input
+	SetInputHandler(InputHandler)
 }
 
 // Consumer receives runtime outputs.
+//
+// Consume executes in the producer-triggered context that ran the circuit step.
+// Implementations that need asynchronous handling should buffer internally.
 type Consumer interface {
 	Runnable
-	Input() chan<- Output
-}
-
-// Processor consumes runtime inputs and emits runtime outputs.
-type Processor interface {
-	Runnable
-	Input() chan<- Input
-	Output() <-chan Output
+	Consume(ctx context.Context, out Output) error
 }
 
 // Manager controls the lifecycle of runnables.

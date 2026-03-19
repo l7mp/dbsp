@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -22,9 +21,6 @@ var (
 	ErrMissingOutput = errors.New("runtime missing output")
 )
 
-// DefaultOutputBufferSize is the output channel capacity for Circuit.
-const DefaultOutputBufferSize = 16
-
 // CircuitConfig configures a Circuit runtime endpoint.
 type CircuitConfig struct {
 	Circuit     *circuit.Circuit
@@ -34,28 +30,20 @@ type CircuitConfig struct {
 	Logger      logr.Logger
 }
 
-// Circuit is an endpoint that executes a compiled DBSP circuit.
-//
-// Each received input triggers one executor step. The caller is responsible for
-// feeding input semantics (delta/snapshot) that match Incremental.
+// Circuit wraps a compiled circuit and executes one step per input event.
 type Circuit struct {
-	circuit     *circuit.Circuit
 	inputMap    map[string]string
 	outputMap   map[string]string
 	incremental bool
-
-	exec *executor.Executor
-	in   chan Input
-	out  chan Output
+	exec        *executor.Executor
 
 	inputNames  []string
 	outputNames []string
 	state       map[string]zset.ZSet
 }
 
-var _ Processor = (*Circuit)(nil)
-
-// NewCircuit creates a runtime endpoint for a compiled circuit.
+// NewCircuit creates a circuit wrapper from an already-compiled circuit and
+// input/output maps.
 func NewCircuit(cfg CircuitConfig) (*Circuit, error) {
 	if cfg.Circuit == nil {
 		return nil, fmt.Errorf("runtime config: circuit is required")
@@ -98,94 +86,67 @@ func NewCircuit(cfg CircuitConfig) (*Circuit, error) {
 	}
 
 	return &Circuit{
-		circuit:     compiled,
 		inputMap:    inputMap,
 		outputMap:   outputMap,
 		incremental: cfg.Incremental,
 		exec:        exec,
-		in:          make(chan Input),
-		out:         make(chan Output, DefaultOutputBufferSize),
 		inputNames:  inputNames,
 		outputNames: outputNames,
 		state:       state,
 	}, nil
 }
 
-// Input returns the runtime input channel.
-func (r *Circuit) Input() chan<- Input {
-	return r.in
-}
+// Execute runs one circuit step and returns logical outputs.
+func (c *Circuit) Execute(in Input) ([]Output, error) {
+	if _, ok := c.inputMap[in.Name]; !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownInput, in.Name)
+	}
 
-// Output returns the runtime output channel.
-func (r *Circuit) Output() <-chan Output {
-	return r.out
-}
+	stepInputs := c.buildStepInputs(in)
+	result, err := c.exec.Execute(stepInputs)
+	if err != nil {
+		return nil, fmt.Errorf("runtime step: %w", err)
+	}
 
-// Start runs the immediate-trigger event loop.
-func (r *Circuit) Start(ctx context.Context) error {
-	defer close(r.out)
-	defer r.exec.Reset()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case in, ok := <-r.in:
-			if !ok {
-				return nil
-			}
-
-			if _, ok := r.inputMap[in.Name]; !ok {
-				return fmt.Errorf("%w: %s", ErrUnknownInput, in.Name)
-			}
-
-			stepInputs := r.buildStepInputs(in)
-			result, err := r.exec.Execute(stepInputs)
-			if err != nil {
-				return fmt.Errorf("runtime step: %w", err)
-			}
-
-			for _, logical := range r.outputNames {
-				nodeID := r.outputMap[logical]
-				data, ok := result[nodeID]
-				if !ok {
-					return fmt.Errorf("%w: %s", ErrMissingOutput, logical)
-				}
-				if err := r.emit(ctx, Output{Name: logical, Data: data}); err != nil {
-					return err
-				}
-			}
+	outs := make([]Output, 0, len(c.outputNames))
+	for _, logical := range c.outputNames {
+		nodeID := c.outputMap[logical]
+		data, ok := result[nodeID]
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrMissingOutput, logical)
 		}
+		outs = append(outs, Output{Name: logical, Data: data})
+	}
+
+	return outs, nil
+}
+
+// Reset clears operator state and runtime snapshot cache.
+func (c *Circuit) Reset() {
+	c.exec.Reset()
+	for _, name := range c.inputNames {
+		c.state[name] = zset.New()
 	}
 }
 
-func (r *Circuit) buildStepInputs(in Input) map[string]zset.ZSet {
-	inputs := make(map[string]zset.ZSet, len(r.inputMap))
+func (c *Circuit) buildStepInputs(in Input) map[string]zset.ZSet {
+	inputs := make(map[string]zset.ZSet, len(c.inputMap))
 
-	if r.incremental {
-		for _, logical := range r.inputNames {
-			nodeID := r.inputMap[logical]
+	if c.incremental {
+		for _, logical := range c.inputNames {
+			nodeID := c.inputMap[logical]
 			inputs[nodeID] = zset.New()
 		}
-		inputs[r.inputMap[in.Name]] = in.Data.Clone()
+		inputs[c.inputMap[in.Name]] = in.Data.Clone()
 	} else {
-		r.state[in.Name] = in.Data.Clone()
-		for _, logical := range r.inputNames {
-			nodeID := r.inputMap[logical]
-			inputs[nodeID] = r.state[logical].Clone()
+		c.state[in.Name] = in.Data.Clone()
+		for _, logical := range c.inputNames {
+			nodeID := c.inputMap[logical]
+			inputs[nodeID] = c.state[logical].Clone()
 		}
 	}
 
 	return inputs
-}
-
-func (r *Circuit) emit(ctx context.Context, out Output) error {
-	select {
-	case <-ctx.Done():
-		return nil
-	case r.out <- out:
-		return nil
-	}
 }
 
 func sortedKeys(m map[string]string) []string {

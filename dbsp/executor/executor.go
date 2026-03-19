@@ -74,6 +74,17 @@ func (e *Executor) ExecuteWithObserver(inputs map[string]zset.ZSet, observer Obs
 		// Collect inputs from incoming edges.
 		inEdges := e.circuit.EdgesTo(nodeID)
 		arity := node.Operator.Arity()
+		if node.Operator.Kind() == operator.KindOutput {
+			maxPort := -1
+			for _, edge := range inEdges {
+				if edge.Port > maxPort {
+					maxPort = edge.Port
+				}
+			}
+			if maxPort+1 > arity {
+				arity = maxPort + 1
+			}
+		}
 		opInputs := make([]zset.ZSet, arity)
 		for i := range opInputs {
 			opInputs[i] = zset.New()
