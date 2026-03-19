@@ -18,6 +18,12 @@ type Query struct {
 	OutputMap map[string]string
 }
 
+// IR is a compiler intermediate representation.
+// Implementations are compiler-specific but share this marker interface.
+type IR interface {
+	IRKind() string
+}
+
 // InputNames returns the logical input names in sorted order.
 func (q *Query) InputNames() []string {
 	names := make([]string, 0, len(q.InputMap))
@@ -40,9 +46,12 @@ func (q *Query) OutputNames() []string {
 
 // Compiler turns query sources into DBSP circuits.
 type Compiler interface {
-	// Compile parses a query and returns a CompiledQuery.
-	Compile(source []byte) (*Query, error)
+	// Parse parses source into an intermediate representation.
+	Parse(source []byte) (IR, error)
 
-	// CompileString is a convenience wrapper for string input.
-	CompileString(source string) (*Query, error)
+	// ParseString is a convenience wrapper for string input.
+	ParseString(source string) (IR, error)
+
+	// Compile compiles an already-parsed IR into a Query.
+	Compile(ir IR) (*Query, error)
 }

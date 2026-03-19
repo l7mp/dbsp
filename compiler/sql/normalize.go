@@ -16,6 +16,8 @@ type NormalizedQuery struct {
 	BindVars map[string]*querypb.BindVariable
 }
 
+func (n *NormalizedQuery) IRKind() string { return "sql.normalized" }
+
 // Normalize parses and normalizes SQL into a canonical subset.
 // It rewrites aliases, expands stars, and rejects unsupported syntax.
 func Normalize(source string, db *relation.Database) (*NormalizedQuery, error) {

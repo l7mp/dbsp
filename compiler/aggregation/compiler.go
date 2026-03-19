@@ -71,18 +71,32 @@ func New(sources, outputs []string) *Compiler {
 	return &Compiler{sources: append([]string(nil), sources...), outputs: out}
 }
 
-// Compile parses and compiles a pipeline from JSON bytes.
-func (c *Compiler) Compile(source []byte) (*compiler.Query, error) {
-	p, err := parseProgram(source, c.sources, c.outputs)
+// Parse parses aggregation source into compiler IR.
+func (c *Compiler) Parse(source []byte) (compiler.IR, error) {
+	return parseProgram(source, c.sources, c.outputs)
+}
+
+// ParseString parses aggregation source from string input.
+func (c *Compiler) ParseString(source string) (compiler.IR, error) {
+	return c.Parse([]byte(source))
+}
+
+// CompileString is a convenience wrapper that parses then compiles.
+func (c *Compiler) CompileString(source string) (*compiler.Query, error) {
+	ir, err := c.ParseString(source)
 	if err != nil {
 		return nil, err
 	}
-	return c.compileProgram(p)
+	return c.Compile(ir)
 }
 
-// CompileString parses and compiles a pipeline from a string.
-func (c *Compiler) CompileString(source string) (*compiler.Query, error) {
-	return c.Compile([]byte(source))
+// Compile compiles parsed aggregation IR into a DBSP query.
+func (c *Compiler) Compile(ir compiler.IR) (*compiler.Query, error) {
+	p, ok := ir.(*program)
+	if !ok {
+		return nil, fmt.Errorf("aggregation: expected IR kind %q, got %T", (&program{}).IRKind(), ir)
+	}
+	return c.compileProgram(p)
 }
 
 // CompilePipeline compiles a typed pipeline.

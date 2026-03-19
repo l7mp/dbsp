@@ -19,6 +19,8 @@ type program struct {
 	Order    []int
 }
 
+func (p *program) IRKind() string { return "aggregation.program" }
+
 type branchSpec struct {
 	Index  int
 	Inputs []string

@@ -11,13 +11,18 @@ type stubCompiler struct {
 	called bool
 }
 
-func (s *stubCompiler) Compile(source []byte) (*compiler.Query, error) {
+func (s *stubCompiler) Parse(source []byte) (compiler.IR, error) {
 	s.called = true
 	return nil, nil
 }
 
-func (s *stubCompiler) CompileString(source string) (*compiler.Query, error) {
-	return s.Compile([]byte(source))
+func (s *stubCompiler) ParseString(source string) (compiler.IR, error) {
+	return s.Parse([]byte(source))
+}
+
+func (s *stubCompiler) Compile(ir compiler.IR) (*compiler.Query, error) {
+	s.called = true
+	return nil, nil
 }
 
 var _ = Describe("Engine", func() {

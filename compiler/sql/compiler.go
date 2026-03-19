@@ -25,18 +25,32 @@ func NewCompiler(db *relation.Database) *Compiler {
 	return &Compiler{db: db}
 }
 
-// Compile parses and compiles a SQL statement.
-func (c *Compiler) Compile(source []byte) (*compiler.Query, error) {
-	normalized, err := Normalize(string(source), c.db)
+// Parse parses SQL source into normalized SQL IR.
+func (c *Compiler) Parse(source []byte) (compiler.IR, error) {
+	return Normalize(string(source), c.db)
+}
+
+// ParseString parses SQL source into normalized SQL IR.
+func (c *Compiler) ParseString(source string) (compiler.IR, error) {
+	return c.Parse([]byte(source))
+}
+
+// CompileString is a convenience wrapper that parses then compiles.
+func (c *Compiler) CompileString(source string) (*compiler.Query, error) {
+	ir, err := c.ParseString(source)
 	if err != nil {
 		return nil, err
 	}
-	return c.compileSelect(normalized.Stmt, normalized.BindVars)
+	return c.Compile(ir)
 }
 
-// CompileString is a convenience wrapper for string input.
-func (c *Compiler) CompileString(source string) (*compiler.Query, error) {
-	return c.Compile([]byte(source))
+// Compile compiles parsed SQL IR into a DBSP query.
+func (c *Compiler) Compile(ir compiler.IR) (*compiler.Query, error) {
+	normalized, ok := ir.(*NormalizedQuery)
+	if !ok {
+		return nil, fmt.Errorf("sql: expected IR kind %q, got %T", (&NormalizedQuery{}).IRKind(), ir)
+	}
+	return c.compileSelect(normalized.Stmt, normalized.BindVars)
 }
 
 func (c *Compiler) compileSelect(sel *sqlparser.Select, bindVars map[string]*querypb.BindVariable) (*compiler.Query, error) {

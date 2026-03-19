@@ -65,7 +65,11 @@ type baseEngine struct {
 
 // Compile compiles a query source and prepares the circuit.
 func (e *baseEngine) Compile(source string) error {
-	query, err := e.compiler.CompileString(source)
+	ir, err := e.compiler.ParseString(source)
+	if err != nil {
+		return err
+	}
+	query, err := e.compiler.Compile(ir)
 	if err != nil {
 		return err
 	}
