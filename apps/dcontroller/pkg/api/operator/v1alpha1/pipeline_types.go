@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/l7mp/dcontroller/pkg/expression"
+	"github.com/l7mp/dbsp/dbsp/expression"
 )
 
 // Pipeline is a sequence of pipeline operations that process objects.

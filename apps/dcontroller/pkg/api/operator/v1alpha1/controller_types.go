@@ -8,8 +8,8 @@ import (
 )
 
 // Controller is a translator that processes a set of base resources via a declarative pipeline
-// into a delta on the target resource. A controller is defined by a name, a set of sources, a
-// processing pipeline and a target.
+// into deltas on target resources. A controller is defined by a name, a set of sources, a
+// processing pipeline, and one or more targets.
 type Controller struct {
 	// Name is the unique name of the controller.
 	Name string `json:"name"`
@@ -20,8 +20,8 @@ type Controller struct {
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Pipeline Pipeline `json:"pipeline"`
-	// The target resource the results are to be added.
-	Target Target `json:"target"`
+	// Targets are the resource endpoints where results are written.
+	Targets []Target `json:"targets"`
 }
 
 // Resource specifies a resource by the GVK.

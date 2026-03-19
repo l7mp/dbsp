@@ -24,7 +24,7 @@ type DeclarativeController struct {
 	name, op    string
 	config      opv1a1.Controller
 	sources     []reconciler.Source
-	target      reconciler.Target
+	targets     []reconciler.Target
 	mgr         manager.Manager
 	pipeline    pipeline.Evaluator
 	logger, log logr.Logger
@@ -33,7 +33,7 @@ type DeclarativeController struct {
 var _ Controller = &DeclarativeController{}
 
 // NewDeclarative registers a new declarative controller for an operator, given by the source resource(s)
-// the controller watches, a target resource the controller sends its output, and a processing
+// the controller watches, target resource(s) the controller sends its output, and a processing
 // pipeline to process the base resources into target resources.
 func NewDeclarative(mgr manager.Manager, operator string, config opv1a1.Controller, opts Options) (Controller, error) {
 	logger := mgr.GetLogger()
@@ -61,16 +61,24 @@ func NewDeclarative(mgr manager.Manager, operator string, config opv1a1.Controll
 		return c, c.PushCriticalError("invalid controller configuration: no source")
 	}
 
-	emptyTarget := opv1a1.Target{}
-	if config.Target == emptyTarget {
-		return c, c.PushCriticalError("invalid controller configuration: no target")
+	if len(config.Targets) == 0 {
+		return c, c.PushCriticalError("invalid controller configuration: no targets")
 	}
 
-	// Create the target.
-	c.target = reconciler.NewTarget(mgr, c.op, config.Target)
-	targetGVK, err := c.target.GetGVK()
-	if err != nil {
-		return c, c.PushCriticalErrorf("invalid target: %w", err)
+	// Create the targets.
+	targetGVKs := make([]schema.GroupVersionKind, 0, len(config.Targets))
+	for _, targetCfg := range config.Targets {
+		target := reconciler.NewTarget(mgr, c.op, targetCfg)
+		targetGVK, err := target.GetGVK()
+		if err != nil {
+			return c, c.PushCriticalErrorf("invalid target: %w", err)
+		}
+		c.targets = append(c.targets, target)
+		targetGVKs = append(targetGVKs, targetGVK)
+	}
+
+	if len(targetGVKs) == 0 {
+		return c, c.PushCriticalError("invalid controller configuration: no targets")
 	}
 
 	// Create the sources and the cache.
@@ -135,8 +143,8 @@ func NewDeclarative(mgr manager.Manager, operator string, config opv1a1.Controll
 	}
 
 	// Create the pipeline.
-	pipeline, err := pipeline.New(c.op, targetGVK, baseviews, c.config.Pipeline,
-		logger.WithName("pipeline").WithValues("controller", c.name, "target", targetGVK.String()))
+	pipeline, err := pipeline.New(c.op, targetGVKs, baseviews, c.config.Pipeline,
+		logger.WithName("pipeline").WithValues("controller", c.name, "targets", len(c.targets)))
 	if err != nil {
 		return c, c.PushCriticalErrorf("failed to create pipleline for controller %s: %w",
 			c.name, err)
@@ -144,7 +152,7 @@ func NewDeclarative(mgr manager.Manager, operator string, config opv1a1.Controll
 	c.pipeline = pipeline
 
 	c.log.Info("controller ready", "sources", fmt.Sprintf("[%s]", strings.Join(srcs, ",")),
-		"pipeline", c.pipeline.String(), "target", c.target.String(),
+		"pipeline", c.pipeline.String(), "targets", stringifyTargets(c.targets),
 		"errors", strings.Join(c.Report(), ","))
 
 	return c, nil
@@ -156,8 +164,8 @@ func (c *DeclarativeController) GetName() string { return c.name }
 // GetGVKs returns the GVKs of the views registered with the controller.
 func (c *DeclarativeController) GetGVKs() []schema.GroupVersionKind {
 	gvks := []schema.GroupVersionKind{}
-	if c.target != nil {
-		gvk, err := c.target.GetGVK()
+	for _, target := range c.targets {
+		gvk, err := target.GetGVK()
 		if err == nil {
 			gvks = append(gvks, gvk)
 		}
@@ -170,6 +178,14 @@ func (c *DeclarativeController) GetGVKs() []schema.GroupVersionKind {
 	}
 
 	return gvks
+}
+
+func stringifyTargets(targets []reconciler.Target) string {
+	items := make([]string, 0, len(targets))
+	for _, target := range targets {
+		items = append(items, target.String())
+	}
+	return fmt.Sprintf("[%s]", strings.Join(items, ","))
 }
 
 // GetStatus returns the status of the controller.

@@ -1,1 +1,7 @@
 bin/
+
+# Local refactor/docs scratch material - keep out of commits.
+dcontroller-refactor.md
+dcontroller-lang.md
+doc/
+cmd/dbsp/examples/

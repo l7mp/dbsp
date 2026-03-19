@@ -64,15 +64,17 @@ func (r *IncrementalReconciler) Reconcile(ctx context.Context, req reconciler.Re
 
 	// Apply the resultant deltas.
 	for _, d := range deltas {
-		r.log.V(4).Info("writing delta to target", "target", r.controller.target.String(),
-			"delta-type", d.Type, "object", object.Dump(d.Object))
+		for _, target := range r.controller.targets {
+			r.log.V(4).Info("writing delta to target", "target", target.String(),
+				"delta-type", d.Type, "object", object.Dump(d.Object))
 
-		// Pass the original object from the request for optimistic concurrency control.
-		if err := r.controller.target.Write(ctx, d, req.Object); err != nil {
-			err = fmt.Errorf("cannot update target %s for delta %s: %w", req.GVK,
-				d.String(), err)
-			r.log.Error(r.controller.Push(err), "error", "request", req)
-			return reconcile.Result{}, err
+			// Pass the original object from the request for optimistic concurrency control.
+			if err := target.Write(ctx, d, req.Object); err != nil {
+				err = fmt.Errorf("cannot update target %s for delta %s: %w", target.String(),
+					d.String(), err)
+				r.log.Error(r.controller.Push(err), "error", "request", req)
+				return reconcile.Result{}, err
+			}
 		}
 	}
 
@@ -115,15 +117,17 @@ func (r *StateOfTheWorldReconciler) Reconcile(ctx context.Context, req reconcile
 
 	// Apply the deltas to the target.
 	for _, d := range deltas {
-		r.log.V(4).Info("writing delta to target", "target", r.controller.target.String(),
-			"delta-type", d.Type, "object", object.Dump(d.Object))
+		for _, target := range r.controller.targets {
+			r.log.V(4).Info("writing delta to target", "target", target.String(),
+				"delta-type", d.Type, "object", object.Dump(d.Object))
 
-		// Pass nil for state-of-the-world reconciliation (eventual consistency is acceptable).
-		if err := r.controller.target.Write(ctx, d, nil); err != nil {
-			err = fmt.Errorf("cannot update target %s for delta %s: %w",
-				r.controller.target.String(), d.String(), err)
-			r.log.Error(r.controller.Push(err), "error", "request", req)
-			return reconcile.Result{}, err
+			// Pass nil for state-of-the-world reconciliation (eventual consistency is acceptable).
+			if err := target.Write(ctx, d, nil); err != nil {
+				err = fmt.Errorf("cannot update target %s for delta %s: %w",
+					target.String(), d.String(), err)
+				r.log.Error(r.controller.Push(err), "error", "request", req)
+				return reconcile.Result{}, err
+			}
 		}
 	}
 
