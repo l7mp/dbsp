@@ -6,40 +6,21 @@ import (
 	"github.com/l7mp/dbsp/dbsp/zset"
 )
 
-// Mode defines the semantic mode of an input/output payload.
-type Mode uint8
-
-const (
-	// Delta indicates change-based semantics.
-	Delta Mode = iota
-	// Snapshot indicates state-of-the-world semantics.
-	Snapshot
-)
-
-// String returns a stable textual representation of Mode.
-func (m Mode) String() string {
-	switch m {
-	case Delta:
-		return "delta"
-	case Snapshot:
-		return "snapshot"
-	default:
-		return "unknown"
-	}
-}
-
 // Input is a named payload sent into a runtime endpoint.
 type Input struct {
 	Name string
 	Data zset.ZSet
-	Mode Mode
 }
 
 // Output is a named payload emitted by a runtime endpoint.
 type Output struct {
 	Name string
 	Data zset.ZSet
-	Mode Mode
+}
+
+// AsInput converts an Output into an Input, preserving name and data.
+func (o Output) AsInput() Input {
+	return Input{Name: o.Name, Data: o.Data}
 }
 
 // Runnable is a long-lived component with context-managed lifetime.
@@ -61,8 +42,15 @@ type Consumer interface {
 	Input() chan<- Output
 }
 
-// Runtime controls the lifecycle of runnables.
-type Runtime interface {
+// Processor consumes runtime inputs and emits runtime outputs.
+type Processor interface {
+	Runnable
+	Input() chan<- Input
+	Output() <-chan Output
+}
+
+// Manager controls the lifecycle of runnables.
+type Manager interface {
 	Add(Runnable) error
 	Start(ctx context.Context) error
 }

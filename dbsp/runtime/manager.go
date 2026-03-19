@@ -19,26 +19,26 @@ var (
 	ErrRunnableReturnedNil = errors.New("runtime runnable returned nil before cancellation")
 )
 
-// Manager is a one-shot runnable manager.
+// manager is a one-shot runnable manager.
 //
 // Start can be called exactly once. Runnables are started concurrently and are
 // expected to run until cancellation. If any runnable exits with a non-nil
 // error, the manager cancels all others and returns the first error.
-type Manager struct {
+type manager struct {
 	mu        sync.Mutex
 	runnables []Runnable
 	started   bool
 }
 
-var _ Runtime = (*Manager)(nil)
+var _ Manager = (*manager)(nil)
 
-// NewManager creates a new Manager.
-func NewManager() *Manager {
-	return &Manager{}
+// NewManager creates a new lifecycle manager.
+func NewManager() Manager {
+	return &manager{}
 }
 
 // Add registers a runnable. Add must be called before Start.
-func (m *Manager) Add(r Runnable) error {
+func (m *manager) Add(r Runnable) error {
 	if r == nil {
 		return ErrNilRunnable
 	}
@@ -55,7 +55,7 @@ func (m *Manager) Add(r Runnable) error {
 }
 
 // Start launches all registered runnables and blocks until shutdown.
-func (m *Manager) Start(ctx context.Context) error {
+func (m *manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	if m.started {
 		m.mu.Unlock()

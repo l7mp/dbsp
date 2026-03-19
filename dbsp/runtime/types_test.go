@@ -13,7 +13,7 @@ func TestInterfacesCompile(t *testing.T) {
 	var _ runtime.Runnable = (*fakeRunnable)(nil)
 	var _ runtime.Producer = (*fakeProducer)(nil)
 	var _ runtime.Consumer = (*fakeConsumer)(nil)
-	var _ runtime.Runtime = (*fakeManager)(nil)
+	var _ runtime.Manager = (*fakeManager)(nil)
 }
 
 type fakeRunnable struct{}
