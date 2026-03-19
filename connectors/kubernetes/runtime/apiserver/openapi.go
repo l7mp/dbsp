@@ -6,9 +6,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	openapicommon "k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/validation/spec"
-	generatedopenapi "k8s.io/kubernetes/pkg/generated/openapi"
 
-	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
 )
 
 // getOpenAPIv2Handler returns a dynamic handler for OpenAPIv2.
@@ -47,8 +46,8 @@ func (s *APIServer) generateOpenAPIDefs(ref openapicommon.ReferenceCallback) map
 		}
 	}
 
-	// Obtain the base OpenAPI defs from Kubernetes
-	defs := generatedopenapi.GetOpenAPIDefinitions(ref)
+	// Keep this self-contained: do not depend on k8s.io/kubernetes generated OpenAPI.
+	defs := map[string]openapicommon.OpenAPIDefinition{}
 
 	unstructuredDefName := "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured.Unstructured"
 	defs[unstructuredDefName] = s.genOpenAPIUnstructDef(ref)

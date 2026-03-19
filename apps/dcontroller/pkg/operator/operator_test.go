@@ -16,8 +16,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
-	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
-	"github.com/l7mp/connectors/runtime/object"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	"github.com/l7mp/connectors/kubernetes/runtime/object"
 )
 
 const (

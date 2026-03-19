@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	"github.com/l7mp/connectors/runtime/store"
+	"github.com/l7mp/connectors/kubernetes/runtime/store"
 )
 
 func TestPredicate(t *testing.T) {
@@ -133,14 +133,14 @@ var _ = Describe("Predicate", func() {
 
 	Context("with view cache and GenerationChanged predicate", func() {
 		var (
-			viewCache *cache.ViewCache
+			viewCache *store.ViewCache
 			ctx       context.Context
 			cancel    context.CancelFunc
 			gvk       schema.GroupVersionKind
 		)
 
 		BeforeEach(func() {
-			viewCache = cache.NewViewCache(cache.CacheOptions{})
+			viewCache = store.NewViewCache(store.CacheOptions{})
 			ctx, cancel = context.WithCancel(context.Background())
 			gvk = schema.GroupVersionKind{
 				Group:   "test.view.dcontroller.io",

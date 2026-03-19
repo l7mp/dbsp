@@ -44,9 +44,9 @@ import (
 
 	"github.com/l7mp/dcontroller/internal/buildinfo"
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
-	"github.com/l7mp/connectors/runtime/apiserver"
-	"github.com/l7mp/connectors/runtime/auth"
-	"github.com/l7mp/connectors/runtime/store"
+	"github.com/l7mp/connectors/kubernetes/runtime/apiserver"
+	"github.com/l7mp/connectors/kubernetes/runtime/auth"
+	"github.com/l7mp/connectors/kubernetes/runtime/store"
 	"github.com/l7mp/dcontroller/pkg/kubernetes/controllers"
 )
 

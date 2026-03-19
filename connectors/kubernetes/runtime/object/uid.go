@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
-	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
 )
 
 // NewUID creates a stable UID from GVK+namespace+name.

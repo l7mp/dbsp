@@ -12,7 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/l7mp/connectors/runtime/object"
+	"github.com/l7mp/connectors/kubernetes/runtime/object"
 )
 
 var (
@@ -48,7 +48,7 @@ var _ = Describe("CompositeCache", func() {
 			Logger:       logger,
 		})
 		ctx, cancel = context.WithCancel(context.Background())
-		go store.Start(ctx)
+		go cache.Start(ctx)
 	})
 
 	AfterEach(func() {
@@ -69,12 +69,12 @@ var _ = Describe("CompositeCache", func() {
 			object.SetContent(obj, map[string]any{"a": int64(1)})
 			object.SetName(obj, "ns", "test-1")
 
-			err := store.GetViewCache().Add(obj)
+			err := cache.GetViewCache().Add(obj)
 			Expect(err).NotTo(HaveOccurred())
 
 			object.WithUID(obj)
 			retrieved := object.DeepCopy(obj)
-			err = store.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			err = cache.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(object.DeepEqual(retrieved, obj)).To(BeTrue())
 		})
@@ -83,12 +83,12 @@ var _ = Describe("CompositeCache", func() {
 			obj, err := object.NewViewObjectFromNativeObject("test", "view", pod)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = store.GetViewCache().Add(obj)
+			err = cache.GetViewCache().Add(obj)
 			Expect(err).NotTo(HaveOccurred())
 
 			object.WithUID(obj)
 			retrieved := object.DeepCopy(obj)
-			err = store.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			err = cache.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(object.DeepEqual(retrieved, obj)).To(BeTrue())
 		})
@@ -100,7 +100,7 @@ var _ = Describe("CompositeCache", func() {
 			retrieved := object.DeepCopy(pod)
 			Expect(retrieved).To(Equal(pod))
 
-			err = store.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			err = cache.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(retrieved).To(Equal(pod))
 			Expect(object.DeepEqual(retrieved, pod)).To(BeTrue())
@@ -109,16 +109,16 @@ var _ = Describe("CompositeCache", func() {
 		It("should return an error for non-existent object", func() {
 			obj := object.NewViewObject("test", "view")
 			object.SetName(obj, "", "non-existent")
-			err := store.Get(ctx, client.ObjectKeyFromObject(obj), obj)
+			err := cache.Get(ctx, client.ObjectKeyFromObject(obj), obj)
 			Expect(err).To(HaveOccurred())
-			err = store.Get(ctx, client.ObjectKeyFromObject(pod), pod)
+			err = cache.Get(ctx, client.ObjectKeyFromObject(pod), pod)
 			Expect(err).To(HaveOccurred())
 		})
 
 		It("should return an error for an unknown view group", func() {
 			obj := object.NewViewObject("other-op", "view")
 			object.SetName(obj, "default", "view")
-			err := store.Get(ctx, client.ObjectKeyFromObject(obj), obj)
+			err := cache.Get(ctx, client.ObjectKeyFromObject(obj), obj)
 			Expect(err).To(HaveOccurred())
 		})
 	})
@@ -138,12 +138,12 @@ var _ = Describe("CompositeCache", func() {
 			object.SetContent(objects[2], map[string]any{"c": int64(3)})
 
 			for _, obj := range objects {
-				err := store.GetViewCache().Add(obj)
+				err := cache.GetViewCache().Add(obj)
 				Expect(err).NotTo(HaveOccurred())
 			}
 
 			list := NewViewObjectList("test", "view")
-			err := store.List(ctx, list)
+			err := cache.List(ctx, list)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list.Items).To(HaveLen(3))
 			for i := range list.Items {
@@ -160,7 +160,7 @@ var _ = Describe("CompositeCache", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			list := &unstructured.UnstructuredList{}
-			err = store.List(ctx, list)
+			err = cache.List(ctx, list)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list.Items).To(HaveLen(1))
 			Expect(object.DeepEqual(&list.Items[0], pod)).To(BeTrue())
@@ -168,7 +168,7 @@ var _ = Describe("CompositeCache", func() {
 
 		It("should return an empty list when store is empty", func() {
 			list := &unstructured.UnstructuredList{}
-			err := store.List(ctx, list)
+			err := cache.List(ctx, list)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list.Items).To(BeEmpty())
 		})

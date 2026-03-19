@@ -21,10 +21,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
-	"github.com/l7mp/connectors/runtime/apiserver"
-	"github.com/l7mp/connectors/runtime/store"
-	"github.com/l7mp/connectors/controller"
-	"github.com/l7mp/connectors/manager"
+	"github.com/l7mp/connectors/kubernetes/runtime/apiserver"
+	"github.com/l7mp/connectors/kubernetes/runtime/store"
+	"github.com/l7mp/connectors/kubernetes/controller"
+	"github.com/l7mp/connectors/kubernetes/manager"
 	"github.com/l7mp/dcontroller/pkg/operator"
 	"github.com/l7mp/dcontroller/pkg/util"
 )

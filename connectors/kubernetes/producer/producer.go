@@ -15,7 +15,7 @@ import (
 	crevent "sigs.k8s.io/controller-runtime/pkg/event"
 	crpredicate "sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	kpredicate "github.com/l7mp/connectors/runtime/predicate"
+	kpredicate "github.com/l7mp/connectors/kubernetes/runtime/predicate"
 	dbunstructured "github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
 	"github.com/l7mp/dbsp/dbsp/zset"

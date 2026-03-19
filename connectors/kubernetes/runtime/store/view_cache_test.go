@@ -12,8 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
-	"github.com/l7mp/connectors/runtime/object"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	"github.com/l7mp/connectors/kubernetes/runtime/object"
 )
 
 const (
@@ -39,12 +39,12 @@ var _ = Describe("ViewCache", func() {
 
 	Describe("Registering views", func() {
 		It("should allow a view to be registered", func() {
-			err := store.RegisterCacheForKind(viewv1a1.GroupVersionKind("test", "view"))
+			err := cache.RegisterCacheForKind(viewv1a1.GroupVersionKind("test", "view"))
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should allow any view kind to be registered", func() {
-			err := store.RegisterCacheForKind(viewv1a1.GroupVersionKind("other-op", "view"))
+			err := cache.RegisterCacheForKind(viewv1a1.GroupVersionKind("other-op", "view"))
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
@@ -55,12 +55,12 @@ var _ = Describe("ViewCache", func() {
 			object.SetContent(obj, map[string]any{"a": int64(1)})
 			object.SetName(obj, "ns", "test-1")
 
-			err := store.Add(obj)
+			err := cache.Add(obj)
 			Expect(err).NotTo(HaveOccurred())
 
 			object.WithUID(obj)
 			retrieved := object.DeepCopy(obj)
-			err = store.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			err = cache.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(object.DeepEqual(retrieved, obj)).To(BeTrue())
 		})
@@ -69,7 +69,7 @@ var _ = Describe("ViewCache", func() {
 			obj := object.NewViewObject("test", "view")
 			object.SetName(obj, "", "non-existent")
 
-			err := store.Get(ctx, client.ObjectKeyFromObject(obj), obj)
+			err := cache.Get(ctx, client.ObjectKeyFromObject(obj), obj)
 			Expect(err).To(HaveOccurred())
 		})
 	})
@@ -85,13 +85,13 @@ var _ = Describe("ViewCache", func() {
 			object.SetContent(objects[2], map[string]any{"c": int64(3)})
 
 			for _, obj := range objects {
-				err := store.Add(obj)
+				err := cache.Add(obj)
 				Expect(err).NotTo(HaveOccurred())
 				object.WithUID(obj)
 			}
 
 			list := NewViewObjectList("test", "view")
-			err := store.List(ctx, list)
+			err := cache.List(ctx, list)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list.Items).To(HaveLen(3))
 			Expect(list.Items).To(ContainElement(*objects[0]))
@@ -108,7 +108,7 @@ var _ = Describe("ViewCache", func() {
 			objects[0].SetLabels(map[string]string{"app": "test"})
 
 			for _, obj := range objects {
-				err := store.Add(obj)
+				err := cache.Add(obj)
 				Expect(err).NotTo(HaveOccurred())
 				object.WithUID(obj)
 			}
@@ -119,7 +119,7 @@ var _ = Describe("ViewCache", func() {
 				Selector: labels.SelectorFromSet(labels.Set(map[string]string{"app": "test"})),
 			})
 
-			err := store.List(ctx, list, listOpts...)
+			err := cache.List(ctx, list, listOpts...)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list.Items).To(HaveLen(1))
 			Expect(list.Items).To(ContainElement(*objects[0]))
@@ -133,7 +133,7 @@ var _ = Describe("ViewCache", func() {
 			object.SetContent(objects[1], map[string]any{"b": int64(2)})
 
 			for _, obj := range objects {
-				err := store.Add(obj)
+				err := cache.Add(obj)
 				Expect(err).NotTo(HaveOccurred())
 				object.WithUID(obj)
 			}
@@ -144,7 +144,7 @@ var _ = Describe("ViewCache", func() {
 			Expect(err).NotTo(HaveOccurred())
 			listOpts = append(listOpts, client.MatchingFieldsSelector{Selector: selector})
 
-			err = store.List(ctx, list, listOpts...)
+			err = cache.List(ctx, list, listOpts...)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list.Items).To(HaveLen(1))
 			Expect(list.Items).To(ContainElement(*objects[0]))
@@ -152,7 +152,7 @@ var _ = Describe("ViewCache", func() {
 
 		It("should return an empty list when store is empty", func() {
 			list := NewViewObjectList("test", "view")
-			err := store.List(ctx, list)
+			err := cache.List(ctx, list)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list.Items).To(BeEmpty())
 		})
@@ -164,7 +164,7 @@ var _ = Describe("ViewCache", func() {
 			object.SetContent(obj, map[string]any{"a": int64(1)})
 			object.SetName(obj, "ns", "test-1")
 
-			c := store.GetClient()
+			c := cache.GetClient()
 			err := c.Create(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -196,7 +196,7 @@ var _ = Describe("ViewCache", func() {
 			object.SetContent(obj, map[string]any{"a": int64(1)})
 			obj.SetName("test-1")
 
-			c := store.GetClient()
+			c := cache.GetClient()
 			err := c.Create(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -232,7 +232,7 @@ var _ = Describe("ViewCache", func() {
 			cache.Add(obj)
 			object.WithUID(obj)
 
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"))
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"))
 			Expect(err).NotTo(HaveOccurred())
 
 			event, ok := tryWatch(watcher, interval)
@@ -242,7 +242,7 @@ var _ = Describe("ViewCache", func() {
 		})
 
 		It("should notify of added objects", func() {
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"))
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"))
 			Expect(err).NotTo(HaveOccurred())
 
 			obj := object.NewViewObject("test", "view")
@@ -262,7 +262,7 @@ var _ = Describe("ViewCache", func() {
 		})
 
 		It("should notify of updated objects", func() {
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"))
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"))
 			Expect(err).NotTo(HaveOccurred())
 
 			obj := object.NewViewObject("test", "view")
@@ -294,7 +294,7 @@ var _ = Describe("ViewCache", func() {
 		})
 
 		It("should notify of deleted objects", func() {
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"))
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"))
 			Expect(err).NotTo(HaveOccurred())
 
 			obj := object.NewViewObject("test", "view")
@@ -332,7 +332,7 @@ var _ = Describe("ViewCache", func() {
 			object.SetName(obj2, "namespace2", "test-watch-ns2")
 
 			// Start watching only namespace1
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"),
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"),
 				client.InNamespace("namespace1"))
 			Expect(err).NotTo(HaveOccurred())
 			defer watcher.Stop()
@@ -375,7 +375,7 @@ var _ = Describe("ViewCache", func() {
 			wrongLabelObj.SetLabels(map[string]string{"app": "other", "env": "dev"})
 
 			// Start watching with label selector
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"),
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"),
 				client.MatchingLabels{"app": "test"})
 			Expect(err).NotTo(HaveOccurred())
 			defer watcher.Stop()
@@ -416,7 +416,7 @@ var _ = Describe("ViewCache", func() {
 			selector, err := fields.ParseSelector("metadata.name=target-object")
 			Expect(err).NotTo(HaveOccurred())
 
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"),
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"),
 				client.MatchingFieldsSelector{Selector: selector})
 			Expect(err).NotTo(HaveOccurred())
 			defer watcher.Stop()
@@ -467,7 +467,7 @@ var _ = Describe("ViewCache", func() {
 			selector, err := fields.ParseSelector("metadata.name=target-name")
 			Expect(err).NotTo(HaveOccurred())
 
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"),
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"),
 				client.InNamespace("target-ns"),
 				client.MatchingLabels{"app": "test"},
 				client.MatchingFieldsSelector{Selector: selector})
@@ -508,7 +508,7 @@ var _ = Describe("ViewCache", func() {
 			cache.Add(obj)
 
 			// Start watching with label selector
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"),
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"),
 				client.MatchingLabels{"app": "test"})
 			Expect(err).NotTo(HaveOccurred())
 			defer watcher.Stop()
@@ -564,7 +564,7 @@ var _ = Describe("ViewCache", func() {
 			cache.Add(nonMatchingObj)
 
 			// Start watching with label selector
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"),
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"),
 				client.MatchingLabels{"app": "test"})
 			Expect(err).NotTo(HaveOccurred())
 			defer watcher.Stop()
@@ -613,7 +613,7 @@ var _ = Describe("ViewCache", func() {
 			object.SetName(obj2, "ns2", "obj2")
 
 			// Start watching without namespace restriction
-			watcher, err := store.Watch(ctx, NewViewObjectList("test", "view"))
+			watcher, err := cache.Watch(ctx, NewViewObjectList("test", "view"))
 			Expect(err).NotTo(HaveOccurred())
 			defer watcher.Stop()
 
@@ -651,13 +651,13 @@ var _ = Describe("ViewCache", func() {
 			object.SetContent(obj2, map[string]any{"data": "test-data-2"})
 			object.SetName(obj2, "ns2", "test-2")
 
-			err := store.Add(obj1)
+			err := cache.Add(obj1)
 			Expect(err).NotTo(HaveOccurred())
-			err = store.Add(obj2)
+			err = cache.Add(obj2)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Create first watcher and consume initial events
-			watcher1, err := store.Watch(ctx, NewViewObjectList("test", "view"))
+			watcher1, err := cache.Watch(ctx, NewViewObjectList("test", "view"))
 			Expect(err).NotTo(HaveOccurred())
 			defer watcher1.Stop()
 
@@ -675,7 +675,7 @@ var _ = Describe("ViewCache", func() {
 			Expect(ok).To(BeFalse())
 
 			// Create second watcher - this should NOT trigger new events on watcher1
-			watcher2, err := store.Watch(ctx, NewViewObjectList("test", "view"))
+			watcher2, err := cache.Watch(ctx, NewViewObjectList("test", "view"))
 			Expect(err).NotTo(HaveOccurred())
 			defer watcher2.Stop()
 
@@ -698,7 +698,7 @@ var _ = Describe("ViewCache", func() {
 			object.SetContent(obj3, map[string]any{"data": "test-data-3"})
 			object.SetName(obj3, "ns3", "test-3")
 
-			err = store.Add(obj3)
+			err = cache.Add(obj3)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Both watchers should receive the new object event

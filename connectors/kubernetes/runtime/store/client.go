@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
 )
 
 var _ client.Client = &CompositeClient{}
@@ -54,7 +54,7 @@ func NewClientForCache(config *rest.Config, store Cache, options ClientOptions) 
 		Client: nativeClient,
 		log:    logr.New(nil),
 	}
-	c.SetCache(cache)
+	c.SetCache(store)
 	return c, nil
 }
 
@@ -66,7 +66,7 @@ func (c *CompositeClient) SetClient(client client.Client) {
 // SetCache sets the store for the composite client.
 func (c *CompositeClient) SetCache(cache Cache) {
 	c.compositeCache = cache
-	if viewCache, ok := store.(*CompositeCache); ok {
+	if viewCache, ok := cache.(*CompositeCache); ok {
 		c.viewClient = viewCache.GetViewCache().GetClient().(*ViewCacheClient)
 	}
 }

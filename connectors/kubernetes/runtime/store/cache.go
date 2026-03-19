@@ -7,18 +7,18 @@ import (
 	"context"
 
 	"k8s.io/apimachinery/pkg/watch"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/l7mp/connectors/runtime/object"
+	"github.com/l7mp/connectors/kubernetes/runtime/object"
 )
 
 // Re-export controller-runtime types for convenience.
 // Users can use manager.Options and manager.Manager without importing controller-runtime.
 type (
-	Options      = store.Options
-	Cache        = store.Cache
-	NewCacheFunc = store.NewCacheFunc
+	Options      = ctrlcache.Options
+	Cache        = ctrlcache.Cache
+	NewCacheFunc = ctrlcache.NewCacheFunc
 )
 
 // ViewCacheInterface extends store.Cache with view-specific operations.

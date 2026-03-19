@@ -6,29 +6,29 @@ import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
 )
 
-var _ store.Cache = &CompositeCache{}
+var _ ctrlcache.Cache = &CompositeCache{}
 
 // CompositeCache is a store for storing view objects. It delegates native objects to a default
 // store.
 type CompositeCache struct {
-	defaultCache store.Cache
+	defaultCache Cache
 	viewCache    ViewCacheInterface
 	logger, log  logr.Logger
 }
 
 // CacheOptions are generic caching options.
 type CacheOptions struct {
-	cache.Options
+	ctrlcache.Options
 	// DefaultCache is the controller-runtime store used for anything that is not a view.
-	DefaultCache store.Cache
+	DefaultCache Cache
 	// ViewCache is the view store used for anything that is a view.
-	ViewCache store.Cache
+	ViewCache Cache
 	// Logger is for logging. Currently only the viewcache generates log messages.
 	Logger logr.Logger
 }
@@ -43,7 +43,7 @@ func NewCompositeCache(config *rest.Config, opts CacheOptions) (*CompositeCache,
 
 	defaultCache := opts.DefaultCache
 	if defaultCache == nil && config != nil {
-		dc, err := store.New(config, opts.Options)
+		dc, err := ctrlcache.New(config, opts.Options)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +88,7 @@ func (cc *CompositeCache) GetViewCache() ViewCacheInterface {
 }
 
 // GetInformer fetches or constructs an informer for the given object.
-func (cc *CompositeCache) GetInformer(ctx context.Context, obj client.Object, opts ...cache.InformerGetOption) (cache.Informer, error) {
+func (cc *CompositeCache) GetInformer(ctx context.Context, obj client.Object, opts ...ctrlcache.InformerGetOption) (ctrlcache.Informer, error) {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 
 	cc.log.V(6).Info("get-informer", "gvk", gvk)
@@ -101,7 +101,7 @@ func (cc *CompositeCache) GetInformer(ctx context.Context, obj client.Object, op
 
 // GetInformerForKind is similar to GetInformer, except that it takes a group-version-kind instead
 // of the underlying object.
-func (cc *CompositeCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...cache.InformerGetOption) (cache.Informer, error) {
+func (cc *CompositeCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...ctrlcache.InformerGetOption) (ctrlcache.Informer, error) {
 	cc.log.V(6).Info("get-informer-for-kind", "gvk", gvk)
 
 	if viewv1a1.IsViewKind(gvk) {

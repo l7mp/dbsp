@@ -11,7 +11,7 @@ import (
 
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
 	"github.com/l7mp/dcontroller/pkg/expression"
-	"github.com/l7mp/connectors/runtime/object"
+	"github.com/l7mp/connectors/kubernetes/runtime/object"
 )
 
 var (

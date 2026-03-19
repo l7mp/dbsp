@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/l7mp/connectors/runtime/object"
+	"github.com/l7mp/connectors/kubernetes/runtime/object"
 )
 
 var _ = Describe("Joins", func() {

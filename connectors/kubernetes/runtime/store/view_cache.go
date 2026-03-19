@@ -18,8 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
-	"github.com/l7mp/connectors/runtime/object"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	"github.com/l7mp/connectors/kubernetes/runtime/object"
 )
 
 var _ Cache = &ViewCache{}
@@ -120,7 +120,7 @@ func (c *ViewCache) RegisterInformerForKind(gvk schema.GroupVersionKind) error {
 
 	c.log.V(4).Info("registering informer for new GVK", "gvk", gvk)
 
-	cache, err := c.GetCacheForKind(gvk)
+	objStore, err := c.GetCacheForKind(gvk)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (c *ViewCache) RegisterInformerForKind(gvk schema.GroupVersionKind) error {
 		return nil
 	}
 
-	informer := NewViewCacheInformer(gvk, cache, c.log)
+	informer := NewViewCacheInformer(gvk, objStore, c.log)
 	c.informers[gvk] = informer
 
 	return nil
@@ -243,7 +243,7 @@ func (c *ViewCache) Add(obj object.Object) error {
 	c.log.V(5).Info("add", "gvk", gvk, "key", client.ObjectKeyFromObject(obj).String(),
 		"object", object.Dump(obj))
 
-	cache, err := c.GetCacheForKind(gvk)
+	objStore, err := c.GetCacheForKind(gvk)
 	if err != nil {
 		return err
 	}
@@ -255,7 +255,7 @@ func (c *ViewCache) Add(obj object.Object) error {
 	object.WithUID(obj)
 
 	// Add object to the store.
-	if err := store.Add(obj); err != nil {
+	if err := objStore.Add(obj); err != nil {
 		return err
 	}
 
@@ -301,12 +301,12 @@ func (c *ViewCache) Update(oldObj, newObj object.Object) error {
 	c.log.V(5).Info("update", "gvk", gvk, "key", client.ObjectKeyFromObject(newObj).String(),
 		"object", object.Dump(newObj))
 
-	cache, err := c.GetCacheForKind(gvk)
+	objStore, err := c.GetCacheForKind(gvk)
 	if err != nil {
 		return err
 	}
 
-	if err := store.Update(newObj); err != nil {
+	if err := objStore.Update(newObj); err != nil {
 		return err
 	}
 
@@ -341,7 +341,7 @@ func (c *ViewCache) Delete(obj object.Object) error {
 	c.log.V(5).Info("delete", "gvk", gvk, "key", client.ObjectKeyFromObject(obj).String(),
 		"object", object.Dump(obj))
 
-	cache, err := c.GetCacheForKind(gvk)
+	objStore, err := c.GetCacheForKind(gvk)
 	if err != nil {
 		return err
 	}
@@ -356,7 +356,7 @@ func (c *ViewCache) Delete(obj object.Object) error {
 		return err
 	}
 
-	existingObj, exists, err := store.GetByKey(key)
+	existingObj, exists, err := objStore.GetByKey(key)
 	if err != nil {
 		return err
 	}
@@ -367,7 +367,7 @@ func (c *ViewCache) Delete(obj object.Object) error {
 		}, key)
 	}
 
-	if err := store.Delete(existingObj); err != nil {
+	if err := objStore.Delete(existingObj); err != nil {
 		return err
 	}
 
@@ -411,7 +411,7 @@ func (c *ViewCache) Get(ctx context.Context, key client.ObjectKey, obj client.Ob
 		return fmt.Errorf("not a view GVK: %s", gvk)
 	}
 
-	cache, err := c.GetCacheForKind(gvk)
+	objStore, err := c.GetCacheForKind(gvk)
 	if err != nil {
 		return apierrors.NewBadRequest("invalid GVK")
 	}
@@ -420,7 +420,7 @@ func (c *ViewCache) Get(ctx context.Context, key client.ObjectKey, obj client.Ob
 
 	// Use toolscache.MetaNamespaceKeyFunc to look up the object, which stringifies an empty
 	// namespace differently from the way client.ObjectKey would stringify it
-	item, exists, err := store.GetByKey(clientKeyToCacheKey(key).String())
+	item, exists, err := objStore.GetByKey(clientKeyToCacheKey(key).String())
 	if err != nil {
 		return err
 	}
@@ -446,7 +446,7 @@ func (c *ViewCache) List(ctx context.Context, list client.ObjectList, opts ...cl
 		return fmt.Errorf("not a view GVK: %s", objGVK)
 	}
 
-	cache, err := c.GetCacheForKind(objGVK)
+	objStore, err := c.GetCacheForKind(objGVK)
 	if err != nil {
 		return apierrors.NewBadRequest("invalid GVK")
 	}
@@ -475,7 +475,7 @@ func (c *ViewCache) List(ctx context.Context, list client.ObjectList, opts ...cl
 		}
 	}
 
-	for _, item := range store.List() {
+	for _, item := range objStore.List() {
 		target, ok := item.(object.Object)
 		if !ok {
 			return apierrors.NewConflict(
@@ -529,11 +529,11 @@ func matchesFieldSelector(obj object.Object, selector fields.Selector) bool {
 // for testing and debugging.
 func (c *ViewCache) Dump(ctx context.Context, gvk schema.GroupVersionKind) []string {
 	ret := []string{}
-	cache, err := c.GetCacheForKind(gvk)
+	objStore, err := c.GetCacheForKind(gvk)
 	if err != nil {
 		return ret
 	}
-	for _, item := range store.List() {
+	for _, item := range objStore.List() {
 		target, ok := item.(object.Object)
 		if ok {
 			ret = append(ret, object.Dump(target))

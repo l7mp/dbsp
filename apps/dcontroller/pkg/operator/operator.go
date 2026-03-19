@@ -27,11 +27,11 @@ import (
 	"sigs.k8s.io/yaml"
 
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
-	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
-	"github.com/l7mp/connectors/runtime/apiserver"
-	"github.com/l7mp/connectors/runtime/store"
-	dcontroller "github.com/l7mp/connectors/controller"
-	"github.com/l7mp/connectors/manager"
+	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	"github.com/l7mp/connectors/kubernetes/runtime/apiserver"
+	"github.com/l7mp/connectors/kubernetes/runtime/store"
+	dcontroller "github.com/l7mp/connectors/kubernetes/controller"
+	"github.com/l7mp/connectors/kubernetes/manager"
 )
 
 // Options can be used to customize the Operator's behavior.

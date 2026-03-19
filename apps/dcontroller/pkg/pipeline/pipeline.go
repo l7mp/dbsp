@@ -35,8 +35,8 @@ import (
 	aggcompiler "github.com/l7mp/dbsp/dbsp/compiler/aggregation"
 	"github.com/l7mp/dbsp/dbsp/transform"
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
-	"github.com/l7mp/connectors/runtime/store"
-	"github.com/l7mp/connectors/runtime/object"
+	"github.com/l7mp/connectors/kubernetes/runtime/store"
+	"github.com/l7mp/connectors/kubernetes/runtime/object"
 )
 
 var _ Evaluator = &Pipeline{}

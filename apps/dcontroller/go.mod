@@ -7,7 +7,7 @@ toolchain go1.24.2
 require (
 	github.com/bsm/gomega v1.27.10
 	github.com/l7mp/dbsp v0.0.0
-	github.com/l7mp/connectors v0.0.0
+	github.com/l7mp/connectors/kubernetes v0.0.0
 	github.com/emicklei/dot v1.9.2
 	github.com/go-logr/logr v1.4.3
 	github.com/golang-jwt/jwt/v5 v5.2.2
@@ -34,7 +34,7 @@ require (
 
 replace github.com/l7mp/dbsp => ../..
 
-replace github.com/l7mp/connectors => ../../connectors/kubernetes
+replace github.com/l7mp/connectors/kubernetes => ../../connectors/kubernetes
 
 require (
 	cel.dev/expr v0.24.0 // indirect
