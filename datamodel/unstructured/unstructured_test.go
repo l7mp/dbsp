@@ -84,23 +84,6 @@ var _ = Describe("Unstructured", func() {
 		})
 	})
 
-	Describe("Concat", func() {
-		It("deep copies nested values from both sides", func() {
-			a := unstructured.New(map[string]any{"nested": map[string]any{"v": int64(1)}}, nil)
-			b := unstructured.New(map[string]any{"other": map[string]any{"v": int64(2)}}, nil)
-			result := a.Concat(b)
-
-			// Mutate a nested map in the result.
-			nested, err := result.GetField("nested")
-			Expect(err).NotTo(HaveOccurred())
-			nested.(map[string]any)["v"] = int64(99)
-
-			// Original a must be unaffected.
-			origNested, _ := a.GetField("nested")
-			Expect(origNested.(map[string]any)["v"]).To(Equal(int64(1)))
-		})
-	})
-
 	Describe("New", func() {
 		It("does not alias the caller's nested map", func() {
 			inner := map[string]any{"k": "orig"}

@@ -176,6 +176,7 @@ type Unwind struct {
 	linearOp
 	fieldPath  string // The array field to unwind.
 	indexField string // Optional: field to store the array index.
+	nameAppend bool   // Optional: append index to .metadata.name.
 }
 
 // NewUnwind creates a new Unwind operator.
@@ -193,10 +194,22 @@ func (o *Unwind) WithIndexField(field string) *Unwind {
 	return o
 }
 
+// WithNameAppend toggles appending -<index> suffix to .metadata.name.
+func (o *Unwind) WithNameAppend(enabled bool) *Unwind {
+	o.nameAppend = enabled
+	return o
+}
+
 // String overrides opBase.String because indexField may be set after construction.
 func (o *Unwind) String() string {
+	if o.indexField != "" && o.nameAppend {
+		return fmt.Sprintf("Unwind(field=%s, index=%s, appendName=true)", o.fieldPath, o.indexField)
+	}
 	if o.indexField != "" {
-		return fmt.Sprintf("Unwind(field=%s, index=%s)", o.fieldPath, o.indexField)
+		return fmt.Sprintf("Unwind(field=%s, index=%s, appendName=false)", o.fieldPath, o.indexField)
+	}
+	if o.nameAppend {
+		return fmt.Sprintf("Unwind(field=%s, appendName=true)", o.fieldPath)
 	}
 	return fmt.Sprintf("Unwind(field=%s)", o.fieldPath)
 }
@@ -231,6 +244,23 @@ func (o *Unwind) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 			if e := newDoc.SetField(o.fieldPath, arrElem); e != nil {
 				err = fmt.Errorf("failed to set field %q: %w", o.fieldPath, e)
 				return false
+			}
+
+			if o.nameAppend {
+				nameRaw, e := newDoc.GetField("metadata.name")
+				if e != nil {
+					err = fmt.Errorf("failed to read metadata.name for name append: %w", e)
+					return false
+				}
+				name, ok := nameRaw.(string)
+				if !ok {
+					err = fmt.Errorf("metadata.name must be string for name append, got %T", nameRaw)
+					return false
+				}
+				if e := newDoc.SetField("metadata.name", fmt.Sprintf("%s-%d", name, i)); e != nil {
+					err = fmt.Errorf("failed to append index to metadata.name: %w", e)
+					return false
+				}
 			}
 
 			// Optionally set the index field.

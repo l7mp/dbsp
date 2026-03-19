@@ -293,3 +293,92 @@ func tableColumns(table string, tbl *relation.Table) []*sqlparser.ColName {
 	}
 	return cols
 }
+
+func qualifyUnqualifiedColumns(sel *sqlparser.Select, aliases map[string]string, db *relation.Database) error {
+	if db == nil {
+		return nil
+	}
+	if len(aliases) <= 1 {
+		return nil
+	}
+	columnOwners := map[string]string{}
+	for _, base := range aliases {
+		tbl, err := db.GetTable(base)
+		if err != nil {
+			return err
+		}
+		for _, col := range tbl.Schema.Columns {
+			name := strings.ToLower(col.Name)
+			if _, exists := columnOwners[name]; !exists {
+				columnOwners[name] = base
+			} else {
+				columnOwners[name] = ""
+			}
+		}
+	}
+
+	var walkExpr func(expr sqlparser.Expr) error
+	walkExpr = func(expr sqlparser.Expr) error {
+		switch e := expr.(type) {
+		case *sqlparser.ColName:
+			if e.Qualifier.Name.String() != "" {
+				return nil
+			}
+			owner, ok := columnOwners[strings.ToLower(e.Name.String())]
+			if !ok || owner == "" {
+				return nil
+			}
+			e.Qualifier.Name = sqlparser.NewTableIdent(owner)
+		case *sqlparser.AndExpr:
+			if err := walkExpr(e.Left); err != nil {
+				return err
+			}
+			return walkExpr(e.Right)
+		case *sqlparser.OrExpr:
+			if err := walkExpr(e.Left); err != nil {
+				return err
+			}
+			return walkExpr(e.Right)
+		case *sqlparser.NotExpr:
+			return walkExpr(e.Expr)
+		case *sqlparser.ComparisonExpr:
+			if err := walkExpr(e.Left); err != nil {
+				return err
+			}
+			return walkExpr(e.Right)
+		case *sqlparser.BinaryExpr:
+			if err := walkExpr(e.Left); err != nil {
+				return err
+			}
+			return walkExpr(e.Right)
+		case *sqlparser.UnaryExpr:
+			return walkExpr(e.Expr)
+		case *sqlparser.IsExpr:
+			return walkExpr(e.Expr)
+		case *sqlparser.ParenExpr:
+			return walkExpr(e.Expr)
+		}
+		return nil
+	}
+
+	if sel.Where != nil {
+		if err := walkExpr(sel.Where.Expr); err != nil {
+			return err
+		}
+	}
+	for _, se := range sel.SelectExprs {
+		if ae, ok := se.(*sqlparser.AliasedExpr); ok {
+			if err := walkExpr(ae.Expr); err != nil {
+				return err
+			}
+		}
+	}
+	for _, from := range sel.From {
+		if jt, ok := from.(*sqlparser.JoinTableExpr); ok && jt.Condition.On != nil {
+			if err := walkExpr(jt.Condition.On); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
