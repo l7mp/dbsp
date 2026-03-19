@@ -164,6 +164,13 @@ Tips:
 - Prefer package-local verification for faster iteration, then run broader tests.
 - Do not use marshal/unmarshal conversion as a generic object adaptation trick (for example, converting between unstructured/document forms by serializing to JSON and parsing back) without explicit user approval first. If you think it is necessary, stop and ask.
 
+## Commit Message Convention
+
+- **ALWAYS** use the commit format `type(component): Message`.
+- Prefer component names like `conn/misc`, `runtime`, `conn/k8s`, `compiler`, etc.
+- Start the subject with a capitalized imperative phrase.
+- Example: `feat(conn/misc): Add Pipe producer and consumer`.
+
 ## Useful Command Reference
 
 ```bash

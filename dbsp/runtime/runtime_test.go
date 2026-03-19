@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/l7mp/dbsp/connectors/misc"
 	"github.com/l7mp/dbsp/dbsp/compiler"
 	"github.com/l7mp/dbsp/dbsp/compiler/aggregation"
 	"github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
@@ -132,6 +133,56 @@ func TestRuntimeSumsOutputsFromMultipleCircuits(t *testing.T) {
 	want.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 2)
 	if !out.Data.Equal(want) {
 		t.Fatal("aggregated output payload mismatch")
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Start() error = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for runtime shutdown")
+	}
+}
+
+func TestRuntimeEndToEndWithPipeConnectors(t *testing.T) {
+	t.Parallel()
+
+	c := mustNewCircuit(t)
+	in := make(chan runtime.Input, 1)
+	out := make(chan runtime.Output, 1)
+
+	p := misc.NewPipeProducer(in)
+	consumer := misc.NewPipeConsumer(out)
+
+	r := runtime.NewRuntime(runtime.Config{
+		Circuit:   c,
+		Producers: []runtime.Producer{p},
+		Consumers: []runtime.Consumer{consumer},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- r.Start(ctx) }()
+
+	delta := zset.New()
+	delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
+	in <- runtime.Input{Name: "Pod", Data: delta}
+
+	select {
+	case got := <-out:
+		if got.Name != "output" {
+			t.Fatalf("output name = %q, want output", got.Name)
+		}
+
+		want := zset.New()
+		want.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
+		if !got.Data.Equal(want) {
+			t.Fatal("output payload mismatch")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for runtime output")
 	}
 
 	cancel()
