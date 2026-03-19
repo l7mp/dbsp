@@ -4,7 +4,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/l7mp/dcontroller/pkg/predicate"
+	"github.com/l7mp/connectors/runtime/predicate"
 )
 
 // Controller is a translator that processes a set of base resources via a declarative pipeline

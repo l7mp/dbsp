@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/l7mp/dcontroller/pkg/object"
+	"github.com/l7mp/connectors/runtime/object"
 )
 
 var _ = Describe("SQL Examples", func() {

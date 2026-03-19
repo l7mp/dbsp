@@ -18,9 +18,9 @@ import (
 
 	"github.com/l7mp/dcontroller/internal/testutils"
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
-	"github.com/l7mp/dcontroller/pkg/controller"
-	"github.com/l7mp/dcontroller/pkg/manager"
-	"github.com/l7mp/dcontroller/pkg/object"
+	"github.com/l7mp/connectors/controller"
+	"github.com/l7mp/connectors/manager"
+	"github.com/l7mp/connectors/runtime/object"
 	"github.com/l7mp/dcontroller/pkg/testsuite"
 )
 

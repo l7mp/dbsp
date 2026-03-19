@@ -22,11 +22,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
-	"github.com/l7mp/dcontroller/pkg/cache"
-	"github.com/l7mp/dcontroller/pkg/manager"
-	dobject "github.com/l7mp/dcontroller/pkg/object"
+	"github.com/l7mp/connectors/runtime/cache"
+	"github.com/l7mp/connectors/manager"
+	dobject "github.com/l7mp/connectors/runtime/object"
 	doperator "github.com/l7mp/dcontroller/pkg/operator"
-	dreconciler "github.com/l7mp/dcontroller/pkg/reconciler"
+	dreconciler "github.com/l7mp/connectors/reconciler"
 )
 
 type NativeController controller.TypedController[dreconciler.Request]

@@ -23,9 +23,9 @@ import (
 
 	"github.com/l7mp/dcontroller/internal/testutils"
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
-	"github.com/l7mp/dcontroller/pkg/cache"
+	"github.com/l7mp/connectors/runtime/cache"
 	"github.com/l7mp/dcontroller/pkg/kubernetes/controllers"
-	"github.com/l7mp/dcontroller/pkg/object"
+	"github.com/l7mp/connectors/runtime/object"
 	"github.com/l7mp/dcontroller/pkg/testsuite"
 )
 
