@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 
 var _ Cache = &DelegatingViewCache{}
 
-// DelegatingViewCache is a view cache that delegates storage operations to a shared ViewCache
+// DelegatingViewCache is a view store that delegates storage operations to a shared ViewCache
 // while maintaining its own local informers. This allows multiple operators to share view storage
 // while having independent lifecycles.
 //
@@ -43,7 +43,7 @@ type DelegatingViewCache struct {
 	logger, log logr.Logger
 }
 
-// NewDelegatingViewCache creates a new delegating view cache that shares storage with other
+// NewDelegatingViewCache creates a new delegating view store that shares storage with other
 // operators but maintains independent informer lifecycle.
 func NewDelegatingViewCache(storage *ViewCache, opts CacheOptions) *DelegatingViewCache {
 	logger := opts.Logger
@@ -198,7 +198,7 @@ func (d *DelegatingViewCache) List(ctx context.Context, list client.ObjectList, 
 // Start runs until the context is closed. It blocks.
 // Starts all local informers and waits for context cancellation.
 func (d *DelegatingViewCache) Start(ctx context.Context) error {
-	d.log.V(2).Info("delegating cache start")
+	d.log.V(2).Info("delegating store start")
 
 	// Start all local informers
 	d.mu.RLock()
@@ -211,7 +211,7 @@ func (d *DelegatingViewCache) Start(ctx context.Context) error {
 	// Wait for context cancellation
 	<-ctx.Done()
 
-	d.log.V(2).Info("delegating cache stopped")
+	d.log.V(2).Info("delegating store stopped")
 
 	// Clean up: unregister all informers from shared storage
 	d.mu.RLock()
@@ -248,7 +248,7 @@ func (d *DelegatingViewCache) Watch(ctx context.Context, list client.ObjectList,
 	return d.storage.Watch(ctx, list, opts...)
 }
 
-// Add is not part of the cache.Cache interface, but we provide it for compatibility
+// Add is not part of the store.Cache interface, but we provide it for compatibility
 // with code that uses ViewCache directly. It delegates to shared storage and triggers
 // local informers.
 //
@@ -271,7 +271,7 @@ func (d *DelegatingViewCache) Add(obj object.Object) error {
 	return d.storage.Add(obj)
 }
 
-// Update is not part of the cache.Cache interface, but we provide it for compatibility.
+// Update is not part of the store.Cache interface, but we provide it for compatibility.
 // It delegates to shared storage.
 func (d *DelegatingViewCache) Update(oldObj, newObj object.Object) error {
 	gvk := newObj.GetObjectKind().GroupVersionKind()
@@ -287,7 +287,7 @@ func (d *DelegatingViewCache) Update(oldObj, newObj object.Object) error {
 	return d.storage.Update(oldObj, newObj)
 }
 
-// Delete is not part of the cache.Cache interface, but we provide it for compatibility.
+// Delete is not part of the store.Cache interface, but we provide it for compatibility.
 // It delegates to shared storage.
 func (d *DelegatingViewCache) Delete(obj object.Object) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()

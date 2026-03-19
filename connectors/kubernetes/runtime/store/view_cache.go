@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	"context"
@@ -27,8 +27,8 @@ var _ Cache = &ViewCache{}
 // DefaultWatchChannelBuffer defines the default buffer size for watches.
 const DefaultWatchChannelBuffer = 256
 
-// ViewCache implements an ephemeral store for view objects. The view cache has an internal cache
-// per each GVK that can be stored in the cache. ViewCache is now operator-agnostic and can store
+// ViewCache implements an ephemeral store for view objects. The view store has an internal cache
+// per each GVK that can be stored in the store. ViewCache is now operator-agnostic and can store
 // views from any operator.
 type ViewCache struct {
 	mu        sync.RWMutex
@@ -42,7 +42,7 @@ type ViewCache struct {
 	logger, log         logr.Logger
 }
 
-// NewViewCache creates a new view cache that can store views from any operator.
+// NewViewCache creates a new view store that can store views from any operator.
 func NewViewCache(opts CacheOptions) *ViewCache {
 	logger := opts.Logger
 	if logger.GetSink() == nil {
@@ -60,9 +60,9 @@ func NewViewCache(opts CacheOptions) *ViewCache {
 	return c
 }
 
-// RegisterCacheForKind registers a new GVK in the cache.
+// RegisterCacheForKind registers a new GVK in the store.
 func (c *ViewCache) RegisterCacheForKind(gvk schema.GroupVersionKind) error {
-	c.log.V(1).Info("registering cache for new GVK", "gvk", gvk)
+	c.log.V(1).Info("registering store for new GVK", "gvk", gvk)
 
 	if !viewv1a1.IsViewKind(gvk) {
 		return fmt.Errorf("not a view GVK: %s", gvk)
@@ -72,7 +72,7 @@ func (c *ViewCache) RegisterCacheForKind(gvk schema.GroupVersionKind) error {
 	defer c.mu.Unlock()
 
 	if _, exists := c.caches[gvk]; exists {
-		c.log.V(8).Info("refusing to register cache for GVK %s: cache already exists", "gvk", gvk)
+		c.log.V(8).Info("refusing to register store for GVK %s: store already exists", "gvk", gvk)
 		return nil
 	}
 
@@ -86,7 +86,7 @@ func (c *ViewCache) RegisterCacheForKind(gvk schema.GroupVersionKind) error {
 	return nil
 }
 
-// GetCacheForKind returns the internal cache for a given GVK.
+// GetCacheForKind returns the internal store for a given GVK.
 func (c *ViewCache) GetCacheForKind(gvk schema.GroupVersionKind) (toolscache.Indexer, error) {
 	if !viewv1a1.IsViewKind(gvk) {
 		return nil, fmt.Errorf("not a view GVK: %s", gvk)
@@ -106,7 +106,7 @@ func (c *ViewCache) GetCacheForKind(gvk schema.GroupVersionKind) (toolscache.Ind
 	}
 
 	if !exists {
-		return nil, fmt.Errorf("could not create cache for GVK %s", gvk)
+		return nil, fmt.Errorf("could not create store for GVK %s", gvk)
 	}
 
 	return indexer, nil
@@ -232,7 +232,7 @@ func (c *ViewCache) RemoveInformer(ctx context.Context, obj client.Object) error
 	return nil
 }
 
-// Add inserts an object into the cache.
+// Add inserts an object into the store.
 func (c *ViewCache) Add(obj object.Object) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 
@@ -248,14 +248,14 @@ func (c *ViewCache) Add(obj object.Object) error {
 		return err
 	}
 
-	// The cache does not apply deepcopy to stored objects.
+	// The store does not apply deepcopy to stored objects.
 	obj = object.DeepCopy(obj)
 
 	// Make sure to have a valid UID.
 	object.WithUID(obj)
 
-	// Add object to the cache.
-	if err := cache.Add(obj); err != nil {
+	// Add object to the store.
+	if err := store.Add(obj); err != nil {
 		return err
 	}
 
@@ -279,9 +279,9 @@ func (c *ViewCache) Add(obj object.Object) error {
 	return nil
 }
 
-// Update modifies the object stored in the cache.
+// Update modifies the object stored in the store.
 func (c *ViewCache) Update(oldObj, newObj object.Object) error {
-	// The cache does not apply deepcopy to stored objects.
+	// The store does not apply deepcopy to stored objects.
 	newObj = object.DeepCopy(newObj)
 
 	// Make sure to have a valid UID (cached views always have an UID).
@@ -306,7 +306,7 @@ func (c *ViewCache) Update(oldObj, newObj object.Object) error {
 		return err
 	}
 
-	if err := cache.Update(newObj); err != nil {
+	if err := store.Update(newObj); err != nil {
 		return err
 	}
 
@@ -330,7 +330,7 @@ func (c *ViewCache) Update(oldObj, newObj object.Object) error {
 	return nil
 }
 
-// Delete removes an object from the cache.
+// Delete removes an object from the store.
 func (c *ViewCache) Delete(obj object.Object) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 
@@ -346,7 +346,7 @@ func (c *ViewCache) Delete(obj object.Object) error {
 		return err
 	}
 
-	// Delete the existing object from the cache by key lookup (not the incoming obj directly).
+	// Delete the existing object from the store by key lookup (not the incoming obj directly).
 	// This ensures we remove what's actually cached, handling cases where the caller passes a
 	// stale object version. Note that this may break controller chains because downstream
 	// controllers would receive stale cached state rather than the transformed delta. However,
@@ -356,7 +356,7 @@ func (c *ViewCache) Delete(obj object.Object) error {
 		return err
 	}
 
-	existingObj, exists, err := cache.GetByKey(key)
+	existingObj, exists, err := store.GetByKey(key)
 	if err != nil {
 		return err
 	}
@@ -367,7 +367,7 @@ func (c *ViewCache) Delete(obj object.Object) error {
 		}, key)
 	}
 
-	if err := cache.Delete(existingObj); err != nil {
+	if err := store.Delete(existingObj); err != nil {
 		return err
 	}
 
@@ -398,7 +398,7 @@ func (c *ViewCache) IndexField(ctx context.Context, obj client.Object, field str
 	return errors.New("field indexing is not supported for ViewCache")
 }
 
-// Get retrieves an obj for the given object key from the cache.
+// Get retrieves an obj for the given object key from the store.
 func (c *ViewCache) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	target, ok := obj.(object.Object)
 	if !ok {
@@ -420,7 +420,7 @@ func (c *ViewCache) Get(ctx context.Context, key client.ObjectKey, obj client.Ob
 
 	// Use toolscache.MetaNamespaceKeyFunc to look up the object, which stringifies an empty
 	// namespace differently from the way client.ObjectKey would stringify it
-	item, exists, err := cache.GetByKey(clientKeyToCacheKey(key).String())
+	item, exists, err := store.GetByKey(clientKeyToCacheKey(key).String())
 	if err != nil {
 		return err
 	}
@@ -437,7 +437,7 @@ func (c *ViewCache) Get(ctx context.Context, key client.ObjectKey, obj client.Ob
 	return nil
 }
 
-// List retrieves a list of objects for a given namespace and list options from the cache.
+// List retrieves a list of objects for a given namespace and list options from the store.
 func (c *ViewCache) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	listGVK := list.GetObjectKind().GroupVersionKind()
 	objGVK := c.discovery.ObjectGVKFromListGVK(listGVK)
@@ -475,7 +475,7 @@ func (c *ViewCache) List(ctx context.Context, list client.ObjectList, opts ...cl
 		}
 	}
 
-	for _, item := range cache.List() {
+	for _, item := range store.List() {
 		target, ok := item.(object.Object)
 		if !ok {
 			return apierrors.NewConflict(
@@ -525,7 +525,7 @@ func matchesFieldSelector(obj object.Object, selector fields.Selector) bool {
 	return selector.Matches(fieldSet)
 }
 
-// Dump returns a string representation of all objects stored in a cache given a GVK. Used mostly
+// Dump returns a string representation of all objects stored in a store given a GVK. Used mostly
 // for testing and debugging.
 func (c *ViewCache) Dump(ctx context.Context, gvk schema.GroupVersionKind) []string {
 	ret := []string{}
@@ -533,7 +533,7 @@ func (c *ViewCache) Dump(ctx context.Context, gvk schema.GroupVersionKind) []str
 	if err != nil {
 		return ret
 	}
-	for _, item := range cache.List() {
+	for _, item := range store.List() {
 		target, ok := item.(object.Object)
 		if ok {
 			ret = append(ret, object.Dump(target))
@@ -543,7 +543,7 @@ func (c *ViewCache) Dump(ctx context.Context, gvk schema.GroupVersionKind) []str
 	return ret
 }
 
-// Watch lets clients to wait for events occurring in the cache.
+// Watch lets clients to wait for events occurring in the store.
 func (c *ViewCache) Watch(ctx context.Context, list client.ObjectList, opts ...client.ListOption) (watch.Interface, error) {
 	listGVK := list.GetObjectKind().GroupVersionKind()
 	objGVK := c.discovery.ObjectGVKFromListGVK(listGVK)
@@ -624,7 +624,7 @@ func (c *ViewCache) Watch(ctx context.Context, list client.ObjectList, opts ...c
 	return watcher, nil
 }
 
-// Start runs all the informers known to this cache until the context is closed.  It blocks.
+// Start runs all the informers known to this store until the context is closed.  It blocks.
 func (c *ViewCache) Start(ctx context.Context) error {
 	c.log.V(4).Info("starting cache")
 
@@ -641,12 +641,12 @@ func (c *ViewCache) Start(ctx context.Context) error {
 	return nil
 }
 
-// WaitForCacheSync waits for all the caches to sync. Returns false if it could not sync a cache.
+// WaitForCacheSync waits for all the caches to sync. Returns false if it could not sync a store.
 func (c *ViewCache) WaitForCacheSync(_ context.Context) bool { return true }
 
 var _ watch.Interface = &ViewCacheWatcher{}
 
-// ViewCacheWatcher is a watcher specialized tof the view cache.
+// ViewCacheWatcher is a watcher specialized tof the view store.
 type ViewCacheWatcher struct {
 	eventChan chan watch.Event
 	stopCh    chan struct{}
@@ -750,20 +750,20 @@ func (w *ViewCacheWatcher) ResultChan() <-chan watch.Event {
 	return w.eventChan
 }
 
-// clientKeyToCacheKey converts a controller-runtime client.ObjectKey to a cache.ObjectName.  This
+// clientKeyToCacheKey converts a controller-runtime client.ObjectKey to a store.ObjectName.  This
 // conversion is necessary because client.ObjectKey (a type alias for types.NamespacedName) and
-// cache.ObjectName have different String() implementations for cluster-scoped objects:
+// store.ObjectName have different String() implementations for cluster-scoped objects:
 //
-//   - cache.ObjectName.String() for empty namespace: "object-name"
+//   - store.ObjectName.String() for empty namespace: "object-name"
 //   - types.NamespacedName.String() for empty namespace: "/object-name" (note the leading slash)
 //
-// Since cache.MetaNamespaceKeyFunc uses cache.ObjectName internally to generate index keys,
+// Since store.MetaNamespaceKeyFunc uses store.ObjectName internally to generate index keys,
 // we must use the same type when looking up objects to ensure the key strings match.
 // Without this conversion, lookups for cluster-scoped objects will fail because the keys
-// won't match (e.g., looking up "/foo" when the cache indexed it as "foo").
+// won't match (e.g., looking up "/foo" when the store indexed it as "foo").
 //
 // See: https://github.com/kubernetes/client-go/blob/master/tools/cache/store.go
-// The comment in cache.ObjectName.String() explicitly states this behavior is intentional
+// The comment in store.ObjectName.String() explicitly states this behavior is intentional
 // to maintain historical compatibility with MetaNamespaceKeyFunc.
 func clientKeyToCacheKey(key client.ObjectKey) toolscache.ObjectName {
 	return toolscache.ObjectName{

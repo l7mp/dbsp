@@ -1,7 +1,7 @@
-package cache
+package store
 
-// Composite cache is a cache that serves views from the view cache and the rest from the default
-// Kubernetes cache.
+// Composite store is a store that serves views from the view store and the rest from the default
+// Kubernetes store.
 
 import (
 	"context"
@@ -16,22 +16,22 @@ import (
 // Re-export controller-runtime types for convenience.
 // Users can use manager.Options and manager.Manager without importing controller-runtime.
 type (
-	Options      = cache.Options
-	Cache        = cache.Cache
-	NewCacheFunc = cache.NewCacheFunc
+	Options      = store.Options
+	Cache        = store.Cache
+	NewCacheFunc = store.NewCacheFunc
 )
 
-// ViewCacheInterface extends cache.Cache with view-specific operations.
+// ViewCacheInterface extends store.Cache with view-specific operations.
 // Both ViewCache and DelegatingViewCache implement this interface.
 type ViewCacheInterface interface {
 	Cache
-	// GetClient returns a client for this view cache.
+	// GetClient returns a client for this view store.
 	GetClient() client.WithWatch
-	// Add adds an object to the cache.
+	// Add adds an object to the store.
 	Add(obj object.Object) error
-	// Update updates an object in the cache.
+	// Update updates an object in the store.
 	Update(oldObj, newObj object.Object) error
-	// Delete removes an object from the cache.
+	// Delete removes an object from the store.
 	Delete(obj object.Object) error
 	// Watch watches for changes to objects.
 	Watch(ctx context.Context, list client.ObjectList, opts ...client.ListOption) (watch.Interface, error)

@@ -38,7 +38,7 @@ import (
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
 	viewv1a1 "github.com/l7mp/connectors/runtime/api/view/v1alpha1"
 	"github.com/l7mp/connectors/runtime/apiserver"
-	"github.com/l7mp/connectors/runtime/cache"
+	"github.com/l7mp/connectors/runtime/store"
 	"github.com/l7mp/connectors/runtime/object"
 	doperator "github.com/l7mp/dcontroller/pkg/operator"
 	dreconciler "github.com/l7mp/connectors/reconciler"

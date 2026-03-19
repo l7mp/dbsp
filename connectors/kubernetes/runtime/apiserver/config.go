@@ -14,7 +14,7 @@ import (
 	"k8s.io/component-base/compatibility"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/l7mp/connectors/runtime/cache"
+	"github.com/l7mp/connectors/runtime/store"
 )
 
 // DefaultAPIServerPort defines the default port used for the API server.

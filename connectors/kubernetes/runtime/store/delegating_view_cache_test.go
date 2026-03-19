@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	"context"
@@ -33,7 +33,7 @@ var _ = Describe("DelegatingViewCache", func() {
 	})
 
 	Describe("Basic operations", func() {
-		It("should create a delegating cache with shared storage", func() {
+		It("should create a delegating store with shared storage", func() {
 			delegatingCache := NewDelegatingViewCache(sharedStorage, CacheOptions{Logger: logger})
 			Expect(delegatingCache).NotTo(BeNil())
 			Expect(delegatingCache.storage).To(Equal(sharedStorage))
@@ -168,7 +168,7 @@ var _ = Describe("DelegatingViewCache", func() {
 		})
 
 		It("should receive initial object list when creating informer on pre-populated storage", func() {
-			// This test checks that when a delegating cache creates an informer on a shared
+			// This test checks that when a delegating store creates an informer on a shared
 			// storage that already contains objects, the informer's event handlers receive
 			// the initial object list.
 
@@ -246,7 +246,7 @@ var _ = Describe("DelegatingViewCache", func() {
 
 			gvk := viewv1a1.GroupVersionKind("test", "view")
 
-			// Simulate Operator A: create delegating cache and add objects
+			// Simulate Operator A: create delegating store and add objects
 			operatorA := NewDelegatingViewCache(sharedStorage, CacheOptions{Logger: logger})
 
 			objects := []object.Object{
@@ -620,9 +620,9 @@ var _ = Describe("DelegatingViewCache", func() {
 			apiViewCache := apiCache.GetViewCache()
 
 			// Simulate operator setup with CacheInjector pattern
-			// The delegating cache wraps the API server's view cache (which is a *ViewCache)
+			// The delegating store wraps the API server's view store (which is a *ViewCache)
 			apiViewStorage, ok := apiViewCache.(*ViewCache)
-			Expect(ok).To(BeTrue(), "API server view cache should be *ViewCache")
+			Expect(ok).To(BeTrue(), "API server view store should be *ViewCache")
 
 			delegatingCache := NewDelegatingViewCache(apiViewStorage, CacheOptions{Logger: logger})
 			operatorCache, err := NewCompositeCache(nil, CacheOptions{
@@ -640,7 +640,7 @@ var _ = Describe("DelegatingViewCache", func() {
 			object.SetName(obj, "ns", "api-server-test")
 			object.SetContent(obj, map[string]any{"source": "operator"})
 
-			// Operator writes (via delegating cache client)
+			// Operator writes (via delegating store client)
 			opClient := delegatingCache.GetClient()
 			err = opClient.Create(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())

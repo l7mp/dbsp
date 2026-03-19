@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	"context"
@@ -29,13 +29,13 @@ func (vc *ViewCache) GetClient() client.WithWatch {
 	return &ViewCacheClient{cache: vc}
 }
 
-// NewViewCacheClient creates an empty view cache client. Use SetCache to assgign a cache for the
+// NewViewCacheClient creates an empty view store client. Use SetCache to assgign a store for the
 // client.
 func NewViewCacheClient() client.WithWatch {
 	return &ViewCacheClient{}
 }
 
-// SetCache sets the cache for the composite client.
+// SetCache sets the store for the composite client.
 func (c *ViewCacheClient) SetCache(cache ViewCacheInterface) {
 	c.cache = cache
 }
@@ -93,7 +93,7 @@ func (c *ViewCacheClient) Update(ctx context.Context, obj client.Object, opts ..
 
 	// Option 3: DeepEqual check is safe here for view objects.
 	// View objects are ephemeral in-memory objects without etcd-based optimistic concurrency
-	// control, so there's no resourceVersion staleness to mask. The cache.Update() call
+	// control, so there's no resourceVersion staleness to mask. The store.Update() call
 	// already has a DeepEqual check (line 295 in view_cache.go), but checking here avoids
 	// unnecessary work when content hasn't changed.
 	if object.DeepEqual(oldObj, newObj) {

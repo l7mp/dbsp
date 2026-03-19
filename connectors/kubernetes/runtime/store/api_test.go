@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	"net/http"
@@ -136,7 +136,7 @@ var _ = Describe("NewCompositeAPIClient", func() {
 			Expect(discovery.IsViewGroup(viewGroup)).To(BeTrue())
 			Expect(discovery.IsViewGroup("apps")).To(BeFalse())
 
-			// Test that cache and client can work together
+			// Test that store and client can work together
 			cache := apiClient.GetCache()
 			client := apiClient.GetClient()
 			Expect(cache).NotTo(BeNil())

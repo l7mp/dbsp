@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	"context"
@@ -203,7 +203,7 @@ var _ = Describe("CompositeCache Client", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 
-		// Create a headless composite cache (no Kubernetes API server)
+		// Create a headless composite store (no Kubernetes API server)
 		var err error
 		compositeCache, err = NewCompositeCache(nil, CacheOptions{Logger: logger})
 		Expect(err).NotTo(HaveOccurred())
@@ -218,11 +218,11 @@ var _ = Describe("CompositeCache Client", func() {
 			object.SetName(obj, "default", "composite-test")
 			object.SetContent(obj, map[string]any{"data": "composite-data"})
 
-			// Create via the view cache client
+			// Create via the view store client
 			err := compositeClient.Create(ctx, obj)
 			Expect(err).NotTo(HaveOccurred(), "Create should auto-register GVK")
 
-			// Get via composite cache (which routes to view cache)
+			// Get via composite store (which routes to view cache)
 			retrieved := object.NewViewObject("test", "CompositeView")
 			object.SetName(retrieved, "default", "composite-test")
 			err = compositeCache.Get(ctx, client.ObjectKeyFromObject(obj), retrieved)
@@ -235,7 +235,7 @@ var _ = Describe("CompositeCache Client", func() {
 			Expect(content).To(HaveKeyWithValue("data", "composite-data"))
 		})
 
-		It("should list through composite cache with auto-registration", func() {
+		It("should list through composite store with auto-registration", func() {
 			// List with new GVK - should auto-register
 			list := NewViewObjectList("test", "CompositeListView")
 			err := compositeCache.List(ctx, list)

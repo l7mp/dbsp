@@ -3,20 +3,20 @@
 //
 // The composite system creates a transparent abstraction layer that allows controllers to work
 // with view objects using the same APIs as native Kubernetes resources.  View objects are
-// maintained in an in-memory cache with full CRUD and watch capabilities, while native resources
+// maintained in an in-memory store with full CRUD and watch capabilities, while native resources
 // are delegated to the standard Kubernetes API server (if available).
 //
 // Key components:
 //   - CompositeClient: Unified client interface for both views and native resources.
-//   - CompositeCache: Split caching system with view cache and native resource cache.
+//   - CompositeCache: Split caching system with view store and native resource store.
 //   - CompositeDiscoveryClient: Unified API discovery for views and native resources.
-//   - ViewCache: Specialized cache for view objects with informer support.
+//   - ViewCache: Specialized store for view objects with informer support.
 //
 // The composite system automatically determines whether a resource is a view or native Kubernetes
 // resource based on its GroupVersionKind and routes operations accordingly.  This enables
 // transparent operation where controllers don't need to distinguish between view and native
 // resources.
-package cache
+package store
 
 import (
 	"github.com/go-logr/logr"
@@ -36,7 +36,7 @@ type APIOptions struct {
 }
 
 // API bundles multiple API machinery components into a single client, including a regular
-// client, a discovery client, a cache and a REST mapper.
+// client, a discovery client, a store and a REST mapper.
 type API struct {
 	Client     client.Client
 	Cache      Cache
@@ -107,7 +107,7 @@ func (c *API) GetDiscovery() *CompositeDiscoveryClient {
 	return nil
 }
 
-// GetCache returns the cache for the bundle.
+// GetCache returns the store for the bundle.
 func (c *API) GetCache() *CompositeCache {
 	if cc, ok := c.Cache.(*CompositeCache); ok {
 		return cc

@@ -1,4 +1,4 @@
-package cache
+package store
 
 // Utility functions that use the discovery client.
 

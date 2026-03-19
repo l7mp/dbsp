@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 
 var _ client.Client = &CompositeClient{}
 
-// CompositeClient is a controlller runtime client that uses a view cache to manage view resources
+// CompositeClient is a controlller runtime client that uses a view store to manage view resources
 // and delegates native resources to a default client.
 type CompositeClient struct {
 	client.Client
@@ -41,7 +41,7 @@ func NewCompositeClient(config *rest.Config, options ClientOptions) (*CompositeC
 	}, nil
 }
 
-func NewClientForCache(config *rest.Config, cache Cache, options ClientOptions) (*CompositeClient, error) {
+func NewClientForCache(config *rest.Config, store Cache, options ClientOptions) (*CompositeClient, error) {
 	var nativeClient client.Client
 	if config != nil {
 		c, err := client.New(config, options)
@@ -63,21 +63,21 @@ func (c *CompositeClient) SetClient(client client.Client) {
 	c.Client = client
 }
 
-// SetCache sets the cache for the composite client.
+// SetCache sets the store for the composite client.
 func (c *CompositeClient) SetCache(cache Cache) {
 	c.compositeCache = cache
-	if viewCache, ok := cache.(*CompositeCache); ok {
+	if viewCache, ok := store.(*CompositeCache); ok {
 		c.viewClient = viewCache.GetViewCache().GetClient().(*ViewCacheClient)
 	}
 }
 
-// SetClient sets the cache in the composite client.
+// SetClient sets the store in the composite client.
 func (c *CompositeClient) GetCache() Cache {
 	return c.compositeCache
 }
 
 // split client:
-// client.Reader: implemented by the cache.Reader in the native manager.client
+// client.Reader: implemented by the store.Reader in the native manager.client
 // client.Writer: views are written to the viewcache, rest handled by the default client
 
 // Create saves the object obj.

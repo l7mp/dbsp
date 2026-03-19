@@ -1,6 +1,6 @@
-package cache
+package store
 
-// composite cache is a cache that serves views from the view cache and the rest from the default
+// composite store is a store that serves views from the view store and the rest from the default
 // Kubernetes cache
 
 import (

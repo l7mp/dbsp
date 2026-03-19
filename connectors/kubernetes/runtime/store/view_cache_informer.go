@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 
 var _ toolscache.SharedIndexInformer = &ViewCacheInformer{}
 
-// ViewCacheInformer is an informer for implementing watchers on the view cache.
+// ViewCacheInformer is an informer for implementing watchers on the view store.
 type ViewCacheInformer struct {
 	gvk            schema.GroupVersionKind // just for logging
 	cache          toolscache.Indexer
@@ -41,7 +41,7 @@ func (h *handlerEntry) HasSynced() bool {
 	return true
 }
 
-// NewViewCacheInformer returns a new informer for the view cache.
+// NewViewCacheInformer returns a new informer for the view store.
 func NewViewCacheInformer(gvk schema.GroupVersionKind, indexer toolscache.Indexer, logger logr.Logger) *ViewCacheInformer {
 	if logger.GetSink() == nil {
 		logger = logr.Discard()
@@ -55,7 +55,7 @@ func NewViewCacheInformer(gvk schema.GroupVersionKind, indexer toolscache.Indexe
 	}
 }
 
-// Implement the cache.Informer interface.
+// Implement the store.Informer interface.
 
 // AddEventHandler adds an event handler to the shared informer.
 func (c *ViewCacheInformer) AddEventHandler(handler toolscache.ResourceEventHandler) (toolscache.ResourceEventHandlerRegistration, error) {
@@ -189,12 +189,12 @@ func (c *ViewCacheInformer) TriggerEvent(eventType toolscache.DeltaType, oldObj,
 	}
 }
 
-// GetStore returns the informer's local cache as a Store.
+// GetStore returns the informer's local store as a Store.
 func (c *ViewCacheInformer) GetStore() toolscache.Store {
 	return c.cache
 }
 
-// GetIndexer returns the indexer for a view cache.
+// GetIndexer returns the indexer for a view store.
 func (c *ViewCacheInformer) GetIndexer() toolscache.Indexer {
 	return c.cache
 }

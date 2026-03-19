@@ -1,4 +1,4 @@
-package cache
+package store
 
 import (
 	toolscache "k8s.io/client-go/tools/cache"
