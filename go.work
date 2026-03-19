@@ -1,0 +1,11 @@
+go 1.24.0
+
+use (
+	.
+	./apps/dcontroller
+	./connectors/kubernetes
+)
+
+replace github.com/l7mp/dbsp v0.0.0 => .
+
+replace github.com/l7mp/connectors/kubernetes v0.0.0 => ./connectors/kubernetes

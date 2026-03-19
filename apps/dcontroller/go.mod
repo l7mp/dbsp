@@ -32,10 +32,6 @@ require (
 	sigs.k8s.io/yaml v1.6.0
 )
 
-replace github.com/l7mp/dbsp => ../..
-
-replace github.com/l7mp/connectors/kubernetes => ../../connectors/kubernetes
-
 require (
 	cel.dev/expr v0.24.0 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
