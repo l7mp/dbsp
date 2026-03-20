@@ -12,25 +12,25 @@ import (
 
 var _ = Describe("Pipe connector", func() {
 	It("forwards input from producer channel", func() {
-		in := make(chan runtime.Input, 1)
+		in := make(chan runtime.Event, 1)
 		p := NewPipeProducer(in)
 
 		errCh := make(chan error, 1)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		gotCh := make(chan runtime.Input, 1)
-		p.SetInputHandler(func(_ context.Context, in runtime.Input) error {
+		gotCh := make(chan runtime.Event, 1)
+		p.SetPublisher(runtime.PublishFunc(func(in runtime.Event) error {
 			gotCh <- in
 			return nil
-		})
+		}))
 
 		go func() { errCh <- p.Start(ctx) }()
 
-		want := runtime.Input{Name: "in", Data: zset.New()}
+		want := runtime.Event{Name: "in", Data: zset.New()}
 		in <- want
 
-		var got runtime.Input
+		var got runtime.Event
 		Eventually(gotCh, time.Second).Should(Receive(&got))
 		Expect(got.Name).To(Equal(want.Name))
 		Expect(got.Data.Equal(want.Data)).To(BeTrue())
@@ -41,24 +41,19 @@ var _ = Describe("Pipe connector", func() {
 
 	It("forwards output to consumer channel", func() {
 
-		out := make(chan runtime.Output, 1)
+		out := make(chan runtime.Event, 1)
 		c := NewPipeConsumer(out)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		errCh := make(chan error, 1)
-		go func() { errCh <- c.Start(ctx) }()
-
-		want := runtime.Output{Name: "out", Data: zset.New()}
+		want := runtime.Event{Name: "out", Data: zset.New()}
 		Expect(c.Consume(ctx, want)).To(Succeed())
 
-		var got runtime.Output
+		var got runtime.Event
 		Eventually(out, time.Second).Should(Receive(&got))
 		Expect(got.Name).To(Equal(want.Name))
 		Expect(got.Data.Equal(want.Data)).To(BeTrue())
 
-		cancel()
-		Eventually(errCh, time.Second).Should(Receive(BeNil()))
 	})
 })

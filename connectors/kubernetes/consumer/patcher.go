@@ -30,7 +30,7 @@ func NewPatcher(cfg Config) (*Patcher, error) {
 }
 
 // Consume applies output Z-set deltas with patcher behavior.
-func (c *Patcher) Consume(ctx context.Context, out dbspruntime.Output) error {
+func (c *Patcher) Consume(ctx context.Context, out dbspruntime.Event) error {
 	if c.outputName != "" && out.Name != c.outputName {
 		return nil
 	}

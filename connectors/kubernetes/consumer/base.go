@@ -14,6 +14,7 @@ import (
 
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
@@ -37,6 +38,7 @@ type baseConsumer struct {
 	targetGVK  schema.GroupVersionKind
 
 	log logr.Logger
+	in  chan dbspruntime.Event
 }
 
 func newBase(cfg Config, name string) (*baseConsumer, error) {
@@ -54,12 +56,24 @@ func newBase(cfg Config, name string) (*baseConsumer, error) {
 		outputName: cfg.OutputName,
 		targetGVK:  cfg.TargetGVK,
 		log:        log.WithName(name).WithValues("output", cfg.OutputName),
+		in:         make(chan dbspruntime.Event, dbspruntime.EventBufferSize),
 	}, nil
 }
 
+func (c *baseConsumer) Subscribe(topic string) {}
+
+func (c *baseConsumer) Unsubscribe(topic string) {}
+
+func (c *baseConsumer) GetChannel() <-chan dbspruntime.Event { return c.in }
+
 func (c *baseConsumer) Start(ctx context.Context) error {
-	<-ctx.Done()
-	return nil
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-c.in:
+		}
+	}
 }
 
 func (c *baseConsumer) objectFromElem(e zset.Elem) (kobject.Object, bool, error) {

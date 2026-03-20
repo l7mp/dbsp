@@ -33,11 +33,11 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		ch := make(chan dbspruntime.Input, 8)
-		p.SetInputHandler(func(_ context.Context, in dbspruntime.Input) error {
+		ch := make(chan dbspruntime.Event, 8)
+		p.SetPublisher(dbspruntime.PublishFunc(func(in dbspruntime.Event) error {
 			ch <- in
 			return nil
-		})
+		}))
 
 		startCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -208,14 +208,14 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 	})
 })
 
-func output(name string, doc map[string]any, w zset.Weight) dbspruntime.Output {
+func output(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {
 	z := zset.New()
 	z.Insert(dbunstructured.New(doc, nil), w)
-	return dbspruntime.Output{Name: name, Data: z}
+	return dbspruntime.Event{Name: name, Data: z}
 }
 
-func mustReceiveInput(ch <-chan dbspruntime.Input) dbspruntime.Input {
-	var in dbspruntime.Input
+func mustReceiveInput(ch <-chan dbspruntime.Event) dbspruntime.Event {
+	var in dbspruntime.Event
 	Eventually(ch, suite.Timeout, suite.Interval).Should(Receive(&in))
 	return in
 }

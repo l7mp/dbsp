@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
@@ -42,8 +42,8 @@ type Producer struct {
 	listOpts   []client.ListOption
 	predicates []crpredicate.TypedPredicate[client.Object]
 
-	mu      sync.RWMutex
-	handler dbspruntime.InputHandler
+	mu  sync.RWMutex
+	pub dbspruntime.Publisher
 
 	sourceCache map[schema.GroupVersionKind]*store.Store
 
@@ -113,11 +113,21 @@ func New(cfg Config) (*Producer, error) {
 	return p, nil
 }
 
-// SetInputHandler sets the runtime input callback.
-func (p *Producer) SetInputHandler(h dbspruntime.InputHandler) {
+// SetPublisher sets the runtime event publisher.
+func (p *Producer) SetPublisher(pub dbspruntime.Publisher) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.handler = h
+	p.pub = pub
+}
+
+func (p *Producer) Publish(event dbspruntime.Event) error {
+	p.mu.RLock()
+	pub := p.pub
+	p.mu.RUnlock()
+	if pub == nil {
+		return nil
+	}
+	return pub.Publish(event)
 }
 
 // Start starts the watch loop.
@@ -175,13 +185,13 @@ func (p *Producer) handleEvent(ctx context.Context, evt watch.Event) error {
 	}
 
 	p.mu.RLock()
-	h := p.handler
+	pub := p.pub
 	p.mu.RUnlock()
-	if h == nil {
+	if pub == nil {
 		return nil
 	}
 
-	return h(ctx, dbspruntime.Input{Name: p.inputName, Data: zs})
+	return pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }
 
 func watchEventToDelta(t watch.EventType, obj *unstructured.Unstructured) kobject.Delta {

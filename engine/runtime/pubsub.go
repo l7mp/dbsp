@@ -45,6 +45,12 @@ type Publisher interface {
 	Publish(event Event) error
 }
 
+// PublishFunc adapts a function to Publisher.
+type PublishFunc func(Event) error
+
+// Publish calls f(event).
+func (f PublishFunc) Publish(event Event) error { return f(event) }
+
 type publisher struct {
 	pubsub *PubSub
 }

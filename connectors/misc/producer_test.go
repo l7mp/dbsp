@@ -25,13 +25,13 @@ var _ = Describe("Virtual source producers", func() {
 
 		var mu sync.Mutex
 		count := 0
-		p.SetInputHandler(func(_ context.Context, in dbspruntime.Input) error {
+		p.SetPublisher(dbspruntime.PublishFunc(func(in dbspruntime.Event) error {
 			mu.Lock()
 			defer mu.Unlock()
 			Expect(in.Name).To(Equal("in"))
 			count++
 			return nil
-		})
+		}))
 
 		done := make(chan error, 1)
 		go func() { done <- p.Start(ctx) }()
@@ -59,13 +59,13 @@ var _ = Describe("Virtual source producers", func() {
 
 		var mu sync.Mutex
 		count := 0
-		p.SetInputHandler(func(_ context.Context, in dbspruntime.Input) error {
+		p.SetPublisher(dbspruntime.PublishFunc(func(in dbspruntime.Event) error {
 			mu.Lock()
 			defer mu.Unlock()
 			Expect(in.Name).To(Equal("in"))
 			count++
 			return nil
-		})
+		}))
 
 		done := make(chan error, 1)
 		go func() { done <- p.Start(ctx) }()

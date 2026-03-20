@@ -28,7 +28,7 @@ func NewUpdater(cfg Config) (*Updater, error) {
 }
 
 // Consume applies output Z-set deltas with updater behavior.
-func (c *Updater) Consume(ctx context.Context, out dbspruntime.Output) error {
+func (c *Updater) Consume(ctx context.Context, out dbspruntime.Event) error {
 	if c.outputName != "" && out.Name != c.outputName {
 		return nil
 	}

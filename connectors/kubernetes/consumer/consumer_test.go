@@ -149,10 +149,10 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 })
 
-func out(name string, doc map[string]any, w zset.Weight) dbspruntime.Output {
+func out(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {
 	z := zset.New()
 	z.Insert(dbunstructured.New(doc, nil), w)
-	return dbspruntime.Output{Name: name, Data: z}
+	return dbspruntime.Event{Name: name, Data: z}
 }
 
 func keyObject(gvk schema.GroupVersionKind, namespace, name string) *unstructured.Unstructured {

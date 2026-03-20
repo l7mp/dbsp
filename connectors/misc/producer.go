@@ -58,9 +58,9 @@ type baseProducer struct {
 
 	cache *store.Store
 
-	mu      sync.RWMutex
-	handler dbspruntime.InputHandler
-	log     logr.Logger
+	mu        sync.RWMutex
+	publisher dbspruntime.Publisher
+	log       logr.Logger
 }
 
 var _ dbspruntime.Producer = (*OneShotProducer)(nil)
@@ -108,10 +108,20 @@ func newBase(input string, gvk schema.GroupVersionKind, namespace, name string, 
 	}, nil
 }
 
-func (p *baseProducer) SetInputHandler(h dbspruntime.InputHandler) {
+func (p *baseProducer) SetPublisher(pub dbspruntime.Publisher) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.handler = h
+	p.publisher = pub
+}
+
+func (p *baseProducer) Publish(event dbspruntime.Event) error {
+	p.mu.RLock()
+	pub := p.publisher
+	p.mu.RUnlock()
+	if pub == nil {
+		return nil
+	}
+	return pub.Publish(event)
 }
 
 func (p *OneShotProducer) Start(ctx context.Context) error {
@@ -149,13 +159,13 @@ func (p *baseProducer) emit(ctx context.Context, deltaType kobject.DeltaType) er
 	}
 
 	p.mu.RLock()
-	h := p.handler
+	pub := p.publisher
 	p.mu.RUnlock()
-	if h == nil {
+	if pub == nil {
 		return nil
 	}
 
-	return h(ctx, dbspruntime.Input{Name: p.inputName, Data: zs})
+	return pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }
 
 func (p *baseProducer) triggerObject() *unstructured.Unstructured {
