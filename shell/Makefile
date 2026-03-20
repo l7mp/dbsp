@@ -1,5 +1,5 @@
 BIN := bin/dbsp
-CMD := ./cmd/dbsp
+CMD := .
 
 .PHONY: build test clean
 
