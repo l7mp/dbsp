@@ -2,99 +2,126 @@ package runtime
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"reflect"
 	"sync"
-
-	"golang.org/x/sync/errgroup"
 )
 
-var (
-	// ErrManagerStarted indicates that the manager has already been started.
-	ErrManagerStarted = errors.New("runtime manager already started")
-	// ErrNilRunnable indicates that Add received a nil runnable.
-	ErrNilRunnable = errors.New("runtime manager cannot add nil runnable")
-	// ErrRunnableReturnedNil indicates that a runnable exited without error before
-	// cancellation.
-	ErrRunnableReturnedNil = errors.New("runtime runnable returned nil before cancellation")
-)
+// Runnable has a context-managed lifecycle.
+type Runnable interface {
+	Start(ctx context.Context) error
+}
 
-// manager is a one-shot runnable manager.
-//
-// Start can be called exactly once. Runnables are started concurrently and are
-// expected to run until cancellation. If any runnable exits with a non-nil
-// error, the manager cancels all others and returns the first error.
+// Manager controls runnable lifecycles, including dynamic add/remove.
+type Manager interface {
+	Add(Runnable)
+	Stop(Runnable)
+	Start(ctx context.Context) error
+}
+
+type managed struct {
+	r      Runnable
+	cancel context.CancelFunc
+}
+
 type manager struct {
-	mu        sync.Mutex
-	runnables []Runnable
-	started   bool
+	mu      sync.Mutex
+	started bool
+	ctx     context.Context
+	items   []*managed
+	wg      sync.WaitGroup
+	errMu   sync.Mutex
+	err     error
 }
 
 var _ Manager = (*manager)(nil)
 
-// NewManager creates a new lifecycle manager.
+// NewManager creates a lifecycle manager that supports dynamic Add and Stop.
 func NewManager() Manager {
 	return &manager{}
 }
 
-// Add registers a runnable. Add must be called before Start.
-func (m *manager) Add(r Runnable) error {
-	if r == nil {
-		return ErrNilRunnable
-	}
-
+// Add registers a runnable and starts it immediately if the manager is already running.
+func (m *manager) Add(r Runnable) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.started {
-		return ErrManagerStarted
-	}
+	item := &managed{r: r}
+	m.items = append(m.items, item)
 
-	m.runnables = append(m.runnables, r)
-	return nil
+	if m.started {
+		m.startOneLocked(item)
+	}
 }
 
-// Start launches all registered runnables and blocks until shutdown.
-func (m *manager) Start(ctx context.Context) error {
+// Stop cancels all managed instances that match r.
+func (m *manager) Stop(r Runnable) {
 	m.mu.Lock()
-	if m.started {
-		m.mu.Unlock()
-		return ErrManagerStarted
+	var toStop []*managed
+	keep := make([]*managed, 0, len(m.items))
+	for _, item := range m.items {
+		if sameRunnable(item.r, r) {
+			toStop = append(toStop, item)
+			continue
+		}
+		keep = append(keep, item)
 	}
-	m.started = true
-	runnables := append([]Runnable(nil), m.runnables...)
+	m.items = keep
 	m.mu.Unlock()
 
-	g, gctx := errgroup.WithContext(ctx)
-
-	// Keep Start blocked until cancellation (or earlier error path).
-	g.Go(func() error {
-		<-gctx.Done()
-		return nil
-	})
-
-	for i, r := range runnables {
-		i, r := i, r
-		g.Go(func() error {
-			err := r.Start(gctx)
-			if err != nil {
-				if isCancellation(err) && gctx.Err() != nil {
-					return nil
-				}
-				return fmt.Errorf("runnable[%d]: %w", i, err)
-			}
-
-			if gctx.Err() != nil {
-				return nil
-			}
-
-			return fmt.Errorf("runnable[%d]: %w", i, ErrRunnableReturnedNil)
-		})
+	for _, item := range toStop {
+		if item.cancel != nil {
+			item.cancel()
+		}
 	}
-
-	return g.Wait()
 }
 
-func isCancellation(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+// Start runs until ctx is cancelled and all started runnables have returned.
+func (m *manager) Start(ctx context.Context) error {
+	m.mu.Lock()
+	m.started = true
+	m.ctx = ctx
+	for _, item := range m.items {
+		m.startOneLocked(item)
+	}
+	m.mu.Unlock()
+
+	<-ctx.Done()
+	m.wg.Wait()
+
+	m.errMu.Lock()
+	defer m.errMu.Unlock()
+	return m.err
+}
+
+func sameRunnable(a, b Runnable) bool {
+	va := reflect.ValueOf(a)
+	vb := reflect.ValueOf(b)
+	if va.Kind() != vb.Kind() {
+		return false
+	}
+	switch va.Kind() {
+	case reflect.Func, reflect.Pointer, reflect.UnsafePointer, reflect.Map, reflect.Chan, reflect.Slice:
+		return va.Pointer() == vb.Pointer()
+	default:
+		return reflect.DeepEqual(a, b)
+	}
+}
+
+func (m *manager) startOneLocked(item *managed) {
+	if item.cancel != nil {
+		return
+	}
+	child, cancel := context.WithCancel(m.ctx)
+	item.cancel = cancel
+	m.wg.Add(1)
+	go func(r Runnable) {
+		defer m.wg.Done()
+		if err := r.Start(child); err != nil {
+			m.errMu.Lock()
+			if m.err == nil {
+				m.err = err
+			}
+			m.errMu.Unlock()
+		}
+	}(item.r)
 }

@@ -1,58 +1,24 @@
 package runtime
 
-import (
-	"context"
-
-	"github.com/l7mp/dbsp/engine/zset"
-)
-
-// Input is a named payload sent into a runtime endpoint.
-type Input struct {
-	Name string
-	Data zset.ZSet
-}
-
-// Output is a named payload emitted by a runtime endpoint.
-type Output struct {
-	Name string
-	Data zset.ZSet
-}
-
-// AsInput converts an Output into an Input, preserving name and data.
-func (o Output) AsInput() Input {
-	return Input{Name: o.Name, Data: o.Data}
-}
-
-// InputHandler consumes one producer event.
-type InputHandler func(context.Context, Input) error
-
-// Runnable is a long-lived component with context-managed lifetime.
+// Producer is a runnable event source.
 //
-// Start blocks until completion, context cancellation, or error.
-type Runnable interface {
-	Start(ctx context.Context) error
-}
-
-// Producer emits runtime inputs by invoking a registered input handler.
-//
-// Producer implementations must call the handler synchronously in their own
-// goroutine context when an input event is triggered.
+// Implementations typically embed a Publisher created from Runtime.NewPublisher.
 type Producer interface {
 	Runnable
-	SetInputHandler(InputHandler)
+	Publisher
 }
 
-// Consumer receives runtime outputs.
+// Consumer is a runnable event sink.
 //
-// Consume executes in the producer-triggered context that ran the circuit step.
-// Implementations that need asynchronous handling should buffer internally.
+// Implementations typically embed a Subscriber created from Runtime.NewSubscriber.
+// A Subscriber has one channel and can subscribe that channel to multiple topics.
 type Consumer interface {
 	Runnable
-	Consume(ctx context.Context, out Output) error
+	Subscriber
 }
 
-// Manager controls the lifecycle of runnables.
-type Manager interface {
-	Add(Runnable) error
-	Start(ctx context.Context) error
+// Processor is both a Producer and a Consumer.
+type Processor interface {
+	Producer
+	Consumer
 }

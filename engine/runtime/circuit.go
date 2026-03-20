@@ -1,127 +1,124 @@
 package runtime
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"maps"
 	"sort"
 
 	"github.com/go-logr/logr"
 
-	"github.com/l7mp/dbsp/engine/circuit"
+	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/executor"
 	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
-var (
-	// ErrUnknownInput indicates that an input name is not part of the runtime input map.
-	ErrUnknownInput = errors.New("runtime unknown input")
-	// ErrMissingOutput indicates that an expected output is missing from executor results.
-	ErrMissingOutput = errors.New("runtime missing output")
-)
+var _ Processor = (*Circuit)(nil)
 
-// CircuitConfig configures a Circuit runtime endpoint.
-type CircuitConfig struct {
-	Circuit     *circuit.Circuit
-	InputMap    map[string]string
-	OutputMap   map[string]string
-	Incremental bool
-	Logger      logr.Logger
-}
-
-// Circuit wraps a compiled circuit and executes one step per input event.
+// Circuit is a runtime processor that subscribes to all query inputs and
+// publishes all query outputs.
 type Circuit struct {
+	Publisher
+	Subscriber
+
 	inputMap    map[string]string
 	outputMap   map[string]string
-	incremental bool
-	exec        *executor.Executor
-
 	inputNames  []string
 	outputNames []string
+
+	incremental bool
+	exec        *executor.Executor
 	state       map[string]zset.ZSet
+
+	topicToInput map[string]string
 }
 
-// NewCircuit creates a circuit wrapper from an already-compiled circuit and
-// input/output maps.
-func NewCircuit(cfg CircuitConfig) (*Circuit, error) {
-	if cfg.Circuit == nil {
-		return nil, fmt.Errorf("runtime config: circuit is required")
-	}
-	if len(cfg.InputMap) == 0 {
-		return nil, fmt.Errorf("runtime config: input map is required")
-	}
-	if len(cfg.OutputMap) == 0 {
-		return nil, fmt.Errorf("runtime config: output map is required")
+// NewCircuit builds a runtime processor from a compiled query.
+func NewCircuit(rt *Runtime, q *compiler.Query) (*Circuit, error) {
+	compiled, err := transform.Incrementalize(q.Circuit)
+	if err != nil {
+		return nil, fmt.Errorf("runtime incrementalize: %w", err)
 	}
 
-	compiled := cfg.Circuit
-	if cfg.Incremental {
-		incr, err := transform.Incrementalize(cfg.Circuit)
-		if err != nil {
-			return nil, fmt.Errorf("runtime incrementalize: %w", err)
-		}
-		compiled = incr
-	}
-
-	log := cfg.Logger
-	if log.GetSink() == nil {
-		log = logr.Discard()
-	}
-
-	exec, err := executor.New(compiled, log)
+	exec, err := executor.New(compiled, logr.Discard())
 	if err != nil {
 		return nil, fmt.Errorf("runtime executor: %w", err)
 	}
 
-	inputMap := maps.Clone(cfg.InputMap)
-	outputMap := maps.Clone(cfg.OutputMap)
-
+	inputMap := maps.Clone(q.InputMap)
+	outputMap := maps.Clone(q.OutputMap)
 	inputNames := sortedKeys(inputMap)
 	outputNames := sortedKeys(outputMap)
-
 	state := make(map[string]zset.ZSet, len(inputNames))
 	for _, name := range inputNames {
 		state[name] = zset.New()
 	}
 
 	return &Circuit{
-		inputMap:    inputMap,
-		outputMap:   outputMap,
-		incremental: cfg.Incremental,
-		exec:        exec,
-		inputNames:  inputNames,
-		outputNames: outputNames,
-		state:       state,
+		Publisher:    rt.NewPublisher(),
+		Subscriber:   rt.NewSubscriber(),
+		inputMap:     inputMap,
+		outputMap:    outputMap,
+		inputNames:   inputNames,
+		outputNames:  outputNames,
+		incremental:  true,
+		exec:         exec,
+		state:        state,
+		topicToInput: map[string]string{},
 	}, nil
 }
 
-// Execute runs one circuit step and returns logical outputs.
-func (c *Circuit) Execute(in Input) ([]Output, error) {
-	if _, ok := c.inputMap[in.Name]; !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnknownInput, in.Name)
+// Start subscribes to all query inputs and forwards outputs via Publisher.
+func (c *Circuit) Start(ctx context.Context) error {
+	for _, in := range c.inputNames {
+		c.Subscribe(in)
+		c.topicToInput[in] = in
+		defer c.Unsubscribe(in)
 	}
+	inCh := c.GetChannel()
 
-	stepInputs := c.buildStepInputs(in)
-	result, err := c.exec.Execute(stepInputs)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case in, ok := <-inCh:
+			if !ok {
+				return nil
+			}
+			logical, ok := c.topicToInput[in.Name]
+			if !ok {
+				continue
+			}
+			in.Name = logical
+			outs, err := c.Execute(in)
+			if err != nil {
+				return err
+			}
+			for _, out := range outs {
+				if err := c.Publish(out); err != nil {
+					return err
+				}
+			}
+		}
+	}
+}
+
+// Execute applies one runtime event to the compiled circuit.
+func (c *Circuit) Execute(in Event) ([]Event, error) {
+	result, err := c.exec.Execute(c.buildStepInputs(in))
 	if err != nil {
 		return nil, fmt.Errorf("runtime step: %w", err)
 	}
-
-	outs := make([]Output, 0, len(c.outputNames))
+	outs := make([]Event, 0, len(c.outputNames))
 	for _, logical := range c.outputNames {
 		nodeID := c.outputMap[logical]
-		data, ok := result[nodeID]
-		if !ok {
-			return nil, fmt.Errorf("%w: %s", ErrMissingOutput, logical)
-		}
-		outs = append(outs, Output{Name: logical, Data: data})
+		outs = append(outs, Event{Name: logical, Data: result[nodeID]})
 	}
-
 	return outs, nil
 }
 
-// Reset clears operator state and runtime snapshot cache.
+// Reset clears executor and cached snapshot input state.
 func (c *Circuit) Reset() {
 	c.exec.Reset()
 	for _, name := range c.inputNames {
@@ -129,23 +126,19 @@ func (c *Circuit) Reset() {
 	}
 }
 
-func (c *Circuit) buildStepInputs(in Input) map[string]zset.ZSet {
+func (c *Circuit) buildStepInputs(in Event) map[string]zset.ZSet {
 	inputs := make(map[string]zset.ZSet, len(c.inputMap))
-
 	if c.incremental {
 		for _, logical := range c.inputNames {
-			nodeID := c.inputMap[logical]
-			inputs[nodeID] = zset.New()
+			inputs[c.inputMap[logical]] = zset.New()
 		}
 		inputs[c.inputMap[in.Name]] = in.Data.Clone()
-	} else {
-		c.state[in.Name] = in.Data.Clone()
-		for _, logical := range c.inputNames {
-			nodeID := c.inputMap[logical]
-			inputs[nodeID] = c.state[logical].Clone()
-		}
+		return inputs
 	}
-
+	c.state[in.Name] = in.Data.Clone()
+	for _, logical := range c.inputNames {
+		inputs[c.inputMap[logical]] = c.state[logical].Clone()
+	}
 	return inputs
 }
 

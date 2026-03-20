@@ -1,2 +1,3 @@
-// Package runtime defines connector and lifecycle contracts for DBSP execution wiring.
+// Package runtime provides runnable lifecycle management and in-process pub/sub
+// wiring for DBSP producers, consumers, and processors.
 package runtime
