@@ -12,7 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/l7mp/connectors/kubernetes/runtime/object"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 )
 
 var (

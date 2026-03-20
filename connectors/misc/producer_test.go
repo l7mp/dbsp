@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 var _ = Describe("Virtual source producers", func() {

@@ -12,12 +12,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
-	kobject "github.com/l7mp/connectors/kubernetes/runtime/object"
+	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 
-	"github.com/l7mp/dbsp/dbsp/datamodel"
-	dbunstructured "github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
-	"github.com/l7mp/dbsp/dbsp/zset"
+	"github.com/l7mp/dbsp/engine/datamodel"
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
 // Config configures Kubernetes consumers.

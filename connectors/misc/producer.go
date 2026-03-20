@@ -11,11 +11,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	kobject "github.com/l7mp/connectors/kubernetes/runtime/object"
-	"github.com/l7mp/connectors/kubernetes/runtime/store"
-	dbunstructured "github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
-	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
-	"github.com/l7mp/dbsp/dbsp/zset"
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
 const (

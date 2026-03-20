@@ -21,7 +21,7 @@ import (
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/endpoints/handlers"
 
-	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 )
 
 // resourceHandler routes requests for dynamically registered resources to their storage implementations.

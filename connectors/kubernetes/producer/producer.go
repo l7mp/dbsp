@@ -14,10 +14,10 @@ import (
 	crevent "sigs.k8s.io/controller-runtime/pkg/event"
 	crpredicate "sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	kobject "github.com/l7mp/connectors/kubernetes/runtime/object"
-	kpredicate "github.com/l7mp/connectors/kubernetes/runtime/predicate"
-	"github.com/l7mp/connectors/kubernetes/runtime/store"
-	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
+	kpredicate "github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 // Config configures a Kubernetes watch-backed DBSP producer.

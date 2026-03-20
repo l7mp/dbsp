@@ -14,7 +14,7 @@ import (
 	"k8s.io/component-base/compatibility"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	rtstore "github.com/l7mp/connectors/kubernetes/runtime/store"
+	rtstore "github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 )
 
 // DefaultAPIServerPort defines the default port used for the API server.

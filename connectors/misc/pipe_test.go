@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/l7mp/dbsp/dbsp/runtime"
-	"github.com/l7mp/dbsp/dbsp/zset"
+	"github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

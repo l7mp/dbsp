@@ -10,9 +10,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	dbunstructured "github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
-	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
-	"github.com/l7mp/dbsp/dbsp/zset"
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

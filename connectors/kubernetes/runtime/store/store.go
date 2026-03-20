@@ -3,7 +3,7 @@ package store
 import (
 	toolscache "k8s.io/client-go/tools/cache"
 
-	"github.com/l7mp/connectors/kubernetes/runtime/object"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 )
 
 // Store is like toolscache.Store but it also deep-copies objects.

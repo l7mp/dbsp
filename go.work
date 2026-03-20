@@ -1,11 +1,19 @@
-go 1.24.0
+go 1.25.0
 
 use (
-	.
-	./apps/dcontroller
 	./connectors/kubernetes
+	./connectors/misc
+	./dcontroller
+	./engine
+	./shell
 )
 
-replace github.com/l7mp/dbsp v0.0.0 => .
+replace github.com/l7mp/dbsp/engine v0.0.0 => ./engine
 
-replace github.com/l7mp/connectors/kubernetes v0.0.0 => ./connectors/kubernetes
+replace github.com/l7mp/dbsp/connectors/kubernetes v0.0.0 => ./connectors/kubernetes
+
+replace github.com/l7mp/dbsp/connectors/misc v0.0.0 => ./connectors/misc
+
+replace github.com/l7mp/dbsp/dcontroller v0.0.0 => ./dcontroller
+
+replace github.com/l7mp/dbsp/shell v0.0.0 => ./shell

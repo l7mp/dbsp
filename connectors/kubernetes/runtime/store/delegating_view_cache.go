@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
-	"github.com/l7mp/connectors/kubernetes/runtime/object"
+	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 )
 
 var _ Cache = &DelegatingViewCache{}

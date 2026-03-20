@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	toolscache "k8s.io/client-go/tools/cache"
 
-	"github.com/l7mp/connectors/kubernetes/runtime/object"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 )
 
 var _ toolscache.SharedIndexInformer = &ViewCacheInformer{}

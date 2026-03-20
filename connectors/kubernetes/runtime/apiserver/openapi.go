@@ -7,7 +7,7 @@ import (
 	openapicommon "k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	viewv1a1 "github.com/l7mp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 )
 
 // getOpenAPIv2Handler returns a dynamic handler for OpenAPIv2.

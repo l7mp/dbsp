@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/l7mp/connectors/kubernetes/runtime/auth"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/auth"
 	rbacv1 "k8s.io/api/rbac/v1"
 )
 

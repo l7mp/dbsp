@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	"github.com/l7mp/connectors/kubernetes/runtime/store"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 )
 
 func TestPredicate(t *testing.T) {

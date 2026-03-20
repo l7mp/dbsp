@@ -3,8 +3,8 @@ package consumer
 import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	dbunstructured "github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
-	"github.com/l7mp/dbsp/dbsp/zset"
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	"github.com/l7mp/dbsp/engine/zset"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

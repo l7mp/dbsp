@@ -10,7 +10,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/l7mp/connectors/kubernetes/runtime/auth"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/auth"
 )
 
 var _ = Describe("Kubeconfig Generation", func() {

@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/l7mp/connectors/kubernetes/runtime/object"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 )
 
 var _ = Describe("Store", func() {

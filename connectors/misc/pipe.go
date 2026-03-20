@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 // PipeProducer forwards runtime inputs from a channel to an input handler.

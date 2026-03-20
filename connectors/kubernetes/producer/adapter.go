@@ -3,10 +3,10 @@ package producer
 import (
 	"fmt"
 
-	kobject "github.com/l7mp/connectors/kubernetes/runtime/object"
-	"github.com/l7mp/connectors/kubernetes/runtime/store"
-	dbunstructured "github.com/l7mp/dbsp/dbsp/datamodel/unstructured"
-	"github.com/l7mp/dbsp/dbsp/zset"
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
 // convertDeltaToZSet converts a source delta into an input Z-set while maintaining source cache.

@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 // Updater applies output entries with update semantics.

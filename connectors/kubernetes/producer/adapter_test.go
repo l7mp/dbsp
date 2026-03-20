@@ -3,8 +3,8 @@ package producer
 import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	kobject "github.com/l7mp/connectors/kubernetes/runtime/object"
-	"github.com/l7mp/connectors/kubernetes/runtime/store"
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

@@ -1,0 +1,827 @@
+// KUBEBUILDER_ASSETS="/export/l7mp/dcontroller/bin/k8s/1.30.0-linux-amd64" go test ./... -v #-ginkgo.v -ginkgo.trace
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"testing"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/l7mp/dbsp/dcontroller/internal/testutils"
+	opv1a1 "github.com/l7mp/dbsp/dcontroller/pkg/api/operator/v1alpha1"
+	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/apiserver"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
+	doperator "github.com/l7mp/dbsp/dcontroller/pkg/operator"
+	dreconciler "github.com/l7mp/dbsp/connectors/kubernetes/reconciler"
+	"github.com/l7mp/dbsp/dcontroller/pkg/testsuite"
+)
+
+var (
+	suite *testsuite.Suite
+	// loglevel = 1
+	// loglevel = -10
+	loglevel      int8 = -4
+	port          int
+	epCtrl        *testEpCtrl
+	errorCh       chan error
+	eventCh       chan testutils.ReconcileRequest
+	server        *apiserver.APIServer
+	dynamicClient dynamic.Interface
+	watcher       watch.Interface
+	watchCh       <-chan watch.Event
+)
+
+var _ = BeforeSuite(func() {
+	var err error
+	suite, err = testsuite.New(loglevel)
+	Expect(err).NotTo(HaveOccurred())
+})
+
+var _ = AfterSuite(func() { suite.Close() })
+
+func TestAPIs(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "EndpointSlice controller test")
+}
+
+// testEpCtrl implements the endpointSlice controller
+type testEpCtrl struct {
+	client.Client
+	log logr.Logger
+}
+
+func (r *testEpCtrl) Reconcile(ctx context.Context, req dreconciler.Request) (reconcile.Result, error) {
+	suite.Log.Info("reconciling", "request", req.String())
+	eventCh <- req
+	return reconcile.Result{}, nil
+}
+
+var _ = Describe("EndpointSlice controller test:", Ordered, func() {
+	Context("When creating an endpointslice controller w/o gather", Ordered, Label("operator"), func() {
+		var api *cache.API
+		var svc1, es1 object.Object
+		var specs []map[string]any
+		var epNames []string
+		var ctx context.Context // context for the endpointslice controller
+		var cancel context.CancelFunc
+
+		BeforeAll(func() {
+			ctx, cancel = context.WithCancel(suite.Ctx)
+
+			svc1 = testutils.TestSvc.DeepCopy()
+			svc1.SetName("test-service-1")
+			svc1.SetNamespace("testnamespace")
+			svc1.SetAnnotations(map[string]string{EndpointSliceCtrlAnnotationName: "true"})
+			Expect(unstructured.SetNestedSlice(svc1.Object, []any{
+				map[string]any{
+					"name":       "tcp-port",
+					"protocol":   "TCP",
+					"port":       int64(80),
+					"targetPort": int64(8080),
+				},
+				map[string]any{
+					"name":       "udp-port",
+					"protocol":   "UDP",
+					"port":       int64(3478),
+					"targetPort": int64(33478),
+				},
+			}, "spec", "ports")).NotTo(HaveOccurred())
+
+			es1 = testutils.TestEndpointSlice.DeepCopy()
+			es1.SetName("test-endpointslice-1")
+			es1.SetNamespace("testnamespace")
+			es1.SetLabels(map[string]string{"kubernetes.io/service-name": "test-service-1"})
+		})
+
+		AfterAll(func() { cancel() })
+
+		It("should create and start the API server", func() {
+			suite.Log.Info("creating an API server")
+			var err error
+			api, err = cache.NewAPI(suite.Cfg, cache.APIOptions{
+				CacheOptions: cache.CacheOptions{Logger: suite.Log},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(api.Client).NotTo(BeNil())
+			Expect(api.Client.(*cache.CompositeClient).GetCache()).NotTo(BeNil())
+
+			suite.Log.Info("creating the API server")
+			// Use port 0 to let the OS automatically assign a free port
+			config, err := apiserver.NewDefaultConfig("", 0, api.Client, true, false, suite.Log)
+			Expect(err).NotTo(HaveOccurred())
+			server, err = apiserver.NewAPIServer(config)
+			Expect(err).NotTo(HaveOccurred())
+			port = testutils.GetPort(server.GetInsecureServerAddress())
+
+			go func() {
+				defer GinkgoRecover()
+				err := server.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			}()
+
+			// Give server a moment to start
+			time.Sleep(20 * time.Millisecond)
+		})
+
+		It("should create and start the controller", func() {
+			suite.Log.Info("loading the operator from file")
+			eventCh = make(chan testutils.ReconcileRequest, 16)
+			errorCh = make(chan error, 16)
+			opts := doperator.Options{
+				Cache:        api.GetCache(),
+				ErrorChannel: errorCh,
+				APIServer:    server,
+				Logger:       suite.Log,
+			}
+			specFile := OperatorSpec
+			if _, err := os.Stat(specFile); errors.Is(err, os.ErrNotExist) {
+				specFile = filepath.Base(specFile)
+			}
+			op, err := doperator.NewFromFile(OperatorName, suite.Cfg, specFile, opts)
+			Expect(err).NotTo(HaveOccurred())
+
+			suite.Log.Info("creating the endpointslice controller")
+			mgr := op.GetManager()
+			epCtrl = &testEpCtrl{Client: mgr.GetClient(), log: suite.Log.WithName("test-ep-ctrl")}
+			on := true
+			c, err := controller.NewTyped("test-ep-ctrl", mgr, controller.TypedOptions[dreconciler.Request]{
+				SkipNameValidation: &on,
+				Reconciler:         epCtrl,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			suite.Log.Info("creating an endpoint-view watcher")
+			src, err := dreconciler.NewSource(mgr, OperatorName, opv1a1.Source{
+				Resource: opv1a1.Resource{
+					Kind: "EndpointView",
+				},
+			}).GetSource()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(c.Watch(src)).NotTo(HaveOccurred())
+
+			suite.Log.Info("starting error channel watcher")
+			go func() {
+				defer GinkgoRecover()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case err := <-errorCh:
+						// if apierrors.IsNotFound(err) {
+						// 	ctrl.Log.Info("ignoring notfound error")
+						// 	continue
+						// }
+						Fail(fmt.Sprintf("async error caught: %s", err.Error()))
+					}
+				}
+			}()
+
+			suite.Log.Info("starting operator controller")
+			go func() {
+				defer GinkgoRecover()
+				err := op.Start(ctx)
+				Expect(err).ToNot(HaveOccurred(), "failed to run controller")
+			}()
+		})
+
+		It("should allow an API server discovery client to be created", func() {
+			// Create a discovery client
+			discoveryClient, err := discovery.NewDiscoveryClientForConfig(&rest.Config{
+				Host: fmt.Sprintf("http://localhost:%d", port),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Get OpenAPI V2 spec: wait until the server starts
+			Eventually(func() bool {
+				openAPISchema, err := discoveryClient.OpenAPISchema()
+				return err == nil && openAPISchema != nil
+			}, 3*time.Second).Should(BeTrue())
+
+			// Get all API groups and resources
+			apiGroups, apiResourceLists, err := discoveryClient.ServerGroupsAndResources()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(apiGroups).To(HaveLen(1))
+			Expect(apiGroups[0].Name).To(Equal(viewv1a1.Group(OperatorName)))
+			Expect(apiGroups[0].PreferredVersion.Version).To(Equal("v1alpha1"))
+			Expect(apiGroups[0].Versions).To(HaveLen(1))
+
+			Expect(apiResourceLists).To(HaveLen(1))
+			resourceList := apiResourceLists[0]
+			Expect(resourceList.GroupVersion).To(Equal(schema.GroupVersion{
+				Group:   viewv1a1.Group(OperatorName),
+				Version: viewv1a1.Version,
+			}.String()))
+			Expect(resourceList.APIResources).To(HaveLen(2))
+		})
+
+		It("should generate 4 EndpointView events", func() {
+			ctrl.Log.Info("loading service")
+			Expect(suite.K8sClient.Create(ctx, svc1)).Should(Succeed())
+
+			ctrl.Log.Info("loading endpointslice")
+			Expect(suite.K8sClient.Create(ctx, es1)).Should(Succeed())
+
+			specs = []map[string]any{}
+			req, ok := testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Added))
+			obj := req.GetObject()
+			Expect(obj.GetName()).To(HavePrefix("test-service"))
+			Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+			spec, ok, err := unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+			epNames = append(epNames, req.GetName())
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Added))
+			obj = req.GetObject()
+			Expect(obj.GetName()).To(HavePrefix("test-service"))
+			Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+			spec, ok, err = unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+			epNames = append(epNames, req.GetName())
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Added))
+			obj = req.GetObject()
+			Expect(obj.GetName()).To(HavePrefix("test-service"))
+			Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+			spec, ok, err = unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+			epNames = append(epNames, req.GetName())
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Added))
+			obj = req.GetObject()
+			Expect(obj.GetName()).To(HavePrefix("test-service"))
+			Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+			spec, ok, err = unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+			epNames = append(epNames, req.GetName())
+
+			Expect(epNames).To(HaveLen(4))
+			checkSpecs(specs, []string{"192.0.2.1", "192.0.2.2"})
+		})
+
+		It("should allow an API server client to be created", func() {
+			suite.Log.Info("creating dynamic client")
+			var err error
+			dynamicClient, err = dynamic.NewForConfig(&rest.Config{
+				Host: fmt.Sprintf("http://%s:%d", "localhost", port),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			list, err := dynamicClient.Resource(schema.GroupVersionResource{
+				Group:    viewv1a1.Group(OperatorName),
+				Version:  viewv1a1.Version,
+				Resource: "endpointview",
+			}).Namespace("default").List(ctx, metav1.ListOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(list.Items).To(BeEmpty())
+		})
+
+		It("should allow a watcher to be created", func() {
+			suite.Log.Info("creating a watch")
+			var err error
+			watcher, err = dynamicClient.Resource(schema.GroupVersionResource{
+				Group:    viewv1a1.Group(OperatorName),
+				Version:  viewv1a1.Version,
+				Resource: "endpointview",
+			}).Namespace("testnamespace").Watch(ctx, metav1.ListOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			watchCh = watcher.ResultChan()
+		})
+
+		It("should let the results to be loaded from the API server", func() {
+			gvr := schema.GroupVersionResource{
+				Group:    viewv1a1.Group(OperatorName),
+				Version:  viewv1a1.Version,
+				Resource: "endpointview",
+			}
+			specs = []map[string]any{}
+
+			for i := range 4 {
+				obj, err := dynamicClient.Resource(gvr).Namespace("testnamespace").
+					Get(ctx, epNames[i], metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				spec, ok, err := unstructured.NestedMap(obj.Object, "spec")
+				Expect(err).Should(Succeed())
+				Expect(ok).To(BeTrue())
+				specs = append(specs, spec)
+			}
+
+			checkSpecs(specs, []string{"192.0.2.1", "192.0.2.2"})
+		})
+
+		It("should generate 4 EndpointView watch events from the API server", func() {
+			specs = []map[string]any{}
+
+			for range 4 {
+				req, err := apiServerWatchEvent(suite.Timeout)
+				Expect(err).Should(Succeed())
+				Expect(req.Type).To(Equal(watch.Added))
+				gvk := req.Object.GetObjectKind().GroupVersionKind()
+				Expect(gvk).To(Equal(schema.GroupVersionKind{
+					Group:   viewv1a1.Group(OperatorName),
+					Version: viewv1a1.Version,
+					Kind:    "EndpointView",
+				}))
+				reqObj, err := meta.Accessor(req.Object)
+				Expect(err).Should(Succeed())
+				obj := object.NewViewObject(OperatorName, gvk.Kind)
+				err = epCtrl.Get(ctx, types.NamespacedName{
+					Name:      reqObj.GetName(),
+					Namespace: reqObj.GetNamespace()}, obj)
+				Expect(err).Should(Succeed())
+				Expect(obj.GetName()).To(HavePrefix("test-service"))
+				Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+				spec, ok, err := unstructured.NestedMap(obj.Object, "spec")
+				Expect(err).Should(Succeed())
+				Expect(ok).To(BeTrue())
+				specs = append(specs, spec)
+			}
+
+			checkSpecs(specs, []string{"192.0.2.1", "192.0.2.2"})
+		})
+
+		It("should adjust 2 EndpointView objects when an address changes", func() {
+			ctrl.Log.Info("updating service")
+			es1 = testutils.TestEndpointSlice.DeepCopy()
+			es1.SetName("test-endpointslice-1")
+			es1.SetNamespace("testnamespace")
+			_, err := ctrlutil.CreateOrUpdate(ctx, suite.K8sClient, es1, func() error {
+				es1.Object["endpoints"].([]any)[0].(map[string]any)["addresses"] = []any{"192.0.2.3"}
+				return nil
+			})
+			Expect(err).Should(Succeed())
+
+			// Since EndpointView have different names (the name contains the hash of
+			// the spec) there is no guarantee that deletes come before upserts (this
+			// guarantee exists only for identically named objects)
+			epNames = []string{}
+			specs = []map[string]any{}
+			for range 4 {
+				req, ok := testutils.TryWatchReq(eventCh, suite.Timeout)
+				Expect(ok).To(BeTrue())
+				switch req.GetEventType() {
+				case object.Deleted:
+					Expect(req.GetName()).To(HavePrefix("test-service"))
+					Expect(req.GetNamespace()).To(Equal("testnamespace"))
+				case object.Upserted, object.Added:
+					obj := req.GetObject()
+					Expect(obj.GetName()).To(HavePrefix("test-service"))
+					Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+					spec, ok, err := unstructured.NestedMap(obj.Object, "spec")
+					Expect(err).Should(Succeed())
+					Expect(ok).To(BeTrue())
+					specs = append(specs, spec)
+					epNames = append(epNames, req.GetName())
+				default:
+					Fail("unexpected delta type")
+				}
+			}
+
+			checkSpecs(specs, []string{"192.0.2.3"})
+		})
+
+		It("should let the 2 EndpointView objects be re-loaded from the API server", func() {
+			gvr := schema.GroupVersionResource{
+				Group:    viewv1a1.Group(OperatorName),
+				Version:  viewv1a1.Version,
+				Resource: "endpointview",
+			}
+			specs = []map[string]any{}
+
+			obj, err := dynamicClient.Resource(gvr).Namespace("testnamespace").
+				Get(ctx, epNames[0], metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			spec, ok, err := unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+
+			obj, err = dynamicClient.Resource(gvr).Namespace("testnamespace").
+				Get(ctx, epNames[1], metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			spec, ok, err = unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+
+			checkSpecs(specs, []string{"192.0.2.3"})
+		})
+
+		It("should remove EndpointView objects when the annotation is deleted from the Service", func() {
+			obj := svc1.DeepCopy()
+			_, err := ctrlutil.CreateOrUpdate(ctx, suite.K8sClient, obj, func() error {
+				obj.SetAnnotations(map[string]string{})
+				return nil
+			})
+			Expect(err).ToNot(HaveOccurred())
+
+			req, ok := testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Deleted))
+			Expect(req.GetName()).To(HavePrefix("test-service"))
+			Expect(req.GetNamespace()).To(Equal("testnamespace"))
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Deleted))
+			Expect(req.GetName()).To(HavePrefix("test-service"))
+			Expect(req.GetNamespace()).To(Equal("testnamespace"))
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Deleted))
+			Expect(req.GetName()).To(HavePrefix("test-service"))
+			Expect(req.GetNamespace()).To(Equal("testnamespace"))
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Deleted))
+			Expect(req.GetName()).To(HavePrefix("test-service"))
+			Expect(req.GetNamespace()).To(Equal("testnamespace"))
+		})
+
+		It("should delete the objects added", func() {
+			ctrl.Log.Info("deleting objects")
+			Expect(suite.K8sClient.Delete(ctx, svc1)).Should(Succeed())
+			Expect(suite.K8sClient.Delete(ctx, es1)).Should(Succeed())
+		})
+	})
+
+	Context("When creating an endpointslice controller w/ gather", Ordered, Label("operator"), func() {
+		var api *cache.API
+		var svc1, es1 object.Object
+		var specs []map[string]any
+		var ctx context.Context // context for the endpointslice controller
+		var cancel context.CancelFunc
+
+		BeforeAll(func() {
+			ctx, cancel = context.WithCancel(suite.Ctx)
+			svc1 = testutils.TestSvc.DeepCopy()
+			svc1.SetName("test-service-1")
+			svc1.SetNamespace("testnamespace")
+			svc1.SetAnnotations(map[string]string{EndpointSliceCtrlAnnotationName: "true"})
+			Expect(unstructured.SetNestedSlice(svc1.Object, []any{
+				map[string]any{
+					"name":       "tcp-port",
+					"protocol":   "TCP",
+					"port":       int64(80),
+					"targetPort": int64(8080),
+				},
+				map[string]any{
+					"name":       "udp-port",
+					"protocol":   "UDP",
+					"port":       int64(3478),
+					"targetPort": int64(33478),
+				},
+			}, "spec", "ports")).NotTo(HaveOccurred())
+
+			es1 = testutils.TestEndpointSlice.DeepCopy()
+			es1.SetName("test-endpointslice-1")
+			es1.SetNamespace("testnamespace")
+			es1.SetLabels(map[string]string{"kubernetes.io/service-name": "test-service-1"})
+		})
+
+		AfterAll(func() { cancel() })
+
+		It("should create and start the controller", func() {
+			var err error
+			api, err = cache.NewAPI(suite.Cfg, cache.APIOptions{
+				CacheOptions: cache.CacheOptions{Logger: suite.Log},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			suite.Log.Info("creating the API server")
+			// Use port 0 to let the OS automatically assign a free port
+			config, err := apiserver.NewDefaultConfig("", 0, api.Client, true, false, suite.Log)
+			Expect(err).NotTo(HaveOccurred())
+			server, err = apiserver.NewAPIServer(config)
+			Expect(err).NotTo(HaveOccurred())
+
+			go func() {
+				defer GinkgoRecover()
+				err := server.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			}()
+
+			// Give server a moment to start
+			time.Sleep(20 * time.Millisecond)
+
+			// Extract the actual port that was assigned
+			// GetServerAddress() returns "host:port"
+			if addr := server.GetServerAddress(); addr != "<unknown>" {
+				if _, portStr, err := net.SplitHostPort(addr); err == nil {
+					if p, err := strconv.Atoi(portStr); err == nil {
+						port = p
+						suite.Log.Info("API server bound to port", "port", port)
+					}
+				}
+			}
+
+			// Load the operator from file
+			eventCh = make(chan testutils.ReconcileRequest, 16)
+			errorCh = make(chan error, 16)
+			opts := doperator.Options{
+				Cache:        api.GetCache(),
+				APIServer:    server,
+				ErrorChannel: errorCh,
+				Logger:       suite.Log,
+			}
+			specFile := OperatorGatherSpec
+			if _, err := os.Stat(specFile); errors.Is(err, os.ErrNotExist) {
+				specFile = filepath.Base(specFile)
+			}
+			op, err := doperator.NewFromFile(OperatorName, suite.Cfg, specFile, opts)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create the endpointslice controller
+			mgr := op.GetManager()
+			epCtrl = &testEpCtrl{Client: api.GetClient(), log: suite.Log.WithName("test-endpointslice-ctrl")}
+			on := true
+			c, err := controller.NewTyped("test-ep-controller", mgr, controller.TypedOptions[dreconciler.Request]{
+				SkipNameValidation: &on,
+				Reconciler:         epCtrl,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			src, err := dreconciler.NewSource(mgr, OperatorName, opv1a1.Source{
+				Resource: opv1a1.Resource{
+					Kind: "EndpointView",
+				},
+			}).GetSource()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(c.Watch(src)).NotTo(HaveOccurred())
+
+			suite.Log.Info("starting error channel watcher")
+			go func() {
+				defer GinkgoRecover()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case err := <-errorCh:
+						Fail(fmt.Sprintf("async error caught: %s", err.Error()))
+					}
+				}
+			}()
+
+			suite.Log.Info("starting API server cache (shared view storage)")
+			go func() {
+				defer GinkgoRecover()
+				err := api.Cache.Start(ctx)
+				Expect(err).NotTo(HaveOccurred(), "failed to start API server cache")
+			}()
+
+			suite.Log.Info("starting operator controller")
+			go func() {
+				defer GinkgoRecover()
+				err := op.Start(ctx)
+				Expect(err).ToNot(HaveOccurred(), "failed to run controller")
+			}()
+		})
+
+		It("should generate 2 EndpointView events", func() {
+			ctrl.Log.Info("loading service")
+			Expect(suite.K8sClient.Create(ctx, svc1)).Should(Succeed())
+
+			ctrl.Log.Info("loading endpointslice")
+			Expect(suite.K8sClient.Create(ctx, es1)).Should(Succeed())
+
+			specs = []map[string]any{}
+			req, ok := testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+
+			Expect(req.GetEventType()).To(Equal(object.Added))
+			obj := req.GetObject()
+			Expect(obj.GetName()).To(HavePrefix("test-service"))
+			Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+			spec, ok, err := unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+
+			Expect(req.GetEventType()).To(Equal(object.Added))
+			obj = req.GetObject()
+			Expect(obj.GetName()).To(HavePrefix("test-service"))
+			Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+			spec, ok, err = unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+		})
+
+		It("should match the expected EndpointView objects", func() {
+			Expect(specs).To(HaveLen(2))
+			// addresses is in random order
+			sortAtField(specs, "addresses")
+			Expect(specs).To(ContainElement(map[string]any{
+				"serviceName": "test-service-1",
+				"type":        "ClusterIP",
+				"port":        int64(80),
+				"targetPort":  int64(8080),
+				"protocol":    "TCP",
+				"addresses":   []any{"192.0.2.1", "192.0.2.2"},
+			}))
+
+			Expect(specs).To(ContainElement(map[string]any{
+				"serviceName": "test-service-1",
+				"type":        "ClusterIP",
+				"port":        int64(3478),
+				"targetPort":  int64(33478),
+				"protocol":    "UDP",
+				"addresses":   []any{"192.0.2.1", "192.0.2.2"},
+			}))
+		})
+
+		It("should adjust 2 EndpointView objects when an address changes", func() {
+			ctrl.Log.Info("updating service")
+			es1 = testutils.TestEndpointSlice.DeepCopy()
+			es1.SetName("test-endpointslice-1")
+			es1.SetNamespace("testnamespace")
+			_, err := ctrlutil.CreateOrUpdate(ctx, suite.K8sClient, es1, func() error {
+				es1.Object["endpoints"].([]any)[0].(map[string]any)["addresses"] = []any{"192.0.2.3"}
+				return nil
+			})
+			Expect(err).Should(Succeed())
+
+			specs = []map[string]any{}
+			req, ok := testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Updated))
+			obj := req.GetObject()
+			Expect(obj.GetName()).To(HavePrefix("test-service"))
+			Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+			spec, ok, err := unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Updated))
+			obj = req.GetObject()
+			Expect(obj.GetName()).To(HavePrefix("test-service"))
+			Expect(obj.GetNamespace()).To(Equal("testnamespace"))
+			spec, ok, err = unstructured.NestedMap(obj.Object, "spec")
+			Expect(err).Should(Succeed())
+			Expect(ok).To(BeTrue())
+			specs = append(specs, spec)
+		})
+
+		It("should match the expected EndpointView objects", func() {
+			Expect(specs).To(HaveLen(2))
+			sortAtField(specs, "addresses")
+			Expect(specs).To(ContainElement(map[string]any{
+				"serviceName": "test-service-1",
+				"type":        "ClusterIP",
+				"port":        int64(80),
+				"targetPort":  int64(8080),
+				"protocol":    "TCP",
+				"addresses":   []any{"192.0.2.2", "192.0.2.3"},
+			}))
+
+			Expect(specs).To(ContainElement(map[string]any{
+				"serviceName": "test-service-1",
+				"type":        "ClusterIP",
+				"port":        int64(3478),
+				"targetPort":  int64(33478),
+				"protocol":    "UDP",
+				"addresses":   []any{"192.0.2.2", "192.0.2.3"},
+			}))
+
+		})
+
+		It("should remove EndpointView objects when the annotation is deleted from the Service", func() {
+			obj := svc1.DeepCopy()
+			_, err := ctrlutil.CreateOrUpdate(ctx, suite.K8sClient, obj, func() error {
+				obj.SetAnnotations(map[string]string{})
+				return nil
+			})
+			Expect(err).ToNot(HaveOccurred())
+
+			req, ok := testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Deleted))
+			Expect(req.GetName()).To(HavePrefix("test-service"))
+			Expect(req.GetNamespace()).To(Equal("testnamespace"))
+
+			req, ok = testutils.TryWatchReq(eventCh, suite.Timeout)
+			Expect(ok).To(BeTrue())
+			Expect(req.GetEventType()).To(Equal(object.Deleted))
+			Expect(req.GetName()).To(HavePrefix("test-service"))
+			Expect(req.GetNamespace()).To(Equal("testnamespace"))
+		})
+
+		It("should delete the objects added", func() {
+			ctrl.Log.Info("deleting objects")
+			Expect(suite.K8sClient.Delete(ctx, svc1)).Should(Succeed())
+			Expect(suite.K8sClient.Delete(ctx, es1)).Should(Succeed())
+		})
+	})
+})
+
+// wait for some configurable time for a watch event
+func apiServerWatchEvent(d time.Duration) (watch.Event, error) {
+	select {
+	case e := <-watchCh:
+		return e, nil
+	case <-time.After(d):
+		return watch.Event{}, errors.New("timeout")
+	}
+}
+
+func sortAtField(specs []map[string]any, fields ...string) {
+	for _, spec := range specs {
+		list, ok, err := unstructured.NestedSlice(spec, fields...)
+		if err != nil || !ok {
+			continue
+		}
+
+		sortAny(list)
+		err = unstructured.SetNestedSlice(spec, list, fields...)
+		if err != nil {
+			continue
+		}
+	}
+}
+
+func sortAny(slice []any) {
+	sort.Slice(slice, func(i, j int) bool {
+		// Convert both to JSON for consistent comparison
+		jsonI, _ := json.Marshal(slice[i])
+		jsonJ, _ := json.Marshal(slice[j])
+		return string(jsonI) < string(jsonJ)
+	})
+}
+
+func checkSpecs(specs []map[string]any, addrs []string) {
+	Expect(specs).To(HaveLen(len(addrs) * 2))
+
+	for _, addr := range addrs {
+		Expect(specs).To(ContainElement(map[string]any{
+			"serviceName": "test-service-1",
+			"type":        "ClusterIP",
+			"port":        int64(80),
+			"targetPort":  int64(8080),
+			"protocol":    "TCP",
+			"address":     addr,
+		}))
+
+		Expect(specs).To(ContainElement(map[string]any{
+			"serviceName": "test-service-1",
+			"type":        "ClusterIP",
+			"port":        int64(3478),
+			"targetPort":  int64(33478),
+			"protocol":    "UDP",
+			"address":     addr,
+		}))
+	}
+}

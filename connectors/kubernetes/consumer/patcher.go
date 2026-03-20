@@ -9,8 +9,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	kobject "github.com/l7mp/connectors/kubernetes/runtime/object"
-	dbspruntime "github.com/l7mp/dbsp/dbsp/runtime"
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 // Patcher applies output entries with merge-patch semantics.
