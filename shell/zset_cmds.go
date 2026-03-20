@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/expression"
 	exprdbsp "github.com/l7mp/dbsp/engine/expression/dbsp"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -24,6 +27,13 @@ type boundZSet struct {
 	tableName string
 	data      zset.ZSet
 	pkFunc    func(datamodel.Document) (string, error)
+
+	mu         sync.Mutex
+	buffer     []dbspruntime.Event
+	publisher  dbspruntime.Publisher
+	producing  bool
+	consuming  bool
+	subscriber dbspruntime.Subscriber
 }
 
 func (bz *boundZSet) newDocument(fields map[string]any) datamodel.Document {
@@ -37,6 +47,8 @@ func zsetRootCommand(state *appState) *cobra.Command {
 	}
 	root.AddCommand(
 		createZSetCmd(state),
+		produceZSetCmd(state),
+		consumeZSetCmd(state),
 		printZSetCmd(state),
 		deleteZSetCmd(state),
 		listZSetsCmd(state),
@@ -89,17 +101,118 @@ func createZSetCmd(state *appState) *cobra.Command {
 	return cmd
 }
 
+type zsetProducer struct{}
+
+func (p *zsetProducer) Start(ctx context.Context) error {
+	<-ctx.Done()
+	return nil
+}
+
+func produceZSetCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "produce <zset-name> <input-name>",
+		Short: "Start producing changes of a Z-set",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := state.runtimeFailure(); err != nil {
+				return fmt.Errorf("runtime failure: %w", err)
+			}
+			name := args[0]
+			topic := args[1]
+			bz, err := requireZSet(state, name)
+			if err != nil {
+				return err
+			}
+
+			bz.mu.Lock()
+			if bz.producing {
+				bz.mu.Unlock()
+				return nil
+			}
+			bz.publisher = state.runtime.NewPublisher()
+			bz.producing = true
+			buffer := append([]dbspruntime.Event(nil), bz.buffer...)
+			bz.buffer = nil
+			pub := bz.publisher
+			bz.mu.Unlock()
+
+			state.runtime.Add(&zsetProducer{})
+			state.logger.V(1).Info("zset producer started", "name", name, "topic", topic, "flush_events", len(buffer))
+			for _, event := range buffer {
+				event.Name = topic
+				if err := pub.Publish(event); err != nil {
+					return err
+				}
+			}
+			bz.publisher = dbspruntime.PublishFunc(func(event dbspruntime.Event) error {
+				event.Name = topic
+				return pub.Publish(event)
+			})
+			return nil
+		},
+	}
+}
+
+func consumeZSetCmd(state *appState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "consume <zset-name> <output-name>",
+		Short: "Start consuming events into a Z-set buffer",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := state.runtimeFailure(); err != nil {
+				return fmt.Errorf("runtime failure: %w", err)
+			}
+			name := args[0]
+			topic := args[1]
+			bz, err := requireZSet(state, name)
+			if err != nil {
+				return err
+			}
+
+			bz.mu.Lock()
+			if bz.consuming {
+				bz.mu.Unlock()
+				return nil
+			}
+			sub := state.runtime.NewSubscriber()
+			sub.Subscribe(topic)
+			bz.subscriber = sub
+			bz.consuming = true
+			bz.mu.Unlock()
+			state.logger.V(1).Info("zset consumer started", "name", name, "topic", topic)
+			return nil
+		},
+	}
+}
+
 func printZSetCmd(state *appState) *cobra.Command {
 	return &cobra.Command{
 		Use:   "print <name>",
-		Short: "Print Z-set entries",
+		Short: "Print and remove first buffered event",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			bz, err := requireZSet(state, args[0])
 			if err != nil {
 				return err
 			}
-			return printZSetEntries(args[0], bz.data)
+
+			bz.mu.Lock()
+			consuming := bz.consuming && bz.subscriber != nil
+			sub := bz.subscriber
+			bz.mu.Unlock()
+			if consuming {
+				event, ok := <-sub.GetChannel()
+				if !ok {
+					return fmt.Errorf("zset %s consumer channel closed", args[0])
+				}
+				return printZSetEntries(args[0], event.Data)
+			}
+
+			event, ok := popBufferedEvent(bz)
+			if !ok {
+				return fmt.Errorf("zset %s buffer is empty: no events received yet; did you run zset consume %s and zset produce on relevant input zsets?", args[0], args[0])
+			}
+			return printZSetEntries(args[0], event.Data)
 		},
 	}
 }
@@ -113,6 +226,9 @@ func deleteZSetCmd(state *appState) *cobra.Command {
 			name := args[0]
 			if _, exists := state.zsets[name]; !exists {
 				return fmt.Errorf("zset %s not found", name)
+			}
+			if state.zsets[name].subscriber != nil {
+				state.zsets[name].subscriber.Unsubscribe(name)
 			}
 			delete(state.zsets, name)
 			return nil
@@ -162,10 +278,12 @@ Multiple documents:
 			if err != nil {
 				return err
 			}
+			bz.mu.Lock()
 			for _, e := range entries {
 				bz.data.Insert(bz.newDocument(e.fields), zset.Weight(e.weight))
 			}
-			return nil
+			bz.mu.Unlock()
+			return publishCurrentSnapshot(args[0], bz)
 		},
 	}
 }
@@ -187,12 +305,14 @@ func weightCmd(state *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			bz.mu.Lock()
 			doc := bz.newDocument(entry.fields)
 			delta := zset.Weight(entry.weight) - bz.data.Lookup(doc.Hash())
 			if delta != 0 {
 				bz.data.Insert(doc, delta)
 			}
-			return nil
+			bz.mu.Unlock()
+			return publishCurrentSnapshot(args[0], bz)
 		},
 	}
 }
@@ -207,8 +327,10 @@ func negateCmd(state *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			bz.mu.Lock()
 			bz.data = bz.data.Negate()
-			return nil
+			bz.mu.Unlock()
+			return publishCurrentSnapshot(args[0], bz)
 		},
 	}
 }
@@ -223,8 +345,10 @@ func clearCmd(state *appState) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			bz.mu.Lock()
 			bz.data = zset.New()
-			return nil
+			bz.mu.Unlock()
+			return publishCurrentSnapshot(args[0], bz)
 		},
 	}
 }
@@ -250,13 +374,40 @@ Multiple documents:
 			if err != nil {
 				return err
 			}
+			bz.mu.Lock()
 			bz.data = zset.New()
 			for _, e := range entries {
 				bz.data.Insert(bz.newDocument(e.fields), zset.Weight(e.weight))
 			}
-			return nil
+			bz.mu.Unlock()
+			return publishCurrentSnapshot(args[0], bz)
 		},
 	}
+}
+
+func publishCurrentSnapshot(name string, bz *boundZSet) error {
+	bz.mu.Lock()
+	event := dbspruntime.Event{Name: name, Data: bz.data.Clone()}
+	if !bz.producing || bz.publisher == nil {
+		bz.buffer = append(bz.buffer, event)
+		bz.mu.Unlock()
+		return nil
+	}
+	pub := bz.publisher
+	bz.mu.Unlock()
+
+	return pub.Publish(event)
+}
+
+func popBufferedEvent(bz *boundZSet) (dbspruntime.Event, bool) {
+	bz.mu.Lock()
+	defer bz.mu.Unlock()
+	if len(bz.buffer) == 0 {
+		return dbspruntime.Event{}, false
+	}
+	event := bz.buffer[0]
+	bz.buffer = bz.buffer[1:]
+	return event, true
 }
 
 func primaryKeyFuncFromExpression(expr expression.Expression) func(datamodel.Document) (string, error) {

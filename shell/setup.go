@@ -3,60 +3,35 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"github.com/spf13/cobra"
 	"io"
 	"os"
 	"strings"
-
-	"github.com/reeflective/console"
-	"github.com/spf13/cobra"
 )
 
-// buildRootCmd constructs the non-interactive cobra command tree used by
-// runScript, runLineShell, and tests alike. Errors and usage are silenced so
-// callers control error presentation.
+// buildRootCmd constructs the root command tree used by interactive shell and tests.
 func buildRootCmd(state *appState) *cobra.Command {
 	root := &cobra.Command{
-		Use:           "dbsp",
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:                "dbsp",
+		SilenceErrors:      true,
+		SilenceUsage:       true,
+		DisableFlagParsing: true,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 	}
-	root.AddCommand(circuitRootCommand(state))
-	root.AddCommand(zsetRootCommand(state))
-	root.AddCommand(executorRootCommand(state))
-	root.AddCommand(sqlRootCommand(state))
+	root.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		return executeLine(state, args)
+	}
 	return root
-}
-
-// setupRootMenu configures the default (root) interactive menu.
-func setupRootMenu(app *console.Console, state *appState) {
-	menu := app.ActiveMenu()
-	p := menu.Prompt()
-	p.Primary = func() string { return "dbsp > " }
-	menu.AddInterrupt(io.EOF, func(c *console.Console) {
-		fmt.Fprintln(os.Stdout, "Exiting shell")
-		os.Exit(0)
-	})
-
-	menu.SetCommands(func() *cobra.Command {
-		root := &cobra.Command{}
-		root.AddCommand(circuitRootCommand(state))
-		root.AddCommand(zsetRootCommand(state))
-		root.AddCommand(executorRootCommand(state))
-		root.AddCommand(sqlRootCommand(state))
-		root.AddCommand(&cobra.Command{
-			Use:   "exit",
-			Short: "Exit the shell",
-			Run: func(cmd *cobra.Command, args []string) {
-				os.Exit(0)
-			},
-		})
-		return root
-	})
 }
 
 // runLineShell runs a simple line-by-line interactive shell on stdin.
 func runLineShell(state *appState) error {
-	root := buildRootCmd(state)
+	defer state.close()
 	reader := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Fprint(os.Stdout, "dbsp > ")
@@ -71,8 +46,7 @@ func runLineShell(state *appState) error {
 			return nil
 		}
 		args := strings.Fields(line)
-		root.SetArgs(args)
-		if err := root.Execute(); err != nil {
+		if err := executeLine(state, args); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}
@@ -81,7 +55,7 @@ func runLineShell(state *appState) error {
 // runScript executes DBSP commands from an io.Reader, one per line.
 // Blank lines and lines starting with '#' are skipped.
 func runScript(state *appState, reader io.Reader, source string) error {
-	root := buildRootCmd(state)
+	defer state.close()
 	scanner := bufio.NewScanner(reader)
 	lineNumber := 0
 	for scanner.Scan() {
@@ -94,8 +68,7 @@ func runScript(state *appState, reader io.Reader, source string) error {
 			return nil
 		}
 		args := strings.Fields(line)
-		root.SetArgs(args)
-		if err := root.Execute(); err != nil {
+		if err := executeLine(state, args); err != nil {
 			return fmt.Errorf("%s:%d: %w", source, lineNumber, err)
 		}
 	}
@@ -103,4 +76,42 @@ func runScript(state *appState, reader io.Reader, source string) error {
 		return fmt.Errorf("%s: %w", source, err)
 	}
 	return nil
+}
+
+func executeLine(state *appState, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+
+	switch args[0] {
+	case "zset":
+		cmd := zsetRootCommand(state)
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+		cmd.SetArgs(args[1:])
+		return cmd.Execute()
+	case "circuit":
+		cmd := circuitRootCommand(state)
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+		cmd.SetArgs(args[1:])
+		return cmd.Execute()
+	case "sql":
+		cmd := sqlRootCommand(state)
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+		cmd.SetArgs(args[1:])
+		return cmd.Execute()
+	case "aggregate":
+		cmd := aggregateRootCommand(state)
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+		cmd.SetArgs(args[1:])
+		return cmd.Execute()
+	case "echo":
+		fmt.Fprintln(os.Stdout, strings.Join(args[1:], " "))
+		return nil
+	default:
+		return fmt.Errorf("unknown command %q", args[0])
+	}
 }

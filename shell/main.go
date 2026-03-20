@@ -3,9 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/reeflective/console"
+	"github.com/go-logr/logr"
+	"github.com/go-logr/zapr"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func main() {
@@ -17,53 +21,73 @@ func main() {
 }
 
 func newRootCommand() *cobra.Command {
-	var noReadline bool
+	var level string
+	var verbose bool
 
 	root := &cobra.Command{
-		Use:   "dbsp [script]",
-		Short: "DBSP command-line tools",
-		Long: `DBSP command-line tools.
-
-With no arguments, starts an interactive shell.
-With a script file argument, executes the script.
-Subcommands (circuit, zset, executor, sql) are also available directly.`,
-		Args: cobra.MaximumNArgs(1),
+		Use:   "dbsp",
+		Short: "DBSP interactive shell",
+		Args:  cobra.MaximumNArgs(1),
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if verbose {
+				level = "debug"
+			}
+			_, err := parseLogLevel(level)
+			return err
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ll, err := parseLogLevel(level)
+			if err != nil {
+				return err
+			}
+			log := newLogger(ll)
+
 			if len(args) == 1 {
-				// Script mode: run commands from file.
 				file, err := os.Open(args[0])
 				if err != nil {
 					return err
 				}
 				defer file.Close()
-				err = runScript(newState(), file, args[0])
+				err = runScript(newState(log), file, args[0])
 				if err != nil {
-					// Script command failures should not print root usage.
 					cmd.SilenceUsage = true
 				}
 				return err
 			}
-			// Interactive mode.
-			state := newState()
-			if noReadline {
-				return runLineShell(state)
-			}
-			app := console.New("dbsp")
-			app.NewlineBefore = true
-			app.NewlineAfter = true
-			setupRootMenu(app, state)
-			return app.Start()
+			return runLineShell(newState(log))
 		},
 	}
 	root.SilenceErrors = true
-
-	root.Flags().BoolVar(&noReadline, "no-readline", false, "Disable readline (interactive mode only)")
-
-	state := newState()
-	root.AddCommand(circuitRootCommand(state))
-	root.AddCommand(zsetRootCommand(state))
-	root.AddCommand(executorRootCommand(state))
-	root.AddCommand(sqlRootCommand(state))
+	root.PersistentFlags().StringVarP(&level, "loglevel", "l", "error", "Runtime log level: debug, info, warn, error")
+	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose runtime logging (debug)")
 
 	return root
+}
+
+func parseLogLevel(raw string) (zapcore.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "debug":
+		return zapcore.DebugLevel, nil
+	case "info":
+		return zapcore.InfoLevel, nil
+	case "warn", "warning":
+		return zapcore.WarnLevel, nil
+	case "error", "":
+		return zapcore.ErrorLevel, nil
+	default:
+		return zapcore.ErrorLevel, fmt.Errorf("invalid log level %q: use debug|info|warn|error", raw)
+	}
+}
+
+func newLogger(level zapcore.Level) logr.Logger {
+	zc := zap.NewDevelopmentConfig()
+	zc.Level = zap.NewAtomicLevelAt(level)
+	z, err := zc.Build()
+	if err != nil {
+		return logr.Discard()
+	}
+	return zapr.NewLogger(z)
 }

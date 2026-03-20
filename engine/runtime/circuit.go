@@ -10,7 +10,6 @@ import (
 
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/executor"
-	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -21,6 +20,7 @@ var _ Processor = (*Circuit)(nil)
 type Circuit struct {
 	Publisher
 	Subscriber
+	logger logr.Logger
 
 	inputMap    map[string]string
 	outputMap   map[string]string
@@ -35,13 +35,8 @@ type Circuit struct {
 }
 
 // NewCircuit builds a runtime processor from a compiled query.
-func NewCircuit(rt *Runtime, q *compiler.Query) (*Circuit, error) {
-	compiled, err := transform.Incrementalize(q.Circuit)
-	if err != nil {
-		return nil, fmt.Errorf("runtime incrementalize: %w", err)
-	}
-
-	exec, err := executor.New(compiled, logr.Discard())
+func NewCircuit(rt *Runtime, q *compiler.Query, logger logr.Logger) (*Circuit, error) {
+	exec, err := executor.New(q.Circuit, logr.Discard())
 	if err != nil {
 		return nil, fmt.Errorf("runtime executor: %w", err)
 	}
@@ -58,6 +53,7 @@ func NewCircuit(rt *Runtime, q *compiler.Query) (*Circuit, error) {
 	return &Circuit{
 		Publisher:    rt.NewPublisher(),
 		Subscriber:   rt.NewSubscriber(),
+		logger:       logger,
 		inputMap:     inputMap,
 		outputMap:    outputMap,
 		inputNames:   inputNames,
@@ -86,6 +82,7 @@ func (c *Circuit) Start(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
+			c.logger.V(1).Info("runtime input event", "topic", in.Name, "docs", in.Data.Size())
 			logical, ok := c.topicToInput[in.Name]
 			if !ok {
 				continue
@@ -96,6 +93,7 @@ func (c *Circuit) Start(ctx context.Context) error {
 				return err
 			}
 			for _, out := range outs {
+				c.logger.V(1).Info("runtime output event", "topic", out.Name, "docs", out.Data.Size())
 				if err := c.Publish(out); err != nil {
 					return err
 				}

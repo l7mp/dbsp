@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -17,7 +18,7 @@ func TestCmds(t *testing.T) {
 // commands are fully independent (cobra retains parsed-flag state between
 // Execute calls on the same tree).
 func newTestEnv() (*appState, func(...string) error) {
-	state := newState()
+	state := newState(logr.Discard())
 	run := func(args ...string) error {
 		root := buildRootCmd(state)
 		root.SetArgs(args)

@@ -13,6 +13,7 @@ import (
 	"github.com/l7mp/dbsp/engine/circuit"
 	exprdbsp "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/operator"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/transform"
 )
 
@@ -46,6 +47,7 @@ func createCircuitCmd(state *appState) *cobra.Command {
 				return fmt.Errorf("circuit %s already exists", name)
 			}
 			state.circuits[name] = circuit.New(name)
+			state.uninstallProcessor(name)
 			return nil
 		},
 	}
@@ -77,6 +79,8 @@ func deleteCircuitCmd(state *appState) *cobra.Command {
 				return fmt.Errorf("circuit %s not found", name)
 			}
 			delete(state.circuits, name)
+			delete(state.queries, name)
+			state.uninstallProcessor(name)
 			return nil
 		},
 	}
@@ -322,19 +326,30 @@ func validateCommand(state *appState) *cobra.Command {
 		Short: "Validate a circuit",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := requireCircuit(state, args[0])
+			name := args[0]
+			c, err := requireCircuit(state, name)
 			if err != nil {
 				return err
 			}
 			errs := c.Validate()
-			if len(errs) == 0 {
-				fmt.Fprintln(os.Stdout, "OK")
+			if len(errs) > 0 {
+				for _, err := range errs {
+					fmt.Fprintln(os.Stdout, err.Error())
+				}
+				return fmt.Errorf("circuit has %d validation errors", len(errs))
+			}
+			state.logger.V(1).Info("circuit validation passed", "name", name)
+
+			q, ok := state.queries[name]
+			if !ok {
 				return nil
 			}
-			for _, err := range errs {
-				fmt.Fprintln(os.Stdout, err.Error())
+			proc, err := dbspruntime.NewCircuit(state.runtime, q, state.logger)
+			if err != nil {
+				return err
 			}
-			return fmt.Errorf("circuit has %d validation errors", len(errs))
+			state.installProcessor(name, proc)
+			return nil
 		},
 	}
 }
@@ -358,6 +373,11 @@ func incrementalizeCommand(state *appState) *cobra.Command {
 				return err
 			}
 			state.circuits[name] = inc
+			if q, ok := state.queries[args[0]]; ok {
+				clone := *q
+				clone.Circuit = inc
+				state.queries[name] = &clone
+			}
 			return nil
 		},
 	}

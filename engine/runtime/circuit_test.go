@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/compiler/aggregation"
@@ -22,7 +23,7 @@ var _ = Describe("Circuit", func() {
 	It("executes incremental mode on delta input", func() {
 		q := mustCompileCircuitQuery()
 		rt := runtime.NewRuntime()
-		c, err := runtime.NewCircuit(rt, q)
+		c, err := runtime.NewCircuit(rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
 		delta := zset.New()
@@ -39,7 +40,7 @@ var _ = Describe("Circuit", func() {
 	It("subscribes inputs and publishes outputs", func() {
 		q := mustCompileCircuitQuery()
 		rt := runtime.NewRuntime()
-		c, err := runtime.NewCircuit(rt, q)
+		c, err := runtime.NewCircuit(rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
 		consumer := rt.NewSubscriber()
@@ -80,9 +81,9 @@ var _ = Describe("Circuit", func() {
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
 
-		c1, err := runtime.NewCircuit(rt, q1)
+		c1, err := runtime.NewCircuit(rt, q1, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		c2, err := runtime.NewCircuit(rt, q2)
+		c2, err := runtime.NewCircuit(rt, q2, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
 		cons1 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "y"})
@@ -123,9 +124,9 @@ var _ = Describe("Circuit", func() {
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
 
-		c1, err := runtime.NewCircuit(rt, q1)
+		c1, err := runtime.NewCircuit(rt, q1, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		c2, err := runtime.NewCircuit(rt, q2)
+		c2, err := runtime.NewCircuit(rt, q2, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
 		cons1 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "y"})
@@ -166,9 +167,9 @@ var _ = Describe("Circuit", func() {
 
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
-		c1, err := runtime.NewCircuit(rt, q1)
+		c1, err := runtime.NewCircuit(rt, q1, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		c2, err := runtime.NewCircuit(rt, q2)
+		c2, err := runtime.NewCircuit(rt, q2, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
 		cons1 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "y"})

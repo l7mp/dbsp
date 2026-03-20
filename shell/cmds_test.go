@@ -368,7 +368,7 @@ var _ = Describe("Circuit commands", func() {
 	})
 })
 
-var _ = Describe("Executor commands", func() {
+var _ = Describe("Runtime zset flow", func() {
 	var (
 		state *appState
 		run   func(...string) error
@@ -376,107 +376,34 @@ var _ = Describe("Executor commands", func() {
 
 	BeforeEach(func() {
 		state, run = newTestEnv()
-		simpleCircuit(run, "c")
 	})
 
-	Describe("create", func() {
-		It("creates an executor", func() {
-			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
-			Expect(state.executors).To(HaveKey("e"))
-			Expect(state.executors["e"].circuitName).To(Equal("c"))
-		})
+	It("buffers mutations before produce and flushes on produce", func() {
+		Expect(run("zset", "create", "in")).To(Succeed())
+		Expect(run("zset", "set", "in", `({"id":1},1)`)).To(Succeed())
 
-		It("errors when --circuit is omitted", func() {
-			Expect(run("executor", "create", "e")).
-				To(MatchError(ContainSubstring("circuit name required")))
-		})
+		Expect(run("zset", "consume", "in", "in")).To(Succeed())
+		Expect(run("zset", "produce", "in", "in")).To(Succeed())
 
-		It("errors on unknown circuit name", func() {
-			Expect(run("executor", "create", "e", "--circuit", "nope")).
-				To(MatchError(ContainSubstring("not found")))
-		})
-
-		It("errors on duplicate executor name", func() {
-			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
-			Expect(run("executor", "create", "e", "--circuit", "c")).
-				To(MatchError(ContainSubstring("already exists")))
-		})
+		Eventually(func() bool {
+			sub := state.zsets["in"].subscriber
+			if sub == nil {
+				return false
+			}
+			select {
+			case <-sub.GetChannel():
+				return true
+			default:
+				return false
+			}
+		}).Should(BeTrue())
 	})
 
-	Describe("execute", func() {
-		BeforeEach(func() {
-			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
-			Expect(run("zset", "create", "input-data")).To(Succeed())
-			Expect(run("zset", "insert", "input-data", `({"id":1},1)`)).To(Succeed())
-		})
+	It("prints destructively", func() {
+		Expect(run("zset", "create", "in")).To(Succeed())
+		Expect(run("zset", "set", "in", `({"id":1},1)`)).To(Succeed())
 
-		It("stores the output Z-set under the assigned name", func() {
-			Expect(run("executor", "execute", "e", "in=input-data", "out=result")).To(Succeed())
-			Expect(state.zsets).To(HaveKey("result"))
-			Expect(state.zsets["result"].data.Size()).To(Equal(1))
-		})
-
-		It("overwrites an existing Z-set with the same name", func() {
-			Expect(run("zset", "create", "result")).To(Succeed())
-			Expect(run("executor", "execute", "e", "in=input-data", "out=result")).To(Succeed())
-			Expect(state.zsets["result"].data.Size()).To(Equal(1))
-		})
-
-		It("defaults the output name to <executor>-<node> for a single output", func() {
-			Expect(run("executor", "execute", "e", "in=input-data")).To(Succeed())
-			Expect(state.zsets).To(HaveKey("e-out"))
-		})
-
-		It("passes the document through a pass-through circuit unchanged", func() {
-			Expect(run("executor", "execute", "e", "in=input-data", "out=r")).To(Succeed())
-			outEntries := sortedEntries(state.zsets["r"].data)
-			inEntries := sortedEntries(state.zsets["input-data"].data)
-			Expect(outEntries[0].Document.Hash()).To(Equal(inEntries[0].Document.Hash()))
-		})
-
-		It("errors on an unknown input Z-set", func() {
-			Expect(run("executor", "execute", "e", "in=nope")).
-				To(MatchError(ContainSubstring("not found")))
-		})
-	})
-
-	Describe("incrementalize", func() {
-		BeforeEach(func() {
-			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
-		})
-
-		It("creates an incremental circuit and executor", func() {
-			Expect(run("executor", "incrementalize", "e", "e-inc")).To(Succeed())
-			Expect(state.circuits).To(HaveKey("c-inc"))
-			Expect(state.executors).To(HaveKey("e-inc"))
-			Expect(state.executors["e-inc"].circuitName).To(Equal("c-inc"))
-		})
-
-		It("errors if the incremental circuit already exists", func() {
-			Expect(run("executor", "incrementalize", "e", "e-inc")).To(Succeed())
-			Expect(run("executor", "incrementalize", "e", "e-inc2")).
-				To(MatchError(ContainSubstring("already exists")))
-		})
-
-		It("errors if the new executor name already exists", func() {
-			Expect(run("executor", "create", "e-inc", "--circuit", "c")).To(Succeed())
-			Expect(run("executor", "incrementalize", "e", "e-inc")).
-				To(MatchError(ContainSubstring("already exists")))
-		})
-	})
-
-	Describe("reset", func() {
-		It("resets executor state without error", func() {
-			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
-			Expect(run("executor", "reset", "e")).To(Succeed())
-		})
-	})
-
-	Describe("delete", func() {
-		It("removes the executor from state", func() {
-			Expect(run("executor", "create", "e", "--circuit", "c")).To(Succeed())
-			Expect(run("executor", "delete", "e")).To(Succeed())
-			Expect(state.executors).NotTo(HaveKey("e"))
-		})
+		Expect(run("zset", "print", "in")).To(Succeed())
+		Expect(run("zset", "print", "in")).To(MatchError(ContainSubstring("buffer is empty")))
 	})
 })

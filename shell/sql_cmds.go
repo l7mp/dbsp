@@ -32,11 +32,121 @@ func sqlRootCommand(state *appState) *cobra.Command {
 
 func sqlCommands(state *appState) []*cobra.Command {
 	createCmd := &cobra.Command{
+		Use:   "create <name> <SQL...>",
+		Short: "Create a named SQL statement",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			stmt := strings.Join(args[1:], " ")
+			out, err := cmd.Flags().GetString("output")
+			if err != nil {
+				return err
+			}
+			if _, err := sqlparser.Parse(stmt); err != nil {
+				return fmt.Errorf("parse: %w", err)
+			}
+			if out == "" {
+				out = name + "-output"
+			}
+			state.sql[name] = sqlSpec{Source: stmt, Output: out}
+			state.logger.V(1).Info("sql statement created", "name", name)
+			return nil
+		},
+	}
+	createCmd.Flags().String("output", "", "Consumer topic for compiled circuit output (default: <name>-output)")
+
+	tableCmd := &cobra.Command{Use: "table", Short: "SQL table DDL"}
+	tableCreateCmd := &cobra.Command{
 		Use:   "create <TOKEN>...",
 		Short: "Execute a CREATE TABLE statement",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return handleCreateTable("CREATE "+strings.Join(args, " "), state)
+		},
+	}
+	tableDropCmd := &cobra.Command{
+		Use:   "drop <TOKEN>...",
+		Short: "Execute a DROP TABLE statement",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return handleDrop("DROP "+strings.Join(args, " "), state)
+		},
+	}
+	tableCmd.AddCommand(tableCreateCmd, tableDropCmd)
+
+	compileCmd := &cobra.Command{
+		Use:   "compile <sql-name> <circuit-name>",
+		Short: "Compile a named SQL statement into a circuit",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sqlName, circuitName := args[0], args[1]
+			spec, ok := state.sql[sqlName]
+			if !ok {
+				return fmt.Errorf("sql statement %s not found", sqlName)
+			}
+			if _, exists := state.circuits[circuitName]; exists {
+				return fmt.Errorf("circuit %s already exists", circuitName)
+			}
+			q, err := compilersql.NewCompiler(state.db).CompileString(spec.Source)
+			if err != nil {
+				return fmt.Errorf("compile: %w", err)
+			}
+			renamed, err := renameSQLOutputs(spec.Output, q.OutputMap)
+			if err != nil {
+				return err
+			}
+			q.OutputMap = renamed
+			state.circuits[circuitName] = q.Circuit
+			state.queries[circuitName] = q
+			state.logger.V(1).Info("sql compile output", "statement", sqlName, "output", spec.Output)
+			state.logger.V(1).Info("sql compiled", "statement", sqlName, "circuit", circuitName)
+			return nil
+		},
+	}
+
+	getCmd := &cobra.Command{
+		Use:   "get <name>",
+		Short: "Print a named SQL statement",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			spec, ok := state.sql[args[0]]
+			if !ok {
+				return fmt.Errorf("sql statement %s not found", args[0])
+			}
+			fmt.Fprintln(os.Stdout, spec.Source)
+			return nil
+		},
+	}
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List named SQL statements",
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(state.sql) == 0 {
+				fmt.Fprintln(os.Stdout, "(no sql statements)")
+				return
+			}
+			names := make([]string, 0, len(state.sql))
+			for n := range state.sql {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			for _, n := range names {
+				fmt.Fprintln(os.Stdout, n)
+			}
+		},
+	}
+
+	deleteCmd := &cobra.Command{
+		Use:   "delete <name>",
+		Short: "Delete a named SQL statement",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, ok := state.sql[args[0]]; !ok {
+				return fmt.Errorf("sql statement %s not found", args[0])
+			}
+			delete(state.sql, args[0])
+			return nil
 		},
 	}
 
@@ -62,15 +172,6 @@ func sqlCommands(state *appState) []*cobra.Command {
 		},
 	}
 	selectCmd.Flags().String("save", "", "Save compiled circuit under this name")
-
-	dropCmd := &cobra.Command{
-		Use:   "drop <TOKEN>...",
-		Short: "Execute a DROP TABLE statement",
-		Args:  cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return handleDrop("DROP "+strings.Join(args, " "), state)
-		},
-	}
 
 	tablesCmd := &cobra.Command{
 		Use:   "tables",
@@ -140,14 +241,42 @@ Flags:
 	evalCmd.Flags().Bool("incr", false, "Run the incremental version of the circuit")
 
 	return []*cobra.Command{
+		tableCmd,
 		createCmd,
+		compileCmd,
+		getCmd,
+		listCmd,
+		deleteCmd,
 		insertCmd,
 		selectCmd,
 		evalCmd,
-		dropCmd,
 		tablesCmd,
 		describeCmd,
 	}
+}
+
+func renameSQLOutputs(outputBase string, out map[string]string) (map[string]string, error) {
+	if len(out) == 0 {
+		return out, nil
+	}
+	renamed := make(map[string]string, len(out))
+	if nodeID, ok := out["output"]; ok {
+		renamed[outputBase] = nodeID
+	}
+	for logical, nodeID := range out {
+		if logical == "output" {
+			continue
+		}
+		key := outputBase + "-" + logical
+		if _, exists := renamed[key]; exists {
+			return nil, fmt.Errorf("duplicate output key %s", key)
+		}
+		renamed[key] = nodeID
+	}
+	if len(renamed) == 0 {
+		return nil, fmt.Errorf("sql compile: missing output mapping")
+	}
+	return renamed, nil
 }
 
 // handleCreateTable parses and executes a CREATE TABLE SQL statement.
@@ -168,7 +297,7 @@ func handleCreateTable(sql string, state *appState) error {
 	}
 	table := relation.NewTable(tableName, schema)
 	state.db.RegisterTable(tableName, table)
-	fmt.Fprintf(os.Stdout, "Table %s created.\n", tableName)
+	state.logger.V(1).Info("table created", "name", tableName)
 	return nil
 }
 
@@ -294,6 +423,7 @@ func handleSelect(sql string, saveName string, state *appState) error {
 			return fmt.Errorf("circuit %s already exists", saveName)
 		}
 		state.circuits[saveName] = q.Circuit
+		state.queries[saveName] = q
 		fmt.Fprintf(os.Stdout, "Circuit saved as %s.\n", saveName)
 	}
 
@@ -375,6 +505,7 @@ func handleEval(sql, saveName, saveZSet string, incr bool, state *appState) erro
 			return fmt.Errorf("circuit %s already exists", saveName)
 		}
 		state.circuits[saveName] = q.Circuit
+		state.queries[saveName] = q
 		fmt.Fprintf(os.Stdout, "Circuit saved as %s.\n", saveName)
 	}
 

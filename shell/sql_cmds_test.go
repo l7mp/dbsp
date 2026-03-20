@@ -16,27 +16,57 @@ var _ = Describe("SQL commands", func() {
 	})
 
 	Describe("create", func() {
-		It("creates a table and registers it in the database", func() {
-			Expect(run("sql", "create", "TABLE", "t", "(id", "INT,", "score", "INT)")).To(Succeed())
-			_, err := state.db.GetTable("t")
-			Expect(err).NotTo(HaveOccurred())
+		It("creates a named SQL statement", func() {
+			Expect(run("sql", "create", "q1", "SELECT", "*", "FROM", "t")).To(Succeed())
+			Expect(state.sql).To(HaveKey("q1"))
 		})
 
-		It("errors on duplicate table name", func() {
-			Expect(run("sql", "create", "TABLE", "t", "(id", "INT)")).To(Succeed())
-			Expect(run("sql", "create", "TABLE", "t", "(id", "INT)")).
-				To(MatchError(ContainSubstring("already exists")))
+		It("accepts explicit output name", func() {
+			Expect(run("sql", "create", "--output", "my-out", "q1", "SELECT", "*", "FROM", "t")).To(Succeed())
+			Expect(state.sql["q1"].Output).To(Equal("my-out"))
 		})
 
 		It("errors on invalid syntax", func() {
-			Expect(run("sql", "create", "TABLE")).
-				To(MatchError(ContainSubstring("invalid CREATE TABLE syntax")))
+			Expect(run("sql", "create", "bad", "SELECT", "FROM")).
+				To(MatchError(ContainSubstring("parse")))
+		})
+	})
+
+	Describe("compile", func() {
+		BeforeEach(func() {
+			Expect(run("sql", "table", "create", "TABLE", "t", "(id", "INT,", "score", "INT)")).To(Succeed())
+			Expect(run("sql", "create", "q1", "SELECT", "*", "FROM", "t")).To(Succeed())
+		})
+
+		It("compiles named SQL into a named circuit", func() {
+			Expect(run("sql", "compile", "q1", "c1")).To(Succeed())
+			Expect(state.circuits).To(HaveKey("c1"))
+		})
+
+		It("errors when statement does not exist", func() {
+			Expect(run("sql", "compile", "missing", "c1")).To(MatchError(ContainSubstring("not found")))
+		})
+
+		It("errors when circuit name already exists", func() {
+			Expect(run("sql", "compile", "q1", "c1")).To(Succeed())
+			Expect(run("sql", "compile", "q1", "c1")).To(MatchError(ContainSubstring("already exists")))
+		})
+
+		It("uses default output name <sql-name>-output", func() {
+			Expect(run("sql", "compile", "q1", "c1")).To(Succeed())
+			Expect(state.queries["c1"].OutputMap).To(HaveKey("q1-output"))
+		})
+
+		It("uses explicit output name set by sql output", func() {
+			Expect(run("sql", "create", "--output", "my-out", "q2", "SELECT", "*", "FROM", "t")).To(Succeed())
+			Expect(run("sql", "compile", "q2", "c1")).To(Succeed())
+			Expect(state.queries["c1"].OutputMap).To(HaveKey("my-out"))
 		})
 	})
 
 	Describe("insert", func() {
 		BeforeEach(func() {
-			Expect(run("sql", "create", "TABLE", "t", "(id", "INT,", "score", "INT)")).To(Succeed())
+			Expect(run("sql", "table", "create", "TABLE", "t", "(id", "INT,", "score", "INT)")).To(Succeed())
 		})
 
 		It("inserts a row into the table", func() {
@@ -61,7 +91,7 @@ var _ = Describe("SQL commands", func() {
 
 	Describe("select", func() {
 		BeforeEach(func() {
-			Expect(run("sql", "create", "TABLE", "t", "(id", "INT,", "score", "INT)")).To(Succeed())
+			Expect(run("sql", "table", "create", "TABLE", "t", "(id", "INT,", "score", "INT)")).To(Succeed())
 			Expect(run("sql", "insert", "INTO", "t", "VALUES", "(1,", "42)")).To(Succeed())
 		})
 
@@ -87,22 +117,22 @@ var _ = Describe("SQL commands", func() {
 
 	Describe("drop", func() {
 		It("drops a table from the database", func() {
-			Expect(run("sql", "create", "TABLE", "t", "(id", "INT)")).To(Succeed())
-			Expect(run("sql", "drop", "TABLE", "t")).To(Succeed())
+			Expect(run("sql", "table", "create", "TABLE", "t", "(id", "INT)")).To(Succeed())
+			Expect(run("sql", "table", "drop", "TABLE", "t")).To(Succeed())
 			_, err := state.db.GetTable("t")
 			Expect(err).To(HaveOccurred())
 		})
 
 		It("errors on unknown table", func() {
-			Expect(run("sql", "drop", "TABLE", "nope")).
+			Expect(run("sql", "table", "drop", "TABLE", "nope")).
 				To(MatchError(ContainSubstring("not found")))
 		})
 	})
 
 	Describe("tables", func() {
 		It("lists all tables without error", func() {
-			Expect(run("sql", "create", "TABLE", "t1", "(id", "INT)")).To(Succeed())
-			Expect(run("sql", "create", "TABLE", "t2", "(id", "INT)")).To(Succeed())
+			Expect(run("sql", "table", "create", "TABLE", "t1", "(id", "INT)")).To(Succeed())
+			Expect(run("sql", "table", "create", "TABLE", "t2", "(id", "INT)")).To(Succeed())
 			Expect(run("sql", "tables")).To(Succeed())
 			Expect(state.db.Tables()).To(ConsistOf("t1", "t2"))
 		})
@@ -110,7 +140,7 @@ var _ = Describe("SQL commands", func() {
 
 	Describe("schema", func() {
 		It("shows schema without error", func() {
-			Expect(run("sql", "create", "TABLE", "t", "(id", "INT,", "name", "TEXT)")).To(Succeed())
+			Expect(run("sql", "table", "create", "TABLE", "t", "(id", "INT,", "name", "TEXT)")).To(Succeed())
 			Expect(run("sql", "schema", "t")).To(Succeed())
 		})
 
@@ -121,7 +151,7 @@ var _ = Describe("SQL commands", func() {
 
 	Describe("eval", func() {
 		BeforeEach(func() {
-			Expect(run("sql", "create", "TABLE", "t", "(id", "INT,", "score", "INT)")).To(Succeed())
+			Expect(run("sql", "table", "create", "TABLE", "t", "(id", "INT,", "score", "INT)")).To(Succeed())
 			Expect(run("sql", "insert", "INTO", "t", "VALUES", "(1,", "42)")).To(Succeed())
 			Expect(run("sql", "insert", "INTO", "t", "VALUES", "(2,", "7)")).To(Succeed())
 		})
@@ -160,9 +190,9 @@ var _ = Describe("SQL commands", func() {
 		})
 
 		It("evaluates a JOIN with --incr", func() {
-			Expect(run("sql", "create", "TABLE", "products",
+			Expect(run("sql", "table", "create", "TABLE", "products",
 				"(pid", "INT", "PRIMARY", "KEY,", "name", "TEXT)")).To(Succeed())
-			Expect(run("sql", "create", "TABLE", "orders",
+			Expect(run("sql", "table", "create", "TABLE", "orders",
 				"(oid", "INT", "PRIMARY", "KEY,", "product_id", "INT,", "qty", "INT)")).To(Succeed())
 			Expect(run("sql", "insert", "INTO", "products", "VALUES", "(1,", "'Widget')")).To(Succeed())
 			Expect(run("sql", "insert", "INTO", "orders", "VALUES", "(101,", "1,", "3)")).To(Succeed())
