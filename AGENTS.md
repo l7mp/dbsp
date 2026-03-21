@@ -170,7 +170,7 @@ Tips:
 
 - **ALWAYS** use the commit format `type(component): Message`.
 - Prefer component names like `conn/misc`, `runtime`, `conn/k8s`, `compiler`, etc.
-- Start the subject with a capitalized imperative phrase.
+- Start the subject with a capitalized imperative phrase, only capitalize the first word.
 - Example: `feat(conn/misc): Add Pipe producer and consumer`.
 
 ## Useful Command Reference
