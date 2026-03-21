@@ -25,7 +25,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 	ctx := context.Background()
 
 	It("producer emits add, update, and delete deltas for ConfigMaps", func() {
-		p, err := producer.New(producer.Config{
+		p, err := producer.NewWatcher(producer.Config{
 			Client:    suite.WatchClient,
 			SourceGVK: schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
 			InputName: "in",

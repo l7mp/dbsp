@@ -30,11 +30,16 @@ type Config struct {
 	LabelSelector *v1.LabelSelector
 	Predicate     *kpredicate.Predicate
 
+	// Runtime is the engine runtime used to create a publisher. If Runtime is set, a
+	// publisher is automatically obtained from Runtime.NewPublisher(). SetPublisher() can be
+	// used afterwards to override it.
+	Runtime *dbspruntime.Runtime
+
 	Logger logr.Logger
 }
 
-// Producer watches Kubernetes objects and emits DBSP runtime inputs.
-type Producer struct {
+// Watcher watches Kubernetes objects and emits DBSP runtime inputs.
+type Watcher struct {
 	client    client.WithWatch
 	list      client.ObjectList
 	inputName string
@@ -50,20 +55,10 @@ type Producer struct {
 	log logr.Logger
 }
 
-var _ dbspruntime.Producer = (*Producer)(nil)
+var _ dbspruntime.Producer = (*Watcher)(nil)
 
-// New creates a Kubernetes producer.
-func New(cfg Config) (*Producer, error) {
-	if cfg.Client == nil {
-		return nil, fmt.Errorf("producer: nil client")
-	}
-	if cfg.SourceGVK.Kind == "" {
-		return nil, fmt.Errorf("producer: missing source GVK")
-	}
-	if cfg.InputName == "" {
-		return nil, fmt.Errorf("producer: missing explicit input name")
-	}
-
+// NewWatcher creates a Kubernetes producer.
+func NewWatcher(cfg Config) (*Watcher, error) {
 	log := cfg.Logger
 	if log.GetSink() == nil {
 		log = logr.Discard()
@@ -73,12 +68,16 @@ func New(cfg Config) (*Producer, error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(cfg.SourceGVK)
 
-	p := &Producer{
+	p := &Watcher{
 		client:      cfg.Client,
 		list:        list,
 		inputName:   inputName,
 		sourceCache: map[schema.GroupVersionKind]*store.Store{},
 		log:         log.WithName("kubernetes-producer").WithValues("input", inputName),
+	}
+
+	if cfg.Runtime != nil {
+		p.pub = cfg.Runtime.NewPublisher()
 	}
 
 	if cfg.Namespace != "" {
@@ -114,13 +113,13 @@ func New(cfg Config) (*Producer, error) {
 }
 
 // SetPublisher sets the runtime event publisher.
-func (p *Producer) SetPublisher(pub dbspruntime.Publisher) {
+func (p *Watcher) SetPublisher(pub dbspruntime.Publisher) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.pub = pub
 }
 
-func (p *Producer) Publish(event dbspruntime.Event) error {
+func (p *Watcher) Publish(event dbspruntime.Event) error {
 	p.mu.RLock()
 	pub := p.pub
 	p.mu.RUnlock()
@@ -131,7 +130,7 @@ func (p *Producer) Publish(event dbspruntime.Event) error {
 }
 
 // Start starts the watch loop.
-func (p *Producer) Start(ctx context.Context) error {
+func (p *Watcher) Start(ctx context.Context) error {
 	w, err := p.client.Watch(ctx, p.list, p.listOpts...)
 	if err != nil {
 		return fmt.Errorf("producer: watch failed: %w", err)
@@ -156,7 +155,7 @@ func (p *Producer) Start(ctx context.Context) error {
 	}
 }
 
-func (p *Producer) handleEvent(ctx context.Context, evt watch.Event) error {
+func (p *Watcher) handleEvent(ctx context.Context, evt watch.Event) error {
 	obj, ok := evt.Object.(*unstructured.Unstructured)
 	if !ok || obj == nil {
 		return nil
@@ -207,7 +206,7 @@ func watchEventToDelta(t watch.EventType, obj *unstructured.Unstructured) kobjec
 	}
 }
 
-func (p *Producer) allow(t watch.EventType, oldObj, newObj *unstructured.Unstructured) bool {
+func (p *Watcher) allow(t watch.EventType, oldObj, newObj *unstructured.Unstructured) bool {
 	if len(p.predicates) == 0 {
 		return true
 	}

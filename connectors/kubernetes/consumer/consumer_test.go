@@ -3,6 +3,9 @@ package consumer
 import (
 	"context"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -11,10 +14,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbruntime "github.com/l7mp/dbsp/engine/runtime"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Kubernetes consumers", func() {
@@ -25,7 +27,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		u, err := NewUpdater(Config{Client: c, OutputName: "out", TargetGVK: gvk})
+		u, err := NewUpdater(Config{Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime()})
 		Expect(err).NotTo(HaveOccurred())
 
 		add := map[string]any{
@@ -99,7 +101,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		p, err := NewPatcher(Config{Client: c, OutputName: "out", TargetGVK: gvk})
+		p, err := NewPatcher(Config{Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime()})
 		Expect(err).NotTo(HaveOccurred())
 
 		patchUpsert := map[string]any{

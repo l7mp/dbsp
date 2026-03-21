@@ -14,10 +14,9 @@ import (
 
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
-	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
-
 	"github.com/l7mp/dbsp/engine/datamodel"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -28,50 +27,62 @@ type Config struct {
 	OutputName string
 	TargetGVK  schema.GroupVersionKind
 
+	// Runtime is the engine runtime used to create a subscriber.
+	Runtime *dbspruntime.Runtime
+
 	Logger logr.Logger
 }
 
-type baseConsumer struct {
-	client client.Client
+// consumer is a function type that Patcher and Updater implement.
+type consumeFn func(ctx context.Context, event dbspruntime.Event) error
 
+type baseConsumer struct {
+	dbspruntime.Subscriber
+
+	client     client.Client
 	outputName string
 	targetGVK  schema.GroupVersionKind
-
-	log logr.Logger
-	in  chan dbspruntime.Event
+	log        logr.Logger
 }
 
 func newBase(cfg Config, name string) (*baseConsumer, error) {
-	if cfg.Client == nil {
-		return nil, fmt.Errorf("consumer: nil client")
-	}
-
 	log := cfg.Logger
 	if log.GetSink() == nil {
 		log = logr.Discard()
 	}
 
-	return &baseConsumer{
+	sub := cfg.Runtime.NewSubscriber()
+	b := &baseConsumer{
+		Subscriber: sub,
 		client:     cfg.Client,
 		outputName: cfg.OutputName,
 		targetGVK:  cfg.TargetGVK,
 		log:        log.WithName(name).WithValues("output", cfg.OutputName),
-		in:         make(chan dbspruntime.Event, dbspruntime.EventBufferSize),
-	}, nil
+	}
+
+	// Subscribe immediately so events published before Start() is called are not lost.
+	if cfg.OutputName != "" {
+		b.Subscribe(cfg.OutputName)
+	}
+
+	return b, nil
 }
 
-func (c *baseConsumer) Subscribe(topic string) {}
-
-func (c *baseConsumer) Unsubscribe(topic string) {}
-
-func (c *baseConsumer) GetChannel() <-chan dbspruntime.Event { return c.in }
-
-func (c *baseConsumer) Start(ctx context.Context) error {
+// start is the shared event loop for Patcher and Updater.
+// consume is called for every event received on the subscriber channel.
+func (c *baseConsumer) start(ctx context.Context, consume consumeFn) error {
+	ch := c.GetChannel()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-c.in:
+		case evt, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := consume(ctx, evt); err != nil {
+				c.log.Error(err, "consume error")
+			}
 		}
 	}
 }

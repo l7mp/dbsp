@@ -27,12 +27,13 @@ func NewUpdater(cfg Config) (*Updater, error) {
 	return &Updater{baseConsumer: b}, nil
 }
 
+// Start runs the consumer event loop, applying each received event with updater semantics.
+func (c *Updater) Start(ctx context.Context) error {
+	return c.start(ctx, c.Consume)
+}
+
 // Consume applies output Z-set deltas with updater behavior.
 func (c *Updater) Consume(ctx context.Context, out dbspruntime.Event) error {
-	if c.outputName != "" && out.Name != c.outputName {
-		return nil
-	}
-
 	for _, e := range out.Data.Entries() {
 		desired, isDelete, err := c.objectFromElem(e)
 		if err != nil {

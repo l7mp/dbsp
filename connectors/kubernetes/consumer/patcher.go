@@ -29,11 +29,13 @@ func NewPatcher(cfg Config) (*Patcher, error) {
 	return &Patcher{baseConsumer: b}, nil
 }
 
+// Start runs the consumer event loop, applying each received event with patcher semantics.
+func (c *Patcher) Start(ctx context.Context) error {
+	return c.start(ctx, c.Consume)
+}
+
 // Consume applies output Z-set deltas with patcher behavior.
 func (c *Patcher) Consume(ctx context.Context, out dbspruntime.Event) error {
-	if c.outputName != "" && out.Name != c.outputName {
-		return nil
-	}
 
 	for _, e := range out.Data.Entries() {
 		desired, isDelete, err := c.objectFromElem(e)
