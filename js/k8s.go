@@ -61,19 +61,19 @@ func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
 		selector = &v1.LabelSelector{MatchLabels: opts.Labels}
 	}
 
-	p, err := k8sproducer.New(k8sproducer.Config{
+	p, err := k8sproducer.NewWatcher(k8sproducer.Config{
 		Client:        watcherClient,
 		SourceGVK:     gvk,
 		InputName:     opts.Topic,
 		Namespace:     opts.Namespace,
 		LabelSelector: selector,
+		Runtime:       v.runtime,
 		Logger:        v.logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("producer.kubernetes.watch: %w", err)
 	}
 
-	p.SetPublisher(v.runtime.NewPublisher())
 	v.runtime.Add(p)
 	return goja.Undefined(), nil
 }
