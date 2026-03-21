@@ -3,7 +3,6 @@ package producer
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/go-logr/logr"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,7 +46,6 @@ type Watcher struct {
 	listOpts   []client.ListOption
 	predicates []crpredicate.TypedPredicate[client.Object]
 
-	mu  sync.RWMutex
 	pub dbspruntime.Publisher
 
 	sourceCache map[schema.GroupVersionKind]*store.Store
@@ -76,9 +74,7 @@ func NewWatcher(cfg Config) (*Watcher, error) {
 		log:         log.WithName("kubernetes-producer").WithValues("input", inputName),
 	}
 
-	if cfg.Runtime != nil {
-		p.pub = cfg.Runtime.NewPublisher()
-	}
+	p.pub = cfg.Runtime.NewPublisher()
 
 	if cfg.Namespace != "" {
 		p.listOpts = append(p.listOpts, client.InNamespace(cfg.Namespace))
@@ -112,21 +108,8 @@ func NewWatcher(cfg Config) (*Watcher, error) {
 	return p, nil
 }
 
-// SetPublisher sets the runtime event publisher.
-func (p *Watcher) SetPublisher(pub dbspruntime.Publisher) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.pub = pub
-}
-
 func (p *Watcher) Publish(event dbspruntime.Event) error {
-	p.mu.RLock()
-	pub := p.pub
-	p.mu.RUnlock()
-	if pub == nil {
-		return nil
-	}
-	return pub.Publish(event)
+	return p.pub.Publish(event)
 }
 
 // Start starts the watch loop.
@@ -183,14 +166,7 @@ func (p *Watcher) handleEvent(ctx context.Context, evt watch.Event) error {
 		return nil
 	}
 
-	p.mu.RLock()
-	pub := p.pub
-	p.mu.RUnlock()
-	if pub == nil {
-		return nil
-	}
-
-	return pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
+	return p.pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }
 
 func watchEventToDelta(t watch.EventType, obj *unstructured.Unstructured) kobject.Delta {

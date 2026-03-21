@@ -25,19 +25,18 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 	ctx := context.Background()
 
 	It("producer emits add, update, and delete deltas for ConfigMaps", func() {
+		rt := dbspruntime.NewRuntime()
+		sub := rt.NewSubscriber()
+		sub.Subscribe("in")
+
 		p, err := producer.NewWatcher(producer.Config{
 			Client:    suite.WatchClient,
 			SourceGVK: schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
 			InputName: "in",
 			Namespace: suite.Namespace,
+			Runtime:   rt,
 		})
 		Expect(err).NotTo(HaveOccurred())
-
-		ch := make(chan dbspruntime.Event, 8)
-		p.SetPublisher(dbspruntime.PublishFunc(func(in dbspruntime.Event) error {
-			ch <- in
-			return nil
-		}))
 
 		startCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -53,7 +52,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 		}
 		Expect(suite.K8sClient.Create(ctx, cm)).To(Succeed())
 
-		in := mustReceiveInput(ch)
+		in := mustReceiveInput(sub.GetChannel())
 		Expect(in.Name).To(Equal("in"))
 		Expect(weights(in.Data)).To(Equal([]zset.Weight{1}))
 		Expect(singleField(in.Data, "data", "k")).To(Equal("v1"))
@@ -67,13 +66,13 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			return suite.K8sClient.Update(ctx, obj)
 		}, suite.Timeout, suite.Interval).Should(Succeed())
 
-		in = mustReceiveInput(ch)
+		in = mustReceiveInput(sub.GetChannel())
 		Expect(weights(in.Data)).To(Equal([]zset.Weight{-1, 1}))
 		Expect(allFieldValues(in.Data, "data", "k")).To(ConsistOf("v1", "v2"))
 
 		Expect(suite.K8sClient.Delete(ctx, cm)).To(Succeed())
 
-		in = mustReceiveInput(ch)
+		in = mustReceiveInput(sub.GetChannel())
 		Expect(weights(in.Data)).To(Equal([]zset.Weight{-1}))
 		Expect(singleField(in.Data, "data", "k")).To(Equal("v2"))
 	})
@@ -83,6 +82,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			Client:     suite.K8sClient,
 			OutputName: "out",
 			TargetGVK:  schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
+			Runtime:    dbspruntime.NewRuntime(),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -148,6 +148,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			Client:     suite.K8sClient,
 			OutputName: "out",
 			TargetGVK:  schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
+			Runtime:    dbspruntime.NewRuntime(),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
