@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/dop251/goja_nodejs/eventloop"
 	"github.com/go-logr/logr"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
@@ -22,13 +24,13 @@ import (
 )
 
 type VM struct {
-	rt        *goja.Runtime
-	runtime   *dbspruntime.Runtime
-	db        *relation.Database
-	callbacks chan func()
-	logger    logr.Logger
-	ctx       context.Context
-	cancel    context.CancelFunc
+	rt      *goja.Runtime
+	loop    *eventloop.EventLoop
+	runtime *dbspruntime.Runtime
+	db      *relation.Database
+	logger  logr.Logger
+	ctx     context.Context
+	cancel  context.CancelFunc
 
 	runtimeDone      chan error
 	closeOnce        sync.Once
@@ -49,10 +51,9 @@ func NewVM(logger logr.Logger) (*VM, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	v := &VM{
-		rt:          goja.New(),
+		loop:        eventloop.NewEventLoop(eventloop.EnableConsole(false)),
 		runtime:     dbspruntime.NewRuntime(),
 		db:          relation.NewDatabase("dbsp"),
-		callbacks:   make(chan func(), 1024),
 		logger:      logger,
 		ctx:         ctx,
 		cancel:      cancel,
@@ -61,8 +62,13 @@ func NewVM(logger logr.Logger) (*VM, error) {
 	v.touchActivity()
 	v.logger.V(1).Info("vm created")
 
-	v.injectConsole()
-	if err := v.injectGlobals(); err != nil {
+	v.loop.Start()
+	if err := v.runOnLoopSync(func(rt *goja.Runtime) error {
+		v.rt = rt
+		v.injectConsole()
+		return v.injectGlobals()
+	}); err != nil {
+		v.loop.Terminate()
 		cancel()
 		return nil, err
 	}
@@ -86,23 +92,33 @@ func (v *VM) Close() {
 	v.closeOnce.Do(func() {
 		v.logger.V(1).Info("vm shutdown requested")
 		v.cancel()
+		if v.loop != nil {
+			v.loop.Terminate()
+		}
 	})
 }
 
 func (v *VM) RunFile(path string) error {
 	v.touchActivity()
 	v.logger.Info("running script", "path", path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve script path: %w", err)
+	}
 
-	src, err := os.ReadFile(path)
+	src, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("read script: %w", err)
 	}
 
-	if _, err := v.rt.RunString(string(src)); err != nil {
-		return fmt.Errorf("execute script %s: %w", path, err)
+	if err := v.runOnLoopSync(func(rt *goja.Runtime) error {
+		_, runErr := rt.RunScript(absPath, string(src))
+		return runErr
+	}); err != nil {
+		return fmt.Errorf("execute script %s: %w", absPath, err)
 	}
 	v.touchActivity()
-	v.logger.V(1).Info("script loaded, entering event loop", "path", path)
+	v.logger.V(1).Info("script loaded, entering event loop", "path", absPath)
 
 	return v.runEventLoop()
 }
@@ -114,15 +130,6 @@ func (v *VM) runEventLoop() error {
 
 	for {
 		select {
-		case fn := <-v.callbacks:
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						v.logger.Error(fmt.Errorf("%v", r), "js callback panic")
-					}
-				}()
-				fn()
-			}()
 		case <-ticker.C:
 			if v.isIdle(idleGracePeriod) {
 				v.logger.Info("queues drained, shutting down")
@@ -138,18 +145,20 @@ func (v *VM) runEventLoop() error {
 func (v *VM) schedule(fn func()) {
 	v.touchActivity()
 	v.pendingCallbacks.Add(1)
-	wrapped := func() {
+	ok := v.loop.RunOnLoop(func(_ *goja.Runtime) {
 		defer v.pendingCallbacks.Add(-1)
+		defer func() {
+			if r := recover(); r != nil {
+				v.logger.Error(fmt.Errorf("%v", r), "js callback panic")
+			}
+		}()
 		v.touchActivity()
 		fn()
 		v.touchActivity()
-	}
-
-	select {
-	case <-v.ctx.Done():
+	})
+	if !ok {
 		v.pendingCallbacks.Add(-1)
-		return
-	case v.callbacks <- wrapped:
+		v.logger.V(1).Info("dropping scheduled callback, event loop stopped")
 	}
 }
 
@@ -157,11 +166,24 @@ func (v *VM) isIdle(idleFor time.Duration) bool {
 	if v.pendingCallbacks.Load() != 0 {
 		return false
 	}
-	if len(v.callbacks) != 0 {
-		return false
-	}
 	last := time.Unix(0, v.lastActivityNS.Load())
 	return time.Since(last) >= idleFor
+}
+
+func (v *VM) runOnLoopSync(fn func(*goja.Runtime) error) error {
+	done := make(chan error, 1)
+	ok := v.loop.RunOnLoop(func(rt *goja.Runtime) {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("panic on event loop: %v", r)
+			}
+		}()
+		done <- fn(rt)
+	})
+	if !ok {
+		return fmt.Errorf("event loop is not running")
+	}
+	return <-done
 }
 
 func (v *VM) touchActivity() {
