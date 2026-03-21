@@ -13,6 +13,10 @@ import (
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 )
 
+// ClientOptions is a type alias for controller-runtime client options, re-exported for
+// callers that configure the composite client without importing controller-runtime directly.
+type ClientOptions = client.Options
+
 var _ client.Client = &CompositeClient{}
 
 // CompositeClient is a controlller runtime client that uses a view store to manage view resources

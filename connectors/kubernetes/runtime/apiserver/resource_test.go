@@ -5,7 +5,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
-	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -20,9 +19,9 @@ var _ = Describe("API server resources", func() {
 	})
 
 	It("finds API resource metadata for view kinds", func() {
-		api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
+		compositeClient, _, err := newTestStoreComponents()
 		Expect(err).NotTo(HaveOccurred())
-		config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
+		config, err := NewDefaultConfig("127.0.0.1", 0, compositeClient, true, false, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		config.EnableOpenAPI = false
 

@@ -15,17 +15,32 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// newTestStoreComponents creates the minimal store components needed for apiserver tests.
+func newTestStoreComponents() (compositeClient *store.CompositeClient, compositeDiscovery *store.CompositeDiscoveryClient, err error) {
+	compositeDiscovery = store.NewCompositeDiscoveryClient(nil)
+	compositeCache, err := store.NewCompositeCache(nil, store.CacheOptions{Logger: logr.Discard()})
+	if err != nil {
+		return nil, nil, err
+	}
+	compositeClient, err = store.NewCompositeClient(nil, store.ClientOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	compositeClient.SetCache(compositeCache)
+	return compositeClient, compositeDiscovery, nil
+}
+
 var _ = Describe("API server", func() {
 	It("starts and serves discovery", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		DeferCleanup(cancel)
 
-		api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
+		compositeClient, compositeDiscovery, err := newTestStoreComponents()
 		Expect(err).NotTo(HaveOccurred())
 
-		config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
+		config, err := NewDefaultConfig("127.0.0.1", 0, compositeClient, true, false, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		config.DiscoveryClient = api.GetDiscovery()
+		config.DiscoveryClient = compositeDiscovery
 		config.EnableOpenAPI = false
 
 		s, err := NewAPIServer(config)
@@ -74,12 +89,12 @@ var _ = Describe("API server", func() {
 	})
 
 	It("registers and unregisters GVKs", func() {
-		api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
+		compositeClient, compositeDiscovery, err := newTestStoreComponents()
 		Expect(err).NotTo(HaveOccurred())
 
-		config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
+		config, err := NewDefaultConfig("127.0.0.1", 0, compositeClient, true, false, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		config.DiscoveryClient = api.GetDiscovery()
+		config.DiscoveryClient = compositeDiscovery
 		config.EnableOpenAPI = false
 
 		s, err := NewAPIServer(config)
@@ -108,12 +123,12 @@ var _ = Describe("API server", func() {
 	})
 
 	It("finds only view API resources", func() {
-		api, err := store.NewAPI(nil, store.APIOptions{Logger: logr.Discard()})
+		compositeClient, compositeDiscovery, err := newTestStoreComponents()
 		Expect(err).NotTo(HaveOccurred())
 
-		config, err := NewDefaultConfig("127.0.0.1", 0, api.Client, true, false, logr.Discard())
+		config, err := NewDefaultConfig("127.0.0.1", 0, compositeClient, true, false, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		config.DiscoveryClient = api.GetDiscovery()
+		config.DiscoveryClient = compositeDiscovery
 		config.EnableOpenAPI = false
 
 		s, err := NewAPIServer(config)
