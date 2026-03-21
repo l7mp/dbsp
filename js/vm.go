@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,7 +50,7 @@ func NewVM(logger logr.Logger) (*VM, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	v := &VM{
-		loop:        eventloop.NewEventLoop(eventloop.EnableConsole(false)),
+		loop:        eventloop.NewEventLoop(),
 		runtime:     dbspruntime.NewRuntime(),
 		db:          relation.NewDatabase("dbsp"),
 		logger:      logger,
@@ -65,7 +64,6 @@ func NewVM(logger logr.Logger) (*VM, error) {
 	v.loop.Start()
 	if err := v.runOnLoopSync(func(rt *goja.Runtime) error {
 		v.rt = rt
-		v.injectConsole()
 		return v.injectGlobals()
 	}); err != nil {
 		v.loop.Terminate()
@@ -329,19 +327,6 @@ func (v *VM) injectGlobals() error {
 	}
 
 	return nil
-}
-
-func (v *VM) injectConsole() {
-	console := v.rt.NewObject()
-	_ = console.Set("log", func(call goja.FunctionCall) goja.Value {
-		parts := make([]string, 0, len(call.Arguments))
-		for _, arg := range call.Arguments {
-			parts = append(parts, fmt.Sprint(arg.Export()))
-		}
-		fmt.Fprintln(os.Stdout, strings.Join(parts, " "))
-		return goja.Undefined()
-	})
-	_ = v.rt.Set("console", console)
 }
 
 func (v *VM) wrap(fn func(call goja.FunctionCall) (goja.Value, error)) func(call goja.FunctionCall) goja.Value {
