@@ -1,0 +1,64 @@
+// Hypothetical JS rewrite of join_project.dbsp.
+//
+// Globals injected by the Go/goja host:
+//   sql, aggregate                   - compilers
+//   producer(topic[, entries])       - generic Z-set producer factory
+//   producer.kubernetes.watch(opts)  - K8s watch producer
+//   consumer(topic, fn)              - generic callback consumer factory
+//   consumer.kubernetes.patcher(opts)
+//   consumer.kubernetes.updater(opts)
+
+// === Schema ===
+sql.table("products", "pid INT PRIMARY KEY, name TEXT, price FLOAT");
+sql.table("orders",   "oid INT PRIMARY KEY, product_id INT, qty INT");
+
+// === SQL incremental join circuit ===
+sql.compile(
+    `SELECT oid, product_id, pid, name, price, qty
+       FROM orders JOIN products ON product_id = pid`,
+    { output: "joined-orders" }
+).incrementalize().validate();
+
+// Fires once when products are published (join is empty — no orders yet),
+// then again when orders are published (with joined rows).
+consumer("joined-orders", (entries) => {
+    console.log("=== sql join output ===");
+    for (const [doc, weight] of entries) {
+        console.log(weight > 0 ? `+${weight}` : weight, doc);
+    }
+});
+
+// === Aggregate incremental join circuit ===
+aggregate.compile(
+    [
+        { "@join":    { "@eq": ["$.products.pid", "$.orders.product_id"] } },
+        { "@project": {
+            oid:        "$.orders.oid",
+            product_id: "$.orders.product_id",
+            pid:        "$.products.pid",
+            name:       "$.products.name",
+            price:      "$.products.price",
+            qty:        "$.orders.qty",
+        }},
+    ],
+    { inputs: ["orders", "products"], output: "joined-orders-agg" }
+).incrementalize().validate();
+
+consumer("joined-orders-agg", (entries) => {
+    console.log("=== aggregate join output ===");
+    for (const [doc, weight] of entries) {
+        console.log(weight > 0 ? `+${weight}` : weight, doc);
+    }
+});
+
+// === Publish inputs ===
+producer("products", [
+    [{ pid: 1, name: "Widget", price: 9.99  }, 1],
+    [{ pid: 2, name: "Gadget", price: 24.99 }, 1],
+]);
+
+const orderRows = [
+    { oid: 101, product_id: 1, qty: 3 },
+    { oid: 102, product_id: 2, qty: 1 },
+];
+producer("orders", orderRows.map(doc => [doc, 1]));

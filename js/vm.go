@@ -1,0 +1,394 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/dop251/goja"
+	"github.com/go-logr/logr"
+
+	"github.com/l7mp/dbsp/engine/datamodel"
+	"github.com/l7mp/dbsp/engine/datamodel/relation"
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
+)
+
+type VM struct {
+	rt        *goja.Runtime
+	runtime   *dbspruntime.Runtime
+	db        *relation.Database
+	callbacks chan func()
+	logger    logr.Logger
+	ctx       context.Context
+	cancel    context.CancelFunc
+
+	runtimeDone      chan error
+	closeOnce        sync.Once
+	pendingCallbacks atomic.Int64
+	lastActivityNS   atomic.Int64
+}
+
+const (
+	idlePollInterval   = 25 * time.Millisecond
+	idleGracePeriod    = 200 * time.Millisecond
+	runtimeStopTimeout = 2 * time.Second
+)
+
+func NewVM(logger logr.Logger) (*VM, error) {
+	if logger.GetSink() == nil {
+		logger = logr.Discard()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	v := &VM{
+		rt:          goja.New(),
+		runtime:     dbspruntime.NewRuntime(),
+		db:          relation.NewDatabase("dbsp"),
+		callbacks:   make(chan func(), 1024),
+		logger:      logger,
+		ctx:         ctx,
+		cancel:      cancel,
+		runtimeDone: make(chan error, 1),
+	}
+	v.touchActivity()
+	v.logger.V(1).Info("vm created")
+
+	v.injectConsole()
+	if err := v.injectGlobals(); err != nil {
+		cancel()
+		return nil, err
+	}
+
+	go func() {
+		v.logger.V(1).Info("runtime manager started")
+		err := v.runtime.Start(ctx)
+		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+			v.logger.Error(err, "runtime failed")
+			v.Close()
+		}
+		v.logger.V(1).Info("runtime manager stopped")
+		v.runtimeDone <- err
+		close(v.runtimeDone)
+	}()
+
+	return v, nil
+}
+
+func (v *VM) Close() {
+	v.closeOnce.Do(func() {
+		v.logger.V(1).Info("vm shutdown requested")
+		v.cancel()
+	})
+}
+
+func (v *VM) RunFile(path string) error {
+	v.touchActivity()
+	v.logger.Info("running script", "path", path)
+
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read script: %w", err)
+	}
+
+	if _, err := v.rt.RunString(string(src)); err != nil {
+		return fmt.Errorf("execute script %s: %w", path, err)
+	}
+	v.touchActivity()
+	v.logger.V(1).Info("script loaded, entering event loop", "path", path)
+
+	return v.runEventLoop()
+}
+
+func (v *VM) runEventLoop() error {
+	ticker := time.NewTicker(idlePollInterval)
+	defer ticker.Stop()
+	v.logger.V(1).Info("event loop started")
+
+	for {
+		select {
+		case fn := <-v.callbacks:
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						v.logger.Error(fmt.Errorf("%v", r), "js callback panic")
+					}
+				}()
+				fn()
+			}()
+		case <-ticker.C:
+			if v.isIdle(idleGracePeriod) {
+				v.logger.Info("queues drained, shutting down")
+				v.Close()
+			}
+		case <-v.ctx.Done():
+			v.logger.V(1).Info("event loop stopping")
+			return v.waitRuntimeStop(runtimeStopTimeout)
+		}
+	}
+}
+
+func (v *VM) schedule(fn func()) {
+	v.touchActivity()
+	v.pendingCallbacks.Add(1)
+	wrapped := func() {
+		defer v.pendingCallbacks.Add(-1)
+		v.touchActivity()
+		fn()
+		v.touchActivity()
+	}
+
+	select {
+	case <-v.ctx.Done():
+		v.pendingCallbacks.Add(-1)
+		return
+	case v.callbacks <- wrapped:
+	}
+}
+
+func (v *VM) isIdle(idleFor time.Duration) bool {
+	if v.pendingCallbacks.Load() != 0 {
+		return false
+	}
+	if len(v.callbacks) != 0 {
+		return false
+	}
+	last := time.Unix(0, v.lastActivityNS.Load())
+	return time.Since(last) >= idleFor
+}
+
+func (v *VM) touchActivity() {
+	v.lastActivityNS.Store(time.Now().UnixNano())
+}
+
+func (v *VM) waitRuntimeStop(timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = runtimeStopTimeout
+	}
+
+	select {
+	case err, ok := <-v.runtimeDone:
+		if !ok || err == nil {
+			return nil
+		}
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return fmt.Errorf("runtime failed: %w", err)
+	case <-time.After(timeout):
+		return fmt.Errorf("timed out waiting for runtime shutdown")
+	}
+}
+
+func (v *VM) toJSEntries(data zset.ZSet) ([]any, error) {
+	entries := make([]any, 0, data.Size())
+	var outErr error
+
+	data.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+		payload, err := elem.MarshalJSON()
+		if err != nil {
+			outErr = fmt.Errorf("marshal document: %w", err)
+			return false
+		}
+
+		obj := map[string]any{}
+		if err := json.Unmarshal(payload, &obj); err != nil {
+			outErr = fmt.Errorf("decode document json: %w", err)
+			return false
+		}
+
+		entries = append(entries, []any{obj, int64(weight)})
+		return true
+	})
+
+	if outErr != nil {
+		return nil, outErr
+	}
+
+	return entries, nil
+}
+
+func (v *VM) fromJSEntries(value goja.Value) (zset.ZSet, error) {
+	set := zset.New()
+	if goja.IsUndefined(value) || goja.IsNull(value) {
+		return set, nil
+	}
+
+	entries, ok := toAnySlice(value.Export())
+	if !ok {
+		return set, fmt.Errorf("entries must be an array")
+	}
+
+	for i, entry := range entries {
+		pair, ok := toAnySlice(entry)
+		if !ok || len(pair) != 2 {
+			return set, fmt.Errorf("entry %d must be [document, weight]", i)
+		}
+
+		docJSON, err := json.Marshal(pair[0])
+		if err != nil {
+			return set, fmt.Errorf("entry %d document: %w", i, err)
+		}
+
+		doc := dbunstructured.New(map[string]any{}, nil)
+		if err := doc.UnmarshalJSON(docJSON); err != nil {
+			return set, fmt.Errorf("entry %d document decode: %w", i, err)
+		}
+
+		weight, err := toInt64(pair[1])
+		if err != nil {
+			return set, fmt.Errorf("entry %d weight: %w", i, err)
+		}
+
+		set.Insert(doc, zset.Weight(weight))
+	}
+
+	return set, nil
+}
+
+func (v *VM) injectGlobals() error {
+	sqlObj := v.rt.NewObject()
+	if err := sqlObj.Set("table", v.wrap(v.sqlTable)); err != nil {
+		return err
+	}
+	if err := sqlObj.Set("compile", v.wrap(v.sqlCompile)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("sql", sqlObj); err != nil {
+		return err
+	}
+
+	aggObj := v.rt.NewObject()
+	if err := aggObj.Set("compile", v.wrap(v.aggregateCompile)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("aggregate", aggObj); err != nil {
+		return err
+	}
+
+	if err := v.rt.Set("producer", v.wrap(v.genericProducer)); err != nil {
+		return err
+	}
+	producerObj := v.rt.Get("producer").ToObject(v.rt)
+	k8sProd := v.rt.NewObject()
+	if err := k8sProd.Set("watch", v.wrap(v.k8sWatch)); err != nil {
+		return err
+	}
+	if err := producerObj.Set("kubernetes", k8sProd); err != nil {
+		return err
+	}
+	if err := producerObj.Set("jsonl", v.wrap(v.jsonlProducer)); err != nil {
+		return err
+	}
+
+	if err := v.rt.Set("consumer", v.wrap(v.genericConsumer)); err != nil {
+		return err
+	}
+	consumerObj := v.rt.Get("consumer").ToObject(v.rt)
+	k8sCons := v.rt.NewObject()
+	if err := k8sCons.Set("patcher", v.wrap(v.k8sPatcher)); err != nil {
+		return err
+	}
+	if err := k8sCons.Set("updater", v.wrap(v.k8sUpdater)); err != nil {
+		return err
+	}
+	if err := consumerObj.Set("kubernetes", k8sCons); err != nil {
+		return err
+	}
+	if err := consumerObj.Set("redis", v.wrap(v.redisConsumer)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (v *VM) injectConsole() {
+	console := v.rt.NewObject()
+	_ = console.Set("log", func(call goja.FunctionCall) goja.Value {
+		parts := make([]string, 0, len(call.Arguments))
+		for _, arg := range call.Arguments {
+			parts = append(parts, fmt.Sprint(arg.Export()))
+		}
+		fmt.Fprintln(os.Stdout, strings.Join(parts, " "))
+		return goja.Undefined()
+	})
+	_ = v.rt.Set("console", console)
+}
+
+func (v *VM) wrap(fn func(call goja.FunctionCall) (goja.Value, error)) func(call goja.FunctionCall) goja.Value {
+	return func(call goja.FunctionCall) goja.Value {
+		value, err := fn(call)
+		if err != nil {
+			panic(v.rt.NewGoError(err))
+		}
+		if value == nil {
+			return goja.Undefined()
+		}
+		return value
+	}
+}
+
+func toAnySlice(v any) ([]any, bool) {
+	switch t := v.(type) {
+	case []any:
+		return t, true
+	default:
+		return nil, false
+	}
+}
+
+func toInt64(v any) (int64, error) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), nil
+	case int8:
+		return int64(n), nil
+	case int16:
+		return int64(n), nil
+	case int32:
+		return int64(n), nil
+	case int64:
+		return n, nil
+	case uint:
+		return int64(n), nil
+	case uint8:
+		return int64(n), nil
+	case uint16:
+		return int64(n), nil
+	case uint32:
+		return int64(n), nil
+	case uint64:
+		return int64(n), nil
+	case float32:
+		f := float64(n)
+		if float64(int64(f)) != f {
+			return 0, fmt.Errorf("weight must be an integer")
+		}
+		return int64(f), nil
+	case float64:
+		if float64(int64(n)) != n {
+			return 0, fmt.Errorf("weight must be an integer")
+		}
+		return int64(n), nil
+	default:
+		return 0, fmt.Errorf("unsupported weight type %T", v)
+	}
+}
+
+func decodeOptionValue(value goja.Value, target any) error {
+	if goja.IsUndefined(value) || goja.IsNull(value) {
+		return nil
+	}
+	raw, err := json.Marshal(value.Export())
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, target)
+}

@@ -6,3 +6,6 @@ dcontroller-lang.md
 doc/
 shell/examples/
 connectors/kubernetes/bin/
+
+# Ignore JS scripts by default; force-add selected examples when needed.
+*.js

@@ -5,7 +5,7 @@ use (
 	./connectors/misc
 	./dcontroller
 	./engine
-	./shell
+	./js
 )
 
 replace github.com/l7mp/dbsp/engine v0.0.0 => ./engine
@@ -16,4 +16,4 @@ replace github.com/l7mp/dbsp/connectors/misc v0.0.0 => ./connectors/misc
 
 replace github.com/l7mp/dbsp/dcontroller v0.0.0 => ./dcontroller
 
-replace github.com/l7mp/dbsp/shell v0.0.0 => ./shell
+replace github.com/l7mp/dbsp/js v0.0.0 => ./js
