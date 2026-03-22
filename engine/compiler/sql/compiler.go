@@ -20,8 +20,8 @@ type Compiler struct {
 	db *relation.Database
 }
 
-// NewCompiler creates a new SQL compiler with the given catalog.
-func NewCompiler(db *relation.Database) *Compiler {
+// New creates a new SQL compiler with the given catalog.
+func New(db *relation.Database) *Compiler {
 	return &Compiler{db: db}
 }
 

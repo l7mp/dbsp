@@ -3,8 +3,8 @@ package sql
 import (
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
 	"github.com/l7mp/dbsp/engine/executor"
-	"github.com/l7mp/dbsp/engine/zset"
 	"github.com/l7mp/dbsp/engine/internal/logger"
+	"github.com/l7mp/dbsp/engine/zset"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -14,7 +14,7 @@ var _ = Describe("SQL end-to-end", func() {
 		db := relation.NewDatabase("db")
 		table := relation.NewTable("t", &relation.Schema{Columns: []relation.Column{{Name: "a", QualifiedName: "t.a"}}})
 		db.RegisterTable("t", table)
-		compiler := NewCompiler(db)
+		compiler := New(db)
 		query, err := compiler.CompileString("select a from t where a = 1")
 		Expect(err).NotTo(HaveOccurred())
 		exec, err := executor.New(query.Circuit, logger.DiscardLogger())
@@ -35,7 +35,7 @@ var _ = Describe("SQL end-to-end", func() {
 		tableB := relation.NewTable("b", &relation.Schema{Columns: []relation.Column{{Name: "id", QualifiedName: "b.id"}}})
 		db.RegisterTable("a", tableA)
 		db.RegisterTable("b", tableB)
-		compiler := NewCompiler(db)
+		compiler := New(db)
 		query, err := compiler.CompileString("select a.id, b.id from a join b on a.id = b.id")
 		Expect(err).NotTo(HaveOccurred())
 		exec, err := executor.New(query.Circuit, logger.DiscardLogger())

@@ -60,7 +60,7 @@ func (v *VM) sqlCompile(call goja.FunctionCall) (goja.Value, error) {
 		options.Output = "output"
 	}
 
-	compiled, err := compilersql.NewCompiler(v.db).CompileString(query)
+	compiled, err := compilersql.New(v.db).CompileString(query)
 	if err != nil {
 		return nil, fmt.Errorf("sql.compile: %w", err)
 	}
