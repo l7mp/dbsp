@@ -8,19 +8,20 @@ import (
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
 var _ = Describe("Virtual source producers", func() {
 	It("emits exactly one event for one-shot producer", func() {
 		rt := dbspruntime.NewRuntime(logr.Discard())
 		p, err := NewOneShotProducer(OneShotConfig{
-			Name:       "test-oneshot",
-			InputName:  "in",
-			TriggerGVK: schema.GroupVersionKind{Group: "test.io", Version: "v1", Kind: "OneShotTrigger"},
-			Runtime:    rt,
+			Name:        "test-oneshot",
+			InputName:   "in",
+			TriggerKind: "OneShotTrigger",
+			Runtime:     rt,
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -33,6 +34,12 @@ var _ = Describe("Virtual source producers", func() {
 			mu.Lock()
 			defer mu.Unlock()
 			Expect(in.Name).To(Equal("in"))
+			entries := in.Data.Entries()
+			Expect(entries).To(HaveLen(1))
+			Expect(entries[0].Weight).To(Equal(zset.Weight(1)))
+			doc, ok := entries[0].Document.(*dbunstructured.Unstructured)
+			Expect(ok).To(BeTrue())
+			Expect(doc.Fields()[VirtualSourceTypeField]).To(Equal(opv1a1OneShotSourceType))
 			count++
 			return nil
 		}))
@@ -53,11 +60,11 @@ var _ = Describe("Virtual source producers", func() {
 	It("emits repeated events for periodic producer", func() {
 		rt := dbspruntime.NewRuntime(logr.Discard())
 		p, err := NewPeriodicProducer(PeriodicConfig{
-			Name:       "test-periodic",
-			InputName:  "in",
-			TriggerGVK: schema.GroupVersionKind{Group: "test.io", Version: "v1", Kind: "PeriodicTrigger"},
-			Period:     20 * time.Millisecond,
-			Runtime:    rt,
+			Name:        "test-periodic",
+			InputName:   "in",
+			TriggerKind: "PeriodicTrigger",
+			Period:      20 * time.Millisecond,
+			Runtime:     rt,
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -70,6 +77,12 @@ var _ = Describe("Virtual source producers", func() {
 			mu.Lock()
 			defer mu.Unlock()
 			Expect(in.Name).To(Equal("in"))
+			entries := in.Data.Entries()
+			Expect(entries).To(HaveLen(1))
+			Expect(entries[0].Weight).To(Equal(zset.Weight(1)))
+			doc, ok := entries[0].Document.(*dbunstructured.Unstructured)
+			Expect(ok).To(BeTrue())
+			Expect(doc.Fields()[VirtualSourceTypeField]).To(Equal(opv1a1PeriodicSourceType))
 			count++
 			return nil
 		}))

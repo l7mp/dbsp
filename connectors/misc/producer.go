@@ -7,12 +7,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
-	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -21,18 +16,26 @@ import (
 const (
 	OneShotSourceObjectName  = "one-shot-trigger"
 	PeriodicSourceObjectName = "periodic-trigger"
-	VirtualSourceTriggered   = "dcontroller.io/last-triggered"
+
+	VirtualSourceTypeField      = "type"
+	VirtualSourceKindField      = "kind"
+	VirtualSourceNameField      = "name"
+	VirtualSourceNamespaceField = "namespace"
+	VirtualSourceTriggeredField = "triggeredAt"
 )
 
 type OneShotConfig struct {
 	// Name is the unique component name used for error reporting. Required.
-	Name       string
-	InputName  string
-	TriggerGVK schema.GroupVersionKind
-	Namespace  string
-	// ObjectName is the Kubernetes object name of the trigger object. Defaults
-	// to OneShotSourceObjectName if empty.
-	ObjectName string
+	Name      string
+	InputName string
+	// TriggerKind is copied into the emitted virtual source document's `kind`
+	// field. If empty, InputName is used.
+	TriggerKind string
+	// Namespace, if set, is copied into the emitted virtual source document.
+	Namespace string
+	// TriggerName is copied into the emitted virtual source document's `name`
+	// field. Defaults to OneShotSourceObjectName if empty.
+	TriggerName string
 	// Runtime is the engine runtime used to create a publisher.
 	Runtime *dbspruntime.Runtime
 	Logger  logr.Logger
@@ -40,14 +43,17 @@ type OneShotConfig struct {
 
 type PeriodicConfig struct {
 	// Name is the unique component name used for error reporting. Required.
-	Name       string
-	InputName  string
-	TriggerGVK schema.GroupVersionKind
-	Namespace  string
-	// ObjectName is the Kubernetes object name of the trigger object. Defaults
-	// to PeriodicSourceObjectName if empty.
-	ObjectName string
-	Period     time.Duration
+	Name      string
+	InputName string
+	// TriggerKind is copied into the emitted virtual source document's `kind`
+	// field. If empty, InputName is used.
+	TriggerKind string
+	// Namespace, if set, is copied into the emitted virtual source document.
+	Namespace string
+	// TriggerName is copied into the emitted virtual source document's `name`
+	// field. Defaults to PeriodicSourceObjectName if empty.
+	TriggerName string
+	Period      time.Duration
 	// Runtime is the engine runtime used to create a publisher.
 	Runtime *dbspruntime.Runtime
 	Logger  logr.Logger
@@ -63,13 +69,12 @@ type PeriodicProducer struct {
 }
 
 type baseProducer struct {
-	name       string // component name (for error reporting)
-	inputName  string
-	gvk        schema.GroupVersionKind
-	namespace  string
-	objectName string // Kubernetes object name of the trigger object
-
-	cache *store.Store
+	name        string // component name (for error reporting)
+	inputName   string
+	sourceType  string
+	triggerKind string
+	namespace   string
+	triggerName string
 
 	mu        sync.RWMutex
 	rt        *dbspruntime.Runtime
@@ -81,7 +86,18 @@ var _ dbspruntime.Producer = (*OneShotProducer)(nil)
 var _ dbspruntime.Producer = (*PeriodicProducer)(nil)
 
 func NewOneShotProducer(cfg OneShotConfig) (*OneShotProducer, error) {
-	b, err := newBase(cfg.Runtime, cfg.Name, cfg.InputName, cfg.TriggerGVK, cfg.Namespace, cfg.ObjectName, cfg.Logger, OneShotSourceObjectName, "one-shot-producer")
+	b, err := newBase(
+		cfg.Runtime,
+		cfg.Name,
+		cfg.InputName,
+		opv1a1OneShotSourceType,
+		cfg.TriggerKind,
+		cfg.Namespace,
+		cfg.TriggerName,
+		cfg.Logger,
+		OneShotSourceObjectName,
+		"one-shot-producer",
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +108,18 @@ func NewPeriodicProducer(cfg PeriodicConfig) (*PeriodicProducer, error) {
 	if cfg.Period <= 0 {
 		return nil, fmt.Errorf("periodic producer requires positive period")
 	}
-	b, err := newBase(cfg.Runtime, cfg.Name, cfg.InputName, cfg.TriggerGVK, cfg.Namespace, cfg.ObjectName, cfg.Logger, PeriodicSourceObjectName, "periodic-producer")
+	b, err := newBase(
+		cfg.Runtime,
+		cfg.Name,
+		cfg.InputName,
+		opv1a1PeriodicSourceType,
+		cfg.TriggerKind,
+		cfg.Namespace,
+		cfg.TriggerName,
+		cfg.Logger,
+		PeriodicSourceObjectName,
+		"periodic-producer",
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -104,28 +131,34 @@ func (p *baseProducer) Name() string { return p.name }
 
 // newBase constructs the shared producer state. Name uniqueness is enforced
 // when the producer is passed to Runtime.Add.
-func newBase(rt *dbspruntime.Runtime, name, input string, gvk schema.GroupVersionKind, namespace, objectName string, logger logr.Logger, defaultObjectName, loggerName string) (*baseProducer, error) {
-	if gvk.Kind == "" {
-		return nil, fmt.Errorf("trigger GVK kind is required")
+func newBase(rt *dbspruntime.Runtime, name, input, sourceType, triggerKind, namespace, triggerName string, logger logr.Logger, defaultTriggerName, loggerName string) (*baseProducer, error) {
+	if sourceType == "" {
+		return nil, fmt.Errorf("source type is required")
 	}
 	if input == "" {
-		input = gvk.Kind
+		input = triggerKind
 	}
-	if objectName == "" {
-		objectName = defaultObjectName
+	if input == "" {
+		return nil, fmt.Errorf("input name or trigger kind is required")
+	}
+	if triggerKind == "" {
+		triggerKind = input
+	}
+	if triggerName == "" {
+		triggerName = defaultTriggerName
 	}
 	if logger.GetSink() == nil {
 		logger = logr.Discard()
 	}
 	b := &baseProducer{
-		name:       name,
-		inputName:  input,
-		gvk:        gvk,
-		namespace:  namespace,
-		objectName: objectName,
-		cache:      store.NewStore(),
-		rt:         rt,
-		log:        logger.WithName(loggerName).WithValues("name", name, "input", input),
+		name:        name,
+		inputName:   input,
+		sourceType:  sourceType,
+		triggerKind: triggerKind,
+		namespace:   namespace,
+		triggerName: triggerName,
+		rt:          rt,
+		log:         logger.WithName(loggerName).WithValues("name", name, "input", input),
 	}
 	if rt != nil {
 		b.publisher = rt.NewPublisher()
@@ -150,7 +183,7 @@ func (p *baseProducer) Publish(event dbspruntime.Event) error {
 }
 
 func (p *OneShotProducer) Start(ctx context.Context) error {
-	if err := p.emit(ctx, kobject.Added); err != nil {
+	if err := p.emit(); err != nil {
 		return err
 	}
 	<-ctx.Done()
@@ -166,22 +199,16 @@ func (p *PeriodicProducer) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := p.emit(ctx, kobject.Updated); err != nil {
-				p.rt.ReportError(p.name, err)
+			if err := p.emit(); err != nil {
+				p.reportError(err)
 			}
 		}
 	}
 }
 
-func (p *baseProducer) emit(ctx context.Context, deltaType kobject.DeltaType) error {
-	obj := p.triggerObject()
-	zs, err := p.convertDeltaToZSet(kobject.Delta{Type: deltaType, Object: obj})
-	if err != nil {
-		return err
-	}
-	if zs.IsZero() {
-		return nil
-	}
+func (p *baseProducer) emit() error {
+	zs := zset.New()
+	zs.Insert(p.triggerDocument(), 1)
 
 	p.mu.RLock()
 	pub := p.publisher
@@ -193,63 +220,31 @@ func (p *baseProducer) emit(ctx context.Context, deltaType kobject.DeltaType) er
 	return pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }
 
-func (p *baseProducer) triggerObject() *unstructured.Unstructured {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(p.gvk)
-	obj.SetNamespace(p.namespace)
-	obj.SetName(p.objectName)
-	obj.SetLabels(map[string]string{VirtualSourceTriggered: time.Now().String()})
-	return obj
+func (p *baseProducer) triggerDocument() *dbunstructured.Unstructured {
+	fields := map[string]any{
+		VirtualSourceTypeField:      p.sourceType,
+		VirtualSourceKindField:      p.triggerKind,
+		VirtualSourceNameField:      p.triggerName,
+		VirtualSourceTriggeredField: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if p.namespace != "" {
+		fields[VirtualSourceNamespaceField] = p.namespace
+	}
+	return dbunstructured.New(fields, nil)
 }
 
-func (p *baseProducer) convertDeltaToZSet(delta kobject.Delta) (zset.ZSet, error) {
-	deltaObj := kobject.DeepCopy(delta.Object)
-
-	var old kobject.Object
-	if obj, exists, err := p.cache.Get(deltaObj); err == nil && exists {
-		old = obj
+func (p *baseProducer) reportError(err error) {
+	if err == nil {
+		return
 	}
-
-	kobject.RemoveUID(deltaObj)
-
-	if old != nil && (delta.Type == kobject.Updated || delta.Type == kobject.Replaced || delta.Type == kobject.Upserted) {
-		oldNoUID := kobject.DeepCopy(old)
-		kobject.RemoveUID(oldNoUID)
-		if kobject.DeepEqual(deltaObj, oldNoUID) {
-			return zset.New(), nil
-		}
+	if p.rt != nil {
+		p.rt.ReportError(p.name, err)
+		return
 	}
-
-	zs := zset.New()
-	switch delta.Type {
-	case kobject.Added:
-		zs.Insert(toDocument(deltaObj), 1)
-		if err := p.cache.Add(deltaObj); err != nil {
-			return zset.New(), err
-		}
-	case kobject.Updated, kobject.Replaced, kobject.Upserted:
-		if old != nil {
-			zs.Insert(toDocument(old), -1)
-		}
-		zs.Insert(toDocument(deltaObj), 1)
-		if err := p.cache.Update(deltaObj); err != nil {
-			return zset.New(), err
-		}
-	case kobject.Deleted:
-		if old == nil {
-			return zset.New(), fmt.Errorf("delete for non-existent object %s", client.ObjectKeyFromObject(deltaObj).String())
-		}
-		zs.Insert(toDocument(deltaObj), -1)
-		if err := p.cache.Delete(old); err != nil {
-			return zset.New(), err
-		}
-	default:
-		return zset.New(), fmt.Errorf("unknown delta type %q", delta.Type)
-	}
-
-	return zs, nil
+	p.log.Error(err, "producer error")
 }
 
-func toDocument(obj kobject.Object) *dbunstructured.Unstructured {
-	return dbunstructured.New(obj.UnstructuredContent(), nil)
-}
+const (
+	opv1a1OneShotSourceType  = "OneShot"
+	opv1a1PeriodicSourceType = "Periodic"
+)
