@@ -330,3 +330,8 @@ func (sr *viewSubResourceClient) Patch(ctx context.Context, obj client.Object, p
 	// For ViewCache, status is just part of the object - patch the whole object
 	return sr.client.Patch(ctx, obj, patch)
 }
+
+// Apply applies the subresource for the given object.
+func (sr *viewSubResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return errors.New("Apply: not implemented")
+}
