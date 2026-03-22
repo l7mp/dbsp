@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -38,5 +39,28 @@ var _ = Describe("Runtime", func() {
 		Eventually(started, time.Second).Should(Receive())
 		cancel()
 		Eventually(errCh, time.Second).Should(Receive(BeNil()))
+	})
+
+	It("blocks publish when subscriber channel is full", func() {
+		rt := runtime.NewRuntime(logr.Discard())
+		pub := rt.NewPublisher()
+		sub := rt.NewSubscriber()
+		sub.Subscribe("topic")
+
+		event := runtime.Event{Name: "topic", Data: zset.New()}
+		for i := 0; i < runtime.EventBufferSize; i++ {
+			Expect(pub.Publish(event)).To(Succeed())
+		}
+
+		done := make(chan error, 1)
+		go func() {
+			done <- pub.Publish(event)
+		}()
+
+		Consistently(done, 200*time.Millisecond, 10*time.Millisecond).ShouldNot(Receive())
+
+		<-sub.GetChannel()
+
+		Eventually(done, time.Second).Should(Receive(BeNil()))
 	})
 })

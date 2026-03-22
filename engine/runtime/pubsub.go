@@ -3,6 +3,7 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/l7mp/dbsp/engine/zset"
@@ -40,6 +41,17 @@ func sendEvent(ch chan Event, event Event) (err error) {
 	}
 }
 
+func sendEventBlocking(ch chan Event, event Event) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %s", ErrChannelClosed, event.Name)
+		}
+	}()
+
+	ch <- event
+	return nil
+}
+
 // Publisher emits runtime events.
 type Publisher interface {
 	Publish(event Event) error
@@ -56,7 +68,8 @@ type publisher struct {
 }
 
 // Publish sends an unsolicited event to all current subscribers of event.Name.
-// Channel-full is treated as a soft failure and is skipped.
+// On a full subscriber channel it logs the overflow and then blocks until the
+// event is accepted, preserving backpressure.
 func (p *publisher) Publish(event Event) error {
 	p.pubsub.mu.RLock()
 	defer p.pubsub.mu.RUnlock()
@@ -64,6 +77,10 @@ func (p *publisher) Publish(event Event) error {
 	for _, ch := range p.pubsub.subs[event.Name] {
 		if err := sendEvent(ch, event); err != nil {
 			if errors.Is(err, ErrChannelFull) {
+				log.Printf("runtime: event channel full, blocking publish: topic=%s err=%v", event.Name, err)
+				if err := sendEventBlocking(ch, event); err != nil {
+					return err
+				}
 				continue
 			}
 			return err
