@@ -10,7 +10,7 @@ import (
 type Runtime struct {
 	*PubSub
 	Manager
-	errCh chan<- ComponentError
+	errCh chan<- Error
 	log   logr.Logger
 
 	mu sync.RWMutex
@@ -38,7 +38,7 @@ func (rt *Runtime) Add(r Runnable) error {
 // from all components registered with this runtime. Must be called before
 // Start. The channel should be buffered; a full channel causes the error to be
 // dropped and logged instead.
-func (rt *Runtime) SetErrorChannel(ch chan<- ComponentError) {
+func (rt *Runtime) SetErrorChannel(ch chan<- Error) {
 	rt.errCh = ch
 }
 
@@ -46,7 +46,7 @@ func (rt *Runtime) SetErrorChannel(ch chan<- ComponentError) {
 // error channel has been set, the error is sent non-blocking; a dropped send
 // is itself logged. If no channel is set, the error is logged via rt.log.
 func (rt *Runtime) ReportError(name string, err error) {
-	ce := ComponentError{Origin: name, Err: err}
+	ce := Error{Origin: name, Err: err}
 	if rt.errCh != nil {
 		select {
 		case rt.errCh <- ce:
