@@ -10,6 +10,19 @@ import (
 	"github.com/l7mp/dbsp/engine/operator"
 )
 
+// Circuit is a directed graph of nodes and edges.
+type Circuit struct {
+	name         string
+	nodes        map[string]*Node
+	edges        []*Edge
+	inputIDs     map[string]bool // IDs of circuit-input boundary nodes.
+	outputIDs    map[string]bool // IDs of circuit-output boundary nodes.
+	delayEmitIDs map[string]bool // IDs of delay emit nodes (absorb = emit+"_absorb").
+	graph        *simple.DirectedGraph
+	nodeToID     map[string]int64
+	idToNode     map[int64]string
+}
+
 // New creates a new empty circuit.
 func New(name string) *Circuit {
 	return &Circuit{
