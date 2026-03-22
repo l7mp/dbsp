@@ -22,8 +22,8 @@ var _ runtime.Processor = (*runtime.Circuit)(nil)
 var _ = Describe("Circuit", func() {
 	It("executes incremental mode on delta input", func() {
 		q := mustCompileCircuitQuery()
-		rt := runtime.NewRuntime()
-		c, err := runtime.NewCircuit(rt, q, logr.Discard())
+		rt := runtime.NewRuntime(logr.Discard())
+		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
 		delta := zset.New()
@@ -39,15 +39,15 @@ var _ = Describe("Circuit", func() {
 
 	It("subscribes inputs and publishes outputs", func() {
 		q := mustCompileCircuitQuery()
-		rt := runtime.NewRuntime()
-		c, err := runtime.NewCircuit(rt, q, logr.Discard())
+		rt := runtime.NewRuntime(logr.Discard())
+		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
 		consumer := rt.NewSubscriber()
 		consumer.Subscribe("output")
 		defer consumer.Unsubscribe("output")
 
-		rt.Add(c)
+		Expect(rt.Add(c)).To(Succeed())
 		ctx, cancel := context.WithCancel(context.Background())
 		errCh := make(chan error, 1)
 		go func() { errCh <- rt.Start(ctx) }()
@@ -76,27 +76,27 @@ var _ = Describe("Circuit", func() {
 	})
 
 	It("broadcasts across overlapping producers and consumers", func() {
-		rt := runtime.NewRuntime()
+		rt := runtime.NewRuntime(logr.Discard())
 
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
 
-		c1, err := runtime.NewCircuit(rt, q1, logr.Discard())
+		c1, err := runtime.NewCircuit("b1", rt, q1, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		c2, err := runtime.NewCircuit(rt, q2, logr.Discard())
+		c2, err := runtime.NewCircuit("b2", rt, q2, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
-		cons1 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "y"})
-		cons2 := newCountingConsumer(rt.NewSubscriber(), []string{"y", "z"})
-		cons3 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "z"})
+		cons1 := newCountingConsumer("c1", rt.NewSubscriber(), []string{"x", "y"})
+		cons2 := newCountingConsumer("c2", rt.NewSubscriber(), []string{"y", "z"})
+		cons3 := newCountingConsumer("c3", rt.NewSubscriber(), []string{"x", "z"})
 		prodStart := make(chan struct{})
 
-		prod1 := newProducerRunnable(rt.NewPublisher(), prodStart, runtime.Event{Name: "p1", Data: oneDocZSet("p1")})
-		prod2 := newProducerRunnable(rt.NewPublisher(), prodStart, runtime.Event{Name: "p2", Data: oneDocZSet("p2")})
-		prod3 := newProducerRunnable(rt.NewPublisher(), prodStart, runtime.Event{Name: "p3", Data: oneDocZSet("p3")})
+		prod1 := newProducerRunnable("p1", rt.NewPublisher(), prodStart, runtime.Event{Name: "p1", Data: oneDocZSet("p1")})
+		prod2 := newProducerRunnable("p2", rt.NewPublisher(), prodStart, runtime.Event{Name: "p2", Data: oneDocZSet("p2")})
+		prod3 := newProducerRunnable("p3", rt.NewPublisher(), prodStart, runtime.Event{Name: "p3", Data: oneDocZSet("p3")})
 
-		rt.Add(c1)
-		rt.Add(c2)
+		Expect(rt.Add(c1)).To(Succeed())
+		Expect(rt.Add(c2)).To(Succeed())
 		rt.Add(cons1)
 		rt.Add(cons2)
 		rt.Add(cons3)
@@ -119,28 +119,28 @@ var _ = Describe("Circuit", func() {
 	})
 
 	It("broadcasts bursts with deterministic totals", func() {
-		rt := runtime.NewRuntime()
+		rt := runtime.NewRuntime(logr.Discard())
 
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
 
-		c1, err := runtime.NewCircuit(rt, q1, logr.Discard())
+		c1, err := runtime.NewCircuit("b1", rt, q1, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		c2, err := runtime.NewCircuit(rt, q2, logr.Discard())
+		c2, err := runtime.NewCircuit("b2", rt, q2, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
-		cons1 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "y"})
-		cons2 := newCountingConsumer(rt.NewSubscriber(), []string{"y", "z"})
-		cons3 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "z"})
+		cons1 := newCountingConsumer("c1", rt.NewSubscriber(), []string{"x", "y"})
+		cons2 := newCountingConsumer("c2", rt.NewSubscriber(), []string{"y", "z"})
+		cons3 := newCountingConsumer("c3", rt.NewSubscriber(), []string{"x", "z"})
 		prodStart := make(chan struct{})
 
 		const n = 20
-		prod1 := newProducerBurstRunnable(rt.NewPublisher(), prodStart, "p1", n)
-		prod2 := newProducerBurstRunnable(rt.NewPublisher(), prodStart, "p2", n)
-		prod3 := newProducerBurstRunnable(rt.NewPublisher(), prodStart, "p3", n)
+		prod1 := newProducerBurstRunnable("p1", rt.NewPublisher(), prodStart, "p1", n)
+		prod2 := newProducerBurstRunnable("p2", rt.NewPublisher(), prodStart, "p2", n)
+		prod3 := newProducerBurstRunnable("p3", rt.NewPublisher(), prodStart, "p3", n)
 
-		rt.Add(c1)
-		rt.Add(c2)
+		Expect(rt.Add(c1)).To(Succeed())
+		Expect(rt.Add(c2)).To(Succeed())
 		rt.Add(cons1)
 		rt.Add(cons2)
 		rt.Add(cons3)
@@ -163,18 +163,18 @@ var _ = Describe("Circuit", func() {
 	})
 
 	It("supports runtime add and stop of circuits", func() {
-		rt := runtime.NewRuntime()
+		rt := runtime.NewRuntime(logr.Discard())
 
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
-		c1, err := runtime.NewCircuit(rt, q1, logr.Discard())
+		c1, err := runtime.NewCircuit("b1", rt, q1, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
-		c2, err := runtime.NewCircuit(rt, q2, logr.Discard())
+		c2, err := runtime.NewCircuit("b2", rt, q2, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
-		cons1 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "y"})
-		cons2 := newCountingConsumer(rt.NewSubscriber(), []string{"y", "z"})
-		cons3 := newCountingConsumer(rt.NewSubscriber(), []string{"x", "z"})
+		cons1 := newCountingConsumer("c1", rt.NewSubscriber(), []string{"x", "y"})
+		cons2 := newCountingConsumer("c2", rt.NewSubscriber(), []string{"y", "z"})
+		cons3 := newCountingConsumer("c3", rt.NewSubscriber(), []string{"x", "z"})
 
 		rt.Add(cons1)
 		rt.Add(cons2)
@@ -188,7 +188,7 @@ var _ = Describe("Circuit", func() {
 		Expect(pub.Publish(runtime.Event{Name: "p2", Data: oneDocZSet("none")})).NotTo(HaveOccurred())
 		Consistently(func() int { return cons1.total() + cons2.total() + cons3.total() }, 200*time.Millisecond, 20*time.Millisecond).Should(Equal(0))
 
-		rt.Add(c1)
+		Expect(rt.Add(c1)).To(Succeed())
 		time.Sleep(100 * time.Millisecond)
 		cons1.reset()
 		cons2.reset()
@@ -199,7 +199,7 @@ var _ = Describe("Circuit", func() {
 		Eventually(func() int { return cons2.total() }, time.Second, 10*time.Millisecond).Should(Equal(1))
 		Eventually(func() int { return cons3.total() }, time.Second, 10*time.Millisecond).Should(Equal(1))
 
-		rt.Add(c2)
+		Expect(rt.Add(c2)).To(Succeed())
 		time.Sleep(100 * time.Millisecond)
 		cons1.reset()
 		cons2.reset()
@@ -272,37 +272,17 @@ func oneDocZSet(tag string) zset.ZSet {
 }
 
 type producerRunnable struct {
+	name string
 	runtime.Publisher
 	start  <-chan struct{}
 	events []runtime.Event
 }
 
-func newProducerRunnable(pub runtime.Publisher, start <-chan struct{}, events ...runtime.Event) *producerRunnable {
-	return &producerRunnable{Publisher: pub, start: start, events: events}
+func newProducerRunnable(name string, pub runtime.Publisher, start <-chan struct{}, events ...runtime.Event) *producerRunnable {
+	return &producerRunnable{name: name, Publisher: pub, start: start, events: events}
 }
 
-type producerBurstRunnable struct {
-	runtime.Publisher
-	start <-chan struct{}
-	topic string
-	n     int
-}
-
-func newProducerBurstRunnable(pub runtime.Publisher, start <-chan struct{}, topic string, n int) *producerBurstRunnable {
-	return &producerBurstRunnable{Publisher: pub, start: start, topic: topic, n: n}
-}
-
-func (p *producerBurstRunnable) Start(context.Context) error {
-	if p.start != nil {
-		<-p.start
-	}
-	for i := 0; i < p.n; i++ {
-		if err := p.Publish(runtime.Event{Name: p.topic, Data: oneDocZSet(p.topic)}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+func (p *producerRunnable) Name() string { return p.name }
 
 func (p *producerRunnable) Start(context.Context) error {
 	if p.start != nil {
@@ -316,7 +296,33 @@ func (p *producerRunnable) Start(context.Context) error {
 	return nil
 }
 
+type producerBurstRunnable struct {
+	name string
+	runtime.Publisher
+	start <-chan struct{}
+	topic string
+	n     int
+}
+
+func newProducerBurstRunnable(name string, pub runtime.Publisher, start <-chan struct{}, topic string, n int) *producerBurstRunnable {
+	return &producerBurstRunnable{name: name, Publisher: pub, start: start, topic: topic, n: n}
+}
+
+func (p *producerBurstRunnable) Name() string { return p.name }
+func (p *producerBurstRunnable) Start(context.Context) error {
+	if p.start != nil {
+		<-p.start
+	}
+	for i := 0; i < p.n; i++ {
+		if err := p.Publish(runtime.Event{Name: p.topic, Data: oneDocZSet(p.topic)}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type countingConsumer struct {
+	name string
 	runtime.Subscriber
 	topics []string
 
@@ -324,10 +330,11 @@ type countingConsumer struct {
 	counts map[string]int
 }
 
-func newCountingConsumer(sub runtime.Subscriber, topics []string) *countingConsumer {
-	return &countingConsumer{Subscriber: sub, topics: topics, counts: map[string]int{}}
+func newCountingConsumer(name string, sub runtime.Subscriber, topics []string) *countingConsumer {
+	return &countingConsumer{name: name, Subscriber: sub, topics: topics, counts: map[string]int{}}
 }
 
+func (c *countingConsumer) Name() string { return c.name }
 func (c *countingConsumer) Start(ctx context.Context) error {
 	for _, t := range c.topics {
 		c.Subscribe(t)

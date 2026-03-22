@@ -2,18 +2,20 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 )
 
 // Runnable has a context-managed lifecycle.
 type Runnable interface {
+	Name() string
 	Start(ctx context.Context) error
 }
 
 // Manager controls runnable lifecycles, including dynamic add/remove.
 type Manager interface {
-	Add(Runnable)
+	Add(Runnable) error
 	Stop(Runnable)
 	Start(ctx context.Context) error
 }
@@ -25,6 +27,7 @@ type managed struct {
 
 type manager struct {
 	mu      sync.Mutex
+	names   map[string]bool
 	started bool
 	ctx     context.Context
 	items   []*managed
@@ -37,13 +40,18 @@ var _ Manager = (*manager)(nil)
 
 // NewManager creates a lifecycle manager that supports dynamic Add and Stop.
 func NewManager() Manager {
-	return &manager{}
+	return &manager{names: map[string]bool{}}
 }
 
 // Add registers a runnable and starts it immediately if the manager is already running.
-func (m *manager) Add(r Runnable) {
+func (m *manager) Add(r Runnable) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if _, ok := m.names[r.Name()]; ok {
+		return fmt.Errorf("runtime: component name %q already registered", r.Name())
+	}
+	m.names[r.Name()] = true
 
 	item := &managed{r: r}
 	m.items = append(m.items, item)
@@ -51,6 +59,8 @@ func (m *manager) Add(r Runnable) {
 	if m.started {
 		m.startOneLocked(item)
 	}
+
+	return nil
 }
 
 // Stop cancels all managed instances that match r.

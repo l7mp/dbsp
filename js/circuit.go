@@ -40,7 +40,7 @@ func (h *circuitHandle) validate() error {
 	query := *h.query
 	query.Circuit = h.c
 
-	proc, err := dbspruntime.NewCircuit(h.vm.runtime, &query, h.vm.logger)
+	proc, err := dbspruntime.NewCircuit(h.c.Name(), h.vm.runtime, &query, h.vm.logger)
 	if err != nil {
 		return fmt.Errorf("runtime circuit: %w", err)
 	}

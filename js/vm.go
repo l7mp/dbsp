@@ -51,7 +51,7 @@ func NewVM(logger logr.Logger) (*VM, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	v := &VM{
 		loop:        eventloop.NewEventLoop(),
-		runtime:     dbspruntime.NewRuntime(),
+		runtime:     dbspruntime.NewRuntime(logger),
 		db:          relation.NewDatabase("dbsp"),
 		logger:      logger,
 		ctx:         ctx,

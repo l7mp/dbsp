@@ -20,7 +20,9 @@ var _ Processor = (*Circuit)(nil)
 type Circuit struct {
 	Publisher
 	Subscriber
-	logger logr.Logger
+
+	name string
+	rt   *Runtime
 
 	inputMap    map[string]string
 	outputMap   map[string]string
@@ -32,10 +34,15 @@ type Circuit struct {
 	state       map[string]zset.ZSet
 
 	topicToInput map[string]string
+
+	logger logr.Logger
 }
 
 // NewCircuit builds a runtime processor from a compiled query.
-func NewCircuit(rt *Runtime, q *compiler.Query, logger logr.Logger) (*Circuit, error) {
+// name is a unique identifier for this circuit within the runtime; it is used
+// as the origin field in any ComponentErrors reported by the circuit. Name
+// uniqueness is enforced when the circuit is passed to Runtime.Add.
+func NewCircuit(name string, rt *Runtime, q *compiler.Query, logger logr.Logger) (*Circuit, error) {
 	exec, err := executor.New(q.Circuit, logr.Discard())
 	if err != nil {
 		return nil, fmt.Errorf("runtime executor: %w", err)
@@ -53,7 +60,8 @@ func NewCircuit(rt *Runtime, q *compiler.Query, logger logr.Logger) (*Circuit, e
 	return &Circuit{
 		Publisher:    rt.NewPublisher(),
 		Subscriber:   rt.NewSubscriber(),
-		logger:       logger,
+		name:         name,
+		rt:           rt,
 		inputMap:     inputMap,
 		outputMap:    outputMap,
 		inputNames:   inputNames,
@@ -62,10 +70,17 @@ func NewCircuit(rt *Runtime, q *compiler.Query, logger logr.Logger) (*Circuit, e
 		exec:         exec,
 		state:        state,
 		topicToInput: map[string]string{},
+		logger:       logger,
 	}, nil
 }
 
+// Name returns the circuit's unique component name.
+func (c *Circuit) Name() string { return c.name }
+
 // Start subscribes to all query inputs and forwards outputs via Publisher.
+// Execute and publish errors are non-critical: they are reported via the
+// runtime error channel and the circuit continues processing subsequent events.
+// Start only returns a non-nil error on context cancellation-related issues.
 func (c *Circuit) Start(ctx context.Context) error {
 	for _, in := range c.inputNames {
 		c.Subscribe(in)
@@ -90,12 +105,13 @@ func (c *Circuit) Start(ctx context.Context) error {
 			in.Name = logical
 			outs, err := c.Execute(in)
 			if err != nil {
-				return err
+				c.rt.ReportError(c.name, err)
+				continue
 			}
 			for _, out := range outs {
 				c.logger.V(1).Info("runtime output event", "topic", out.Name, "docs", out.Data.Size())
 				if err := c.Publish(out); err != nil {
-					return err
+					c.rt.ReportError(c.name, err)
 				}
 			}
 		}

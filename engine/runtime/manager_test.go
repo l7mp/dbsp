@@ -59,4 +59,5 @@ var _ = Describe("Manager", func() {
 
 type runnableFunc func(ctx context.Context) error
 
+func (f runnableFunc) Name() string                    { return "runnableFunc" }
 func (f runnableFunc) Start(ctx context.Context) error { return f(ctx) }

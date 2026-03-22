@@ -20,8 +20,9 @@ var _ = Describe("Runtime interfaces", func() {
 	})
 })
 
-type fakeRunnable struct{}
+type fakeRunnable struct{ name string }
 
+func (f *fakeRunnable) Name() string { return f.name }
 func (f *fakeRunnable) Start(ctx context.Context) error {
 	<-ctx.Done()
 	return nil
@@ -51,7 +52,7 @@ type fakeConsumer struct {
 
 type fakeManager struct{ r []runtime.Runnable }
 
-func (f *fakeManager) Add(r runtime.Runnable) { f.r = append(f.r, r) }
+func (f *fakeManager) Add(r runtime.Runnable) error { f.r = append(f.r, r); return nil }
 
 func (f *fakeManager) Stop(runtime.Runnable) {}
 

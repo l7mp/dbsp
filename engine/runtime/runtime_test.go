@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/l7mp/dbsp/engine/runtime"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -11,7 +12,7 @@ import (
 
 var _ = Describe("Runtime", func() {
 	It("exposes pubsub factories", func() {
-		rt := runtime.NewRuntime()
+		rt := runtime.NewRuntime(logr.Discard())
 		Expect(rt.PubSub).NotTo(BeNil())
 		Expect(rt.Manager).NotTo(BeNil())
 
@@ -22,7 +23,7 @@ var _ = Describe("Runtime", func() {
 	})
 
 	It("runs added runnable through manager", func() {
-		rt := runtime.NewRuntime()
+		rt := runtime.NewRuntime(logr.Discard())
 		started := make(chan struct{}, 1)
 		rt.Add(runnableFunc(func(ctx context.Context) error {
 			started <- struct{}{}
