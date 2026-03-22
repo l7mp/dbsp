@@ -25,20 +25,32 @@ const (
 )
 
 type OneShotConfig struct {
+	// Name is the unique component name used for error reporting. Required.
+	Name       string
 	InputName  string
 	TriggerGVK schema.GroupVersionKind
 	Namespace  string
-	Name       string
-	Logger     logr.Logger
+	// ObjectName is the Kubernetes object name of the trigger object. Defaults
+	// to OneShotSourceObjectName if empty.
+	ObjectName string
+	// Runtime is the engine runtime used to create a publisher.
+	Runtime *dbspruntime.Runtime
+	Logger  logr.Logger
 }
 
 type PeriodicConfig struct {
+	// Name is the unique component name used for error reporting. Required.
+	Name       string
 	InputName  string
 	TriggerGVK schema.GroupVersionKind
 	Namespace  string
-	Name       string
+	// ObjectName is the Kubernetes object name of the trigger object. Defaults
+	// to PeriodicSourceObjectName if empty.
+	ObjectName string
 	Period     time.Duration
-	Logger     logr.Logger
+	// Runtime is the engine runtime used to create a publisher.
+	Runtime *dbspruntime.Runtime
+	Logger  logr.Logger
 }
 
 type OneShotProducer struct {
@@ -51,14 +63,16 @@ type PeriodicProducer struct {
 }
 
 type baseProducer struct {
-	inputName string
-	gvk       schema.GroupVersionKind
-	namespace string
-	name      string
+	name       string // component name (for error reporting)
+	inputName  string
+	gvk        schema.GroupVersionKind
+	namespace  string
+	objectName string // Kubernetes object name of the trigger object
 
 	cache *store.Store
 
 	mu        sync.RWMutex
+	rt        *dbspruntime.Runtime
 	publisher dbspruntime.Publisher
 	log       logr.Logger
 }
@@ -67,7 +81,7 @@ var _ dbspruntime.Producer = (*OneShotProducer)(nil)
 var _ dbspruntime.Producer = (*PeriodicProducer)(nil)
 
 func NewOneShotProducer(cfg OneShotConfig) (*OneShotProducer, error) {
-	b, err := newBase(cfg.InputName, cfg.TriggerGVK, cfg.Namespace, cfg.Name, cfg.Logger, OneShotSourceObjectName, "one-shot-producer")
+	b, err := newBase(cfg.Runtime, cfg.Name, cfg.InputName, cfg.TriggerGVK, cfg.Namespace, cfg.ObjectName, cfg.Logger, OneShotSourceObjectName, "one-shot-producer")
 	if err != nil {
 		return nil, err
 	}
@@ -78,34 +92,45 @@ func NewPeriodicProducer(cfg PeriodicConfig) (*PeriodicProducer, error) {
 	if cfg.Period <= 0 {
 		return nil, fmt.Errorf("periodic producer requires positive period")
 	}
-	b, err := newBase(cfg.InputName, cfg.TriggerGVK, cfg.Namespace, cfg.Name, cfg.Logger, PeriodicSourceObjectName, "periodic-producer")
+	b, err := newBase(cfg.Runtime, cfg.Name, cfg.InputName, cfg.TriggerGVK, cfg.Namespace, cfg.ObjectName, cfg.Logger, PeriodicSourceObjectName, "periodic-producer")
 	if err != nil {
 		return nil, err
 	}
 	return &PeriodicProducer{baseProducer: b, period: cfg.Period}, nil
 }
 
-func newBase(input string, gvk schema.GroupVersionKind, namespace, name string, logger logr.Logger, defaultName, loggerName string) (*baseProducer, error) {
+// Name returns the producer's unique component name.
+func (p *baseProducer) Name() string { return p.name }
+
+// newBase constructs the shared producer state. Name uniqueness is enforced
+// when the producer is passed to Runtime.Add.
+func newBase(rt *dbspruntime.Runtime, name, input string, gvk schema.GroupVersionKind, namespace, objectName string, logger logr.Logger, defaultObjectName, loggerName string) (*baseProducer, error) {
 	if gvk.Kind == "" {
 		return nil, fmt.Errorf("trigger GVK kind is required")
 	}
 	if input == "" {
 		input = gvk.Kind
 	}
-	if name == "" {
-		name = defaultName
+	if objectName == "" {
+		objectName = defaultObjectName
 	}
 	if logger.GetSink() == nil {
 		logger = logr.Discard()
 	}
-	return &baseProducer{
-		inputName: input,
-		gvk:       gvk,
-		namespace: namespace,
-		name:      name,
-		cache:     store.NewStore(),
-		log:       logger.WithName(loggerName).WithValues("input", input),
-	}, nil
+	b := &baseProducer{
+		name:       name,
+		inputName:  input,
+		gvk:        gvk,
+		namespace:  namespace,
+		objectName: objectName,
+		cache:      store.NewStore(),
+		rt:         rt,
+		log:        logger.WithName(loggerName).WithValues("name", name, "input", input),
+	}
+	if rt != nil {
+		b.publisher = rt.NewPublisher()
+	}
+	return b, nil
 }
 
 func (p *baseProducer) SetPublisher(pub dbspruntime.Publisher) {
@@ -142,7 +167,7 @@ func (p *PeriodicProducer) Start(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			if err := p.emit(ctx, kobject.Updated); err != nil {
-				return err
+				p.rt.ReportError(p.name, err)
 			}
 		}
 	}
@@ -172,7 +197,7 @@ func (p *baseProducer) triggerObject() *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(p.gvk)
 	obj.SetNamespace(p.namespace)
-	obj.SetName(p.name)
+	obj.SetName(p.objectName)
 	obj.SetLabels(map[string]string{VirtualSourceTriggered: time.Now().String()})
 	return obj
 }

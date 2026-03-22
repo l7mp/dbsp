@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -14,9 +15,12 @@ import (
 
 var _ = Describe("Virtual source producers", func() {
 	It("emits exactly one event for one-shot producer", func() {
+		rt := dbspruntime.NewRuntime(logr.Discard())
 		p, err := NewOneShotProducer(OneShotConfig{
+			Name:       "test-oneshot",
 			InputName:  "in",
 			TriggerGVK: schema.GroupVersionKind{Group: "test.io", Version: "v1", Kind: "OneShotTrigger"},
+			Runtime:    rt,
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -47,10 +51,13 @@ var _ = Describe("Virtual source producers", func() {
 	})
 
 	It("emits repeated events for periodic producer", func() {
+		rt := dbspruntime.NewRuntime(logr.Discard())
 		p, err := NewPeriodicProducer(PeriodicConfig{
+			Name:       "test-periodic",
 			InputName:  "in",
 			TriggerGVK: schema.GroupVersionKind{Group: "test.io", Version: "v1", Kind: "PeriodicTrigger"},
 			Period:     20 * time.Millisecond,
+			Runtime:    rt,
 		})
 		Expect(err).NotTo(HaveOccurred())
 

@@ -13,7 +13,7 @@ import (
 var _ = Describe("Pipe connector", func() {
 	It("forwards input from producer channel", func() {
 		in := make(chan runtime.Event, 1)
-		p := NewPipeProducer(in)
+		p := NewPipeProducer("pipe-prod", in)
 
 		errCh := make(chan error, 1)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -42,7 +42,7 @@ var _ = Describe("Pipe connector", func() {
 	It("forwards output to consumer channel", func() {
 
 		out := make(chan runtime.Event, 1)
-		c := NewPipeConsumer(out)
+		c := NewPipeConsumer("pipe-cons", out)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

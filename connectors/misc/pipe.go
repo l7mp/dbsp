@@ -9,7 +9,8 @@ import (
 
 // PipeProducer forwards runtime inputs from a channel to an input handler.
 type PipeProducer struct {
-	in <-chan dbspruntime.Event
+	name string
+	in   <-chan dbspruntime.Event
 
 	mu        sync.RWMutex
 	publisher dbspruntime.Publisher
@@ -17,21 +18,23 @@ type PipeProducer struct {
 
 // PipeConsumer forwards runtime outputs to a channel.
 type PipeConsumer struct {
-	out chan<- dbspruntime.Event
-	in  chan dbspruntime.Event
+	name string
+	out  chan<- dbspruntime.Event
+	in   chan dbspruntime.Event
 }
 
 var _ dbspruntime.Producer = (*PipeProducer)(nil)
 var _ dbspruntime.Consumer = (*PipeConsumer)(nil)
 
-func NewPipeProducer(in <-chan dbspruntime.Event) *PipeProducer {
-	return &PipeProducer{in: in}
+func NewPipeProducer(name string, in <-chan dbspruntime.Event) *PipeProducer {
+	return &PipeProducer{name: name, in: in}
 }
 
-func NewPipeConsumer(out chan<- dbspruntime.Event) *PipeConsumer {
-	return &PipeConsumer{out: out, in: make(chan dbspruntime.Event, dbspruntime.EventBufferSize)}
+func NewPipeConsumer(name string, out chan<- dbspruntime.Event) *PipeConsumer {
+	return &PipeConsumer{name: name, out: out, in: make(chan dbspruntime.Event, dbspruntime.EventBufferSize)}
 }
 
+func (p *PipeProducer) Name() string { return p.name }
 func (p *PipeProducer) SetPublisher(pub dbspruntime.Publisher) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -74,6 +77,7 @@ func (p *PipeProducer) Start(ctx context.Context) error {
 	}
 }
 
+func (p *PipeConsumer) Name() string { return p.name }
 func (c *PipeConsumer) Start(ctx context.Context) error {
 	for {
 		select {
