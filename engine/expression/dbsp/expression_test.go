@@ -538,6 +538,31 @@ var _ = Describe("List Operators", func() {
 		Expect(result).To(Equal([]any{int64(3), int64(4)}))
 	})
 
+	It("should evaluate @sortBy with comparator subject fields", func() {
+		expr, err := dbsp.Compile([]byte(`{"@sortBy": [
+			{"@switch": [
+				[{"@gt": ["$$.a", "$$.b"]}, 1],
+				[{"@eq": ["$$.a", "$$.b"]}, 0],
+				[true, -1]
+			]},
+			[3, 1, 4, 1, 5, 9]
+		]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{int64(1), int64(1), int64(3), int64(4), int64(5), int64(9)}))
+	})
+
+	It("should return error when @sortBy comparator does not return -1, 0 or 1", func() {
+		expr, err := dbsp.Compile([]byte(`{"@sortBy": [{"@add": ["$$.a", "$$.b"]}, [2, 1]]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = expr.Evaluate(expression.NewContext(nil))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("comparator must return -1, 0, or 1"))
+	})
+
 })
 
 var _ = Describe("Conditional Operators", func() {

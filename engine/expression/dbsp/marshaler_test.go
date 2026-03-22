@@ -297,6 +297,7 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@filter", `{"@filter":[true,"$.list"]}`),
 			Entry("@sum", `{"@sum":[1,2,3]}`),
 			Entry("@len", `{"@len":"$.list"}`),
+			Entry("@sortBy", `{"@sortBy":[{"@switch":[[{"@gt":["$$.a","$$.b"]},1],[{"@eq":["$$.a","$$.b"]},0],[true,-1]]},"$.list"]}`),
 			Entry("@min", `{"@min":[3,1,2]}`),
 			Entry("@max", `{"@max":[3,1,2]}`),
 			Entry("@lexmin", `{"@lexmin":["b","a","c"]}`),

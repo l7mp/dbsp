@@ -3,6 +3,8 @@ package dbsp
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 
 	"github.com/l7mp/dbsp/engine/expression"
 )
@@ -68,6 +70,58 @@ func (e *filterExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	}
 
 	ctx.Logger().V(8).Info("eval", "op", "@filter", "result", result)
+	return result, nil
+}
+
+// sortByExpr implements @sortBy - sorts a list using a comparator expression.
+//
+// The comparator is evaluated with the subject set to a map holding:
+//   - a: left candidate value
+//   - b: right candidate value
+//
+// The comparator must return -1, 0, or 1.
+type sortByExpr struct{ binaryOp }
+
+func (e *sortByExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	listValue, err := e.right.Evaluate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("@sortBy: failed to evaluate list: %w", err)
+	}
+
+	list, err := AsList(listValue)
+	if err != nil {
+		return nil, fmt.Errorf("@sortBy: second argument must be a list: %w", err)
+	}
+
+	result := append([]any(nil), list...)
+
+	var sortErr error
+	sort.SliceStable(result, func(i, j int) bool {
+		if sortErr != nil {
+			return false
+		}
+
+		cmpCtx := ctx.WithSubject(map[string]any{"a": result[i], "b": result[j]})
+		cmpValue, err := e.left.Evaluate(cmpCtx)
+		if err != nil {
+			sortErr = fmt.Errorf("@sortBy: compare[%d,%d]: %w", i, j, err)
+			return false
+		}
+
+		cmp, err := asComparatorResult(cmpValue)
+		if err != nil {
+			sortErr = fmt.Errorf("@sortBy: compare[%d,%d]: %w", i, j, err)
+			return false
+		}
+
+		return cmp < 0
+	})
+
+	if sortErr != nil {
+		return nil, sortErr
+	}
+
+	ctx.Logger().V(8).Info("eval", "op", "@sortBy", "result", result)
 	return result, nil
 }
 
@@ -407,6 +461,53 @@ func evaluateLexArgs(ctx *expression.EvalContext, args []Expression, opName stri
 	return values, nil
 }
 
+func asComparatorResult(v any) (int, error) {
+	var cmp int64
+	switch val := v.(type) {
+	case int:
+		cmp = int64(val)
+	case int8:
+		cmp = int64(val)
+	case int16:
+		cmp = int64(val)
+	case int32:
+		cmp = int64(val)
+	case int64:
+		cmp = val
+	case uint:
+		cmp = int64(val)
+	case uint8:
+		cmp = int64(val)
+	case uint16:
+		cmp = int64(val)
+	case uint32:
+		cmp = int64(val)
+	case uint64:
+		if val > math.MaxInt64 {
+			return 0, fmt.Errorf("comparator result out of range: %d", val)
+		}
+		cmp = int64(val)
+	case float32:
+		if math.Trunc(float64(val)) != float64(val) {
+			return 0, fmt.Errorf("comparator must return integer value, got %v", v)
+		}
+		cmp = int64(val)
+	case float64:
+		if math.Trunc(val) != val {
+			return 0, fmt.Errorf("comparator must return integer value, got %v", v)
+		}
+		cmp = int64(val)
+	default:
+		return 0, fmt.Errorf("comparator must return -1, 0, or 1, got %T", v)
+	}
+
+	if cmp < -1 || cmp > 1 {
+		return 0, fmt.Errorf("comparator must return -1, 0, or 1, got %d", cmp)
+	}
+
+	return int(cmp), nil
+}
+
 func lexKey(v any) (string, error) {
 	type hasher interface{ Hash() string }
 	if h, ok := v.(hasher); ok {
@@ -433,6 +534,13 @@ func init() {
 			return nil, fmt.Errorf("@filter: expected [predicate, list] arguments")
 		}
 		return &filterExpr{binaryOp{"@filter", list[0], list[1]}}, nil
+	})
+	MustRegister("@sortBy", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || len(list) != 2 {
+			return nil, fmt.Errorf("@sortBy: expected [compare, list] arguments")
+		}
+		return &sortByExpr{binaryOp{"@sortBy", list[0], list[1]}}, nil
 	})
 	MustRegister("@sum", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)

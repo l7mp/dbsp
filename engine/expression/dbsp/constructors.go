@@ -95,6 +95,11 @@ func NewLexMax(args ...Expression) Expression { return &lexMaxExpr{variadicOp{"@
 // NewLen creates a list length expression.
 func NewLen(operand Expression) Expression { return &lenExpr{unaryOp{"@len", operand}} }
 
+// NewSortBy creates a list sort expression with a comparator.
+func NewSortBy(compare, list Expression) Expression {
+	return &sortByExpr{binaryOp{"@sortBy", compare, list}}
+}
+
 // NewIsNull creates an is-null check expression.
 func NewIsNull(operand Expression) Expression { return &isNullExpr{unaryOp{"@isnull", operand}} }
 
