@@ -24,14 +24,14 @@ type Config struct {
 	Client    client.WithWatch
 	SourceGVK schema.GroupVersionKind
 
+	// Name is the unique component name used for error reporting. Required.
+	Name          string
 	InputName     string
 	Namespace     string
 	LabelSelector *v1.LabelSelector
 	Predicate     *kpredicate.Predicate
 
-	// Runtime is the engine runtime used to create a publisher. If Runtime is set, a
-	// publisher is automatically obtained from Runtime.NewPublisher(). SetPublisher() can be
-	// used afterwards to override it.
+	// Runtime is the engine runtime used to create a publisher.
 	Runtime *dbspruntime.Runtime
 
 	Logger logr.Logger
@@ -41,11 +41,13 @@ type Config struct {
 type Watcher struct {
 	client    client.WithWatch
 	list      client.ObjectList
+	name      string
 	inputName string
 
 	listOpts   []client.ListOption
 	predicates []crpredicate.TypedPredicate[client.Object]
 
+	rt  *dbspruntime.Runtime
 	pub dbspruntime.Publisher
 
 	sourceCache map[schema.GroupVersionKind]*store.Store
@@ -55,7 +57,11 @@ type Watcher struct {
 
 var _ dbspruntime.Producer = (*Watcher)(nil)
 
-// NewWatcher creates a Kubernetes producer.
+// Name returns the watcher's unique component name.
+func (w *Watcher) Name() string { return w.name }
+
+// NewWatcher creates a Kubernetes producer. Name uniqueness is enforced when
+// the watcher is passed to Runtime.Add.
 func NewWatcher(cfg Config) (*Watcher, error) {
 	log := cfg.Logger
 	if log.GetSink() == nil {
@@ -69,9 +75,11 @@ func NewWatcher(cfg Config) (*Watcher, error) {
 	p := &Watcher{
 		client:      cfg.Client,
 		list:        list,
+		name:        cfg.Name,
 		inputName:   inputName,
+		rt:          cfg.Runtime,
 		sourceCache: map[schema.GroupVersionKind]*store.Store{},
-		log:         log.WithName("kubernetes-producer").WithValues("input", inputName),
+		log:         log.WithName("kubernetes-producer").WithValues("name", cfg.Name, "input", inputName),
 	}
 
 	p.pub = cfg.Runtime.NewPublisher()
@@ -132,7 +140,7 @@ func (p *Watcher) Start(ctx context.Context) error {
 			}
 
 			if err := p.handleEvent(ctx, evt); err != nil {
-				return err
+				p.rt.ReportError(p.name, err)
 			}
 		}
 	}

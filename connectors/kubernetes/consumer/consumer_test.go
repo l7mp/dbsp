@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -27,7 +28,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		u, err := NewUpdater(Config{Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime()})
+		u, err := NewUpdater(Config{Name: "test-updater", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime(logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		add := map[string]any{
@@ -101,7 +102,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		p, err := NewPatcher(Config{Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime()})
+		p, err := NewPatcher(Config{Name: "test-patcher", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime(logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		patchUpsert := map[string]any{

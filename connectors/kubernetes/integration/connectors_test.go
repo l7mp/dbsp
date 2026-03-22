@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -25,7 +26,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 	ctx := context.Background()
 
 	It("producer emits add, update, and delete deltas for ConfigMaps", func() {
-		rt := dbspruntime.NewRuntime()
+		rt := dbspruntime.NewRuntime(logr.Discard())
 		sub := rt.NewSubscriber()
 		sub.Subscribe("in")
 
@@ -82,7 +83,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			Client:     suite.K8sClient,
 			OutputName: "out",
 			TargetGVK:  schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
-			Runtime:    dbspruntime.NewRuntime(),
+			Runtime:    dbspruntime.NewRuntime(logr.Discard()),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -148,7 +149,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			Client:     suite.K8sClient,
 			OutputName: "out",
 			TargetGVK:  schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
-			Runtime:    dbspruntime.NewRuntime(),
+			Runtime:    dbspruntime.NewRuntime(logr.Discard()),
 		})
 		Expect(err).NotTo(HaveOccurred())
 

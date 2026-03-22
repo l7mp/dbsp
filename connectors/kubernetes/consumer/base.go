@@ -24,6 +24,8 @@ import (
 type Config struct {
 	Client client.Client
 
+	// Name is the unique component name used for error reporting. Required.
+	Name       string
 	OutputName string
 	TargetGVK  schema.GroupVersionKind
 
@@ -39,13 +41,20 @@ type consumeFn func(ctx context.Context, event dbspruntime.Event) error
 type baseConsumer struct {
 	dbspruntime.Subscriber
 
+	name       string
+	rt         *dbspruntime.Runtime
 	client     client.Client
 	outputName string
 	targetGVK  schema.GroupVersionKind
 	log        logr.Logger
 }
 
-func newBase(cfg Config, name string) (*baseConsumer, error) {
+// Name returns the consumer's unique component name.
+func (c *baseConsumer) Name() string { return c.name }
+
+// newBase constructs the shared consumer state. Name uniqueness is enforced
+// when the consumer is passed to Runtime.Add.
+func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 	log := cfg.Logger
 	if log.GetSink() == nil {
 		log = logr.Discard()
@@ -54,10 +63,12 @@ func newBase(cfg Config, name string) (*baseConsumer, error) {
 	sub := cfg.Runtime.NewSubscriber()
 	b := &baseConsumer{
 		Subscriber: sub,
+		rt:         cfg.Runtime,
+		name:       cfg.Name,
 		client:     cfg.Client,
 		outputName: cfg.OutputName,
 		targetGVK:  cfg.TargetGVK,
-		log:        log.WithName(name).WithValues("output", cfg.OutputName),
+		log:        log.WithName(consumerType).WithValues("name", cfg.Name, "output", cfg.OutputName),
 	}
 
 	// Subscribe immediately so events published before Start() is called are not lost.
@@ -70,6 +81,8 @@ func newBase(cfg Config, name string) (*baseConsumer, error) {
 
 // start is the shared event loop for Patcher and Updater.
 // consume is called for every event received on the subscriber channel.
+// Consume errors are non-critical: they are reported via the runtime error
+// channel and the consumer continues processing subsequent events.
 func (c *baseConsumer) start(ctx context.Context, consume consumeFn) error {
 	ch := c.GetChannel()
 	for {
@@ -81,7 +94,7 @@ func (c *baseConsumer) start(ctx context.Context, consume consumeFn) error {
 				return nil
 			}
 			if err := consume(ctx, evt); err != nil {
-				c.log.Error(err, "consume error")
+				c.rt.ReportError(c.name, err)
 			}
 		}
 	}
