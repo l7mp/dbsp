@@ -1,6 +1,6 @@
 module github.com/l7mp/dbsp/connectors/misc
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/go-logr/logr v1.4.3
@@ -18,7 +18,7 @@ require (
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
+	github.com/google/pprof v0.0.0-20260302011040-a15ffb7f9dcc // indirect
 	github.com/ohler55/ojg v1.28.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
