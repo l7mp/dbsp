@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -142,6 +143,9 @@ func (cc *CompositeCache) Start(ctx context.Context) error {
 
 // WaitForCacheSync waits for all the caches to sync. Returns false if it could not sync a store.c
 func (cc *CompositeCache) WaitForCacheSync(ctx context.Context) bool {
+	if cc.defaultCache == nil {
+		return cc.viewCache.WaitForCacheSync(ctx)
+	}
 	return cc.viewCache.WaitForCacheSync(ctx) && cc.defaultCache.WaitForCacheSync(ctx)
 }
 
@@ -163,6 +167,9 @@ func (cc *CompositeCache) Get(ctx context.Context, key client.ObjectKey, obj cli
 	if viewv1a1.IsViewKind(gvk) {
 		return cc.viewCache.Get(ctx, key, obj, opts...)
 	}
+	if cc.defaultCache == nil {
+		return fmt.Errorf("native cache is not configured for %s", gvk)
+	}
 	return cc.defaultCache.Get(ctx, key, obj, opts...)
 }
 
@@ -174,6 +181,9 @@ func (cc *CompositeCache) List(ctx context.Context, list client.ObjectList, opts
 
 	if viewv1a1.IsViewKind(gvk) {
 		return cc.viewCache.List(ctx, list, opts...)
+	}
+	if cc.defaultCache == nil {
+		return fmt.Errorf("native cache is not configured for %s", gvk)
 	}
 	return cc.defaultCache.List(ctx, list, opts...)
 }
