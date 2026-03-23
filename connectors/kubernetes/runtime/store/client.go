@@ -33,7 +33,7 @@ type CompositeClient struct {
 func NewCompositeClient(config *rest.Config, options ClientOptions) (*CompositeClient, error) {
 	var nativeClient client.Client
 	if config != nil {
-		c, err := client.New(config, options)
+		c, err := client.NewWithWatch(config, options)
 		if err != nil {
 			return nil, err
 		}
@@ -48,7 +48,7 @@ func NewCompositeClient(config *rest.Config, options ClientOptions) (*CompositeC
 func NewClientForCache(config *rest.Config, store Cache, options ClientOptions) (*CompositeClient, error) {
 	var nativeClient client.Client
 	if config != nil {
-		c, err := client.New(config, options)
+		c, err := client.NewWithWatch(config, options)
 		if err != nil {
 			return nil, err
 		}

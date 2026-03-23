@@ -16,9 +16,15 @@ var _ = Describe("Runtime interfaces", func() {
 		var _ runtime.Publisher = (*fakePublisher)(nil)
 		var _ runtime.Subscriber = (*fakeSubscriber)(nil)
 		var _ runtime.Manager = (*fakeManager)(nil)
+		var _ runtime.ErrorReporter = runtime.ErrorReporterFunc(func(origin string, err error) {})
+		var _ runtime.ConsumeHandler = (*fakeConsumeHandler)(nil)
 		Expect(true).To(BeTrue())
 	})
 })
+
+type fakeConsumeHandler struct{}
+
+func (f *fakeConsumeHandler) Consume(ctx context.Context, event runtime.Event) error { return nil }
 
 type fakeRunnable struct{ name string }
 

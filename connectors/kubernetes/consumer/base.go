@@ -35,22 +35,14 @@ type Config struct {
 	Logger logr.Logger
 }
 
-// consumer is a function type that Patcher and Updater implement.
-type consumeFn func(ctx context.Context, event dbspruntime.Event) error
-
 type baseConsumer struct {
-	dbspruntime.Subscriber
+	*dbspruntime.BaseConsumer
 
-	name       string
-	rt         *dbspruntime.Runtime
 	client     client.Client
 	outputName string
 	targetGVK  schema.GroupVersionKind
 	log        logr.Logger
 }
-
-// Name returns the consumer's unique component name.
-func (c *baseConsumer) Name() string { return c.name }
 
 // newBase constructs the shared consumer state. Name uniqueness is enforced
 // when the consumer is passed to Runtime.Add.
@@ -59,21 +51,29 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 	if log.GetSink() == nil {
 		log = logr.Discard()
 	}
+	log = log.WithName(consumerType).WithValues("name", cfg.Name, "output", cfg.OutputName)
 
-	sub := cfg.Runtime.NewSubscriber()
-	b := &baseConsumer{
-		Subscriber: sub,
-		rt:         cfg.Runtime,
-		name:       cfg.Name,
-		client:     cfg.Client,
-		outputName: cfg.OutputName,
-		targetGVK:  cfg.TargetGVK,
-		log:        log.WithName(consumerType).WithValues("name", cfg.Name, "output", cfg.OutputName),
+	if cfg.Runtime == nil {
+		return nil, fmt.Errorf("runtime is required")
 	}
 
-	// Subscribe immediately so events published before Start() is called are not lost.
-	if cfg.OutputName != "" {
-		b.Subscribe(cfg.OutputName)
+	base, err := dbspruntime.NewBaseConsumer(dbspruntime.BaseConsumerConfig{
+		Name:          cfg.Name,
+		Subscriber:    cfg.Runtime.NewSubscriber(),
+		ErrorReporter: cfg.Runtime,
+		Logger:        log,
+		Topics:        []string{cfg.OutputName},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	b := &baseConsumer{
+		BaseConsumer: base,
+		client:       cfg.Client,
+		outputName:   cfg.OutputName,
+		targetGVK:    cfg.TargetGVK,
+		log:          log,
 	}
 
 	return b, nil
@@ -83,21 +83,8 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 // consume is called for every event received on the subscriber channel.
 // Consume errors are non-critical: they are reported via the runtime error
 // channel and the consumer continues processing subsequent events.
-func (c *baseConsumer) start(ctx context.Context, consume consumeFn) error {
-	ch := c.GetChannel()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case evt, ok := <-ch:
-			if !ok {
-				return nil
-			}
-			if err := consume(ctx, evt); err != nil {
-				c.rt.ReportError(c.name, err)
-			}
-		}
-	}
+func (c *baseConsumer) start(ctx context.Context, consume dbspruntime.ConsumeHandler) error {
+	return c.Run(ctx, consume)
 }
 
 func (c *baseConsumer) objectFromElem(e zset.Elem) (kobject.Object, bool, error) {

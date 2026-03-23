@@ -29,7 +29,7 @@ func NewUpdater(cfg Config) (*Updater, error) {
 
 // Start runs the consumer event loop, applying each received event with updater semantics.
 func (c *Updater) Start(ctx context.Context) error {
-	return c.start(ctx, c.Consume)
+	return c.start(ctx, c)
 }
 
 // Consume applies output Z-set deltas with updater behavior.

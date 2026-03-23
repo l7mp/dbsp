@@ -31,7 +31,7 @@ func NewPatcher(cfg Config) (*Patcher, error) {
 
 // Start runs the consumer event loop, applying each received event with patcher semantics.
 func (c *Patcher) Start(ctx context.Context) error {
-	return c.start(ctx, c.Consume)
+	return c.start(ctx, c)
 }
 
 // Consume applies output Z-set deltas with patcher behavior.
