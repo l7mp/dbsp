@@ -9,6 +9,9 @@ LDFLAGS += -X main.version=${VERSION} -X main.commitHash=${COMMIT_HASH} -X main.
 GOARGS = -trimpath
 EXECUTABLE = dctl
 
+# Use only the locally installed Go toolchain (for example from Debian apt).
+export GOTOOLCHAIN ?= local
+
 # Image URL to use all building/pushing image targets
 IMG ?= retvari/dcontroller:latest
 
@@ -65,11 +68,11 @@ build: manifests generate fmt vet build-bin
 
 .PHONY: build-bin
 build-bin:
-	go build ${GOARGS} -ldflags "${LDFLAGS}" -o ${BUILD_DIR}/${EXECUTABLE} main.go
+	go build ${GOARGS} -ldflags "${LDFLAGS}" -o ${BUILD_DIR}/${EXECUTABLE} .
 
 .PHONY: run
 run: manifests generate fmt vet
-	go run ./main.go
+	go run .
 
 .PHONY: docker-build
 docker-build: test
@@ -135,29 +138,32 @@ ENVTEST ?= $(LOCALBIN)/setup-envtest
 HELM ?= $(LOCALBIN)/helm
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v5.4.3
-CONTROLLER_TOOLS_VERSION ?= v0.16.3
-HELM_VERSION ?= v3.16.1
+CONTROLLER_TOOLS_VERSION ?= v0.20.1
+KUSTOMIZE_VERSION ?= v5.8.1
+HELM_VERSION ?= v4.1.3
 
 KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE)
 $(KUSTOMIZE): $(LOCALBIN)
-	test -s $(LOCALBIN)/kustomize || curl -s $(KUSTOMIZE_INSTALL_SCRIPT) | bash -s -- $(subst v,,$(KUSTOMIZE_VERSION)) $(LOCALBIN)
+	test -s $(LOCALBIN)/kustomize && $(LOCALBIN)/kustomize version | grep -q $(KUSTOMIZE_VERSION) || \
+	(rm -f $(LOCALBIN)/kustomize && \
+	curl -s $(KUSTOMIZE_INSTALL_SCRIPT) | bash -s -- $(subst v,,$(KUSTOMIZE_VERSION)) $(LOCALBIN))
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN)
 $(CONTROLLER_GEN): $(LOCALBIN)
 	test -s $(LOCALBIN)/controller-gen && $(LOCALBIN)/controller-gen --version | grep -q $(CONTROLLER_TOOLS_VERSION) || \
-	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)
+	GOTOOLCHAIN=local GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)
 
 .PHONY: envtest
 envtest: $(ENVTEST)
 $(ENVTEST): $(LOCALBIN)
-	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+	test -s $(LOCALBIN)/setup-envtest || GOTOOLCHAIN=local GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
-HELM_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+HELM_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4"
 .PHONY: helm
 helm: $(HELM)
 $(HELM): $(LOCALBIN)
-	test -s $(LOCALBIN)/helm || curl $(HELM_INSTALL_SCRIPT) | HELM_INSTALL_DIR=$(LOCALBIN) bash
+	test -s $(LOCALBIN)/helm && $(LOCALBIN)/helm version --short | grep -q $(HELM_VERSION) || \
+	curl $(HELM_INSTALL_SCRIPT) | HELM_INSTALL_DIR=$(LOCALBIN) DESIRED_VERSION=$(HELM_VERSION) bash

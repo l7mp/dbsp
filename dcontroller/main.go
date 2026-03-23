@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -40,14 +41,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/l7mp/dbsp/dcontroller/internal/buildinfo"
-	opv1a1 "github.com/l7mp/dbsp/dcontroller/pkg/api/operator/v1alpha1"
+	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/apiserver"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/auth"
-	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
-	"github.com/l7mp/dbsp/dcontroller/pkg/kubernetes/controllers"
+	opv1a1 "github.com/l7mp/dbsp/dcontroller/api/operator/v1alpha1"
+	"github.com/l7mp/dbsp/dcontroller/operator"
 )
 
 const APIServerPort = 8443
@@ -222,87 +221,51 @@ func runStartServer(_ *cobra.Command, cfg apiServerConfig) error {
 	ctrl.SetLogger(logger.WithName("dcontroller"))
 	setupLog = logger.WithName("setup")
 
-	buildInfo := buildinfo.BuildInfo{Version: version, CommitHash: commitHash, BuildDate: buildDate}
+	buildInfo := BuildInfo{Version: version, CommitHash: commitHash, BuildDate: buildDate}
 	setupLog.Info(fmt.Sprintf("starting Δ-controller operator %s", buildInfo.String()))
 
 	// Create an operator controller to watch and reconcile Operator CRDs
 	config := ctrl.GetConfigOrDie()
-	api, err := cache.NewAPI(config, cache.APIOptions{
-		CacheOptions: cache.CacheOptions{Logger: logger},
-	})
-	if err != nil {
-		setupLog.Error(err, "unable to create a shared cache")
-		os.Exit(1)
-	}
 
-	c, err := controllers.NewOpController(config, api.Cache, ctrl.Options{
-		Scheme: scheme,
-		Metrics: metricsserver.Options{
-			BindAddress: cfg.metricsAddr,
-		},
-		HealthProbeBindAddress: cfg.probeAddr,
-		LeaderElection:         cfg.enableLeaderElection,
-		LeaderElectionID:       "92062b70.l7mp.io",
-		Logger:                 logger,
-	})
-	if err != nil {
-		setupLog.Error(err, "unable to create an operator controller")
-		os.Exit(1)
+	k8sRuntimeCfg := k8sruntime.Config{
+		RESTConfig: config,
+		Logger:     logger,
 	}
-
-	ctx := ctrl.SetupSignalHandler()
 
 	if !cfg.disableAPIServer {
-		apiServerCfg, err := apiserver.NewDefaultConfig("0.0.0.0", APIServerPort, api.Client,
+		apiServerCfg, err := apiserver.NewDefaultConfig("0.0.0.0", APIServerPort, nil,
 			cfg.httpMode, cfg.insecure, logger)
 		if err != nil {
 			setupLog.Error(err, "failed to create the config for the embedded API server")
 			os.Exit(1)
 		}
 
-		// Configure authentication and authorization unless explicitly disabled or running in HTTP-only mode
+		// Configure authentication and authorization unless explicitly disabled or running in HTTP-only mode.
 		if cfg.httpMode || cfg.disableAuthentication {
-			setupLog.Info("⚠️  WARNING: Running API server without authentication - unrestricted access enabled")
+			setupLog.Info("WARNING: Running API server without authentication - unrestricted access enabled")
 		} else {
-			// Load TLS key/cert
 			if err := checkCert(cfg.certFile, cfg.keyFile); err != nil {
 				return fmt.Errorf("failed to load TLS key/cert: %w", err)
 			}
-			// Load public key
-			publicKey, err := auth.LoadPublicKey(cfg.certFile)
-			if err != nil {
-				return fmt.Errorf("failed to load public key: %w (hint: generate keys with "+
-					"'dctl generate-keys' or use --disable-authentication)", err)
-			}
-
-			apiServerCfg.Authenticator = auth.NewJWTAuthenticator(publicKey)
-			apiServerCfg.Authorizer = auth.NewCompositeAuthorizer()
-			setupLog.Info("API server authentication and authorization enabled")
 			apiServerCfg.CertFile = cfg.certFile
 			apiServerCfg.KeyFile = cfg.keyFile
-		}
 
-		apiServer, err := apiserver.NewAPIServer(apiServerCfg)
-		if err != nil {
-			setupLog.Error(err, "failed to create the embedded API server")
-			os.Exit(1)
-		}
-
-		c.SetAPIServer(apiServer)
-
-		go func() {
-			if err := apiServer.Start(ctx); err != nil {
-				setupLog.Error(err, "embedded API server error")
+			k8sRuntimeCfg.Auth = &k8sruntime.AuthConfig{
+				PrivateKeyFile: cfg.keyFile,
+				PublicKeyFile:  cfg.certFile,
 			}
-		}()
+		}
+
+		k8sRuntimeCfg.APIServer = &apiServerCfg
 	}
 
-	setupLog.Info("starting shared view storage")
-	go func() {
-		if err := api.Cache.Start(ctx); err != nil {
-			setupLog.Error(err, "failed to start API server cache")
-		}
-	}()
+	c, err := operator.NewOperatorController(k8sRuntimeCfg)
+	if err != nil {
+		setupLog.Error(err, "unable to create an operator controller")
+		os.Exit(1)
+	}
+
+	ctx := ctrl.SetupSignalHandler()
 
 	setupLog.Info("starting the operator controller")
 	if err := c.Start(ctx); err != nil {

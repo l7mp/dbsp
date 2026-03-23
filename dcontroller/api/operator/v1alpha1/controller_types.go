@@ -7,19 +7,47 @@ import (
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
 )
 
+type ControllerType string
+
+const (
+	ControllerTypeIncremental = "Incremental"
+	ControllerTypeSOTW        = "StateOfTheWorld"
+)
+
 // Controller is a translator that processes a set of base resources via a declarative pipeline
 // into deltas on target resources. A controller is defined by a name, a set of sources, a
 // processing pipeline, and one or more targets.
 type Controller struct {
 	// Name is the unique name of the controller.
 	Name string `json:"name"`
+
+	// Type is the type of the controller. Default is Incremental.
+	//
+	// +kubebuilder:validation:Enum=Incremental;StateOfTheWorld
+	// +kubebuilder:default=Incremental
+	Type ControllerType `json:"type,omitempty"`
+
 	// The base resource(s) the controller watches.
 	Sources []Source `json:"sources"`
-	// Pipeline is an processing pipeline applied to base objects.
+
+	// Pipeline is an processing pipeline applied to base objects. At least one of a Pipeline,
+	// a Circuit or an SQL query must be specified.
 	//
-	// +kubebuilder:validation:Schemaless
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Pipeline Pipeline `json:"pipeline"`
+	// +optional
+	Pipeline *apiextensionsv1.JSON `json:"pipeline,omitempty"`
+
+	// SQL is an SQL query applied to base objects. At least one of a Pipeline, a Circuit or an
+	// SQL query must be specified.
+	//
+	// +optional
+	SQL *apiextensionsv1.JSON `json:"sql,omitempty"`
+
+	// Circuit is a compiler dbsp Circuit applied to base objects. At least one of a Pipeline,
+	// a Circuit or an SQL query must be specified.
+	//
+	// +optional
+	Circuit *apiextensionsv1.JSON `json:"circuit,omitempty"`
+
 	// Targets are the resource endpoints where results are written.
 	Targets []Target `json:"targets"`
 }

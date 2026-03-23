@@ -50,7 +50,9 @@ type OperatorList struct {
 
 // OperatorStatus specifies the status of an operator.
 type OperatorStatus struct {
-	Controllers []ControllerStatus `json:"controllers"`
+	Controllers []ControllerStatus `json:"controllers,omitempty"`
+	Conditions  []metav1.Condition `json:"conditions,omitempty"`
+	LastErrors  []string           `json:"lastErrors,omitempty"`
 }
 
 // ControllerStatus specifies the status of a controller.
@@ -68,9 +70,17 @@ type ControllerConditionType string
 // condition type has been raised.
 type ControllerConditionReason string
 
+// OperatorConditionType is a type of condition associated with an Operator. This type should be
+// used with the OperatorStatus.Conditions field.
+type OperatorConditionType string
+
+// OperatorConditionReason defines the set of reasons that explain why a particular Operator
+// condition type has been raised.
+type OperatorConditionReason string
+
 const (
-	// The Ready condition is set if the Controller is running and actively reconciles
-	// resources.
+	// The Ready condition is set if the Operator is running and each controller actively
+	// reconciles resources.
 	//
 	// Possible reasons for this condition to be true are:
 	//
@@ -80,8 +90,22 @@ const (
 	//
 	// * "ReconcileError"
 	//
-	// Controllers may raise this condition with other reasons, but should prefer to use the
+	// Operators may raise this condition with other reasons, but should prefer to use the
 	// reasons listed above to improve interoperability.
+
+	// OperatorConditionReady represents the Ready condition.
+	OperatorConditionReady OperatorConditionType = "Ready"
+
+	// OperatorReasonReady is used with the "Ready" condition when the condition is true.
+	OperatorReasonReady OperatorConditionReason = "Ready"
+
+	// OperatorReasonReconciliationFailed is used with the "Ready" condition when
+	// reconciliation has failed for at least one controller.
+	OperatorReasonReconciliationFailed OperatorConditionReason = "ReconciliationFailed"
+
+	// OperatorReasonNotReady is used with the "Ready" condition when the operator is not ready
+	// for processing events.
+	OperatorReasonNotReady OperatorConditionReason = "NotReady"
 
 	// ControllerConditionReady represents the Ready condition.
 	ControllerConditionReady ControllerConditionType = "Ready"
