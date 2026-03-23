@@ -7,6 +7,11 @@
 //   consumer(topic, fn)              - generic callback consumer factory
 //   consumer.kubernetes.patcher(opts)
 //   consumer.kubernetes.updater(opts)
+//   runtime.* aliases for all calls + runtime.onError(fn)
+
+runtime.onError((e) => {
+    console.error(`[runtime:${e.origin}] ${e.message}`);
+});
 
 // === Schema ===
 sql.table("products", "pid INT PRIMARY KEY, name TEXT, price FLOAT");

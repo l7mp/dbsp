@@ -32,9 +32,14 @@ type VM struct {
 	cancel  context.CancelFunc
 
 	runtimeDone      chan error
+	runtimeErrCh     chan dbspruntime.Error
 	closeOnce        sync.Once
 	pendingCallbacks atomic.Int64
 	lastActivityNS   atomic.Int64
+
+	errMu              sync.RWMutex
+	runtimeErrHandler  goja.Callable
+	firstRuntimeErrOut error
 }
 
 const (
@@ -50,14 +55,16 @@ func NewVM(logger logr.Logger) (*VM, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	v := &VM{
-		loop:        eventloop.NewEventLoop(),
-		runtime:     dbspruntime.NewRuntime(logger),
-		db:          relation.NewDatabase("dbsp"),
-		logger:      logger,
-		ctx:         ctx,
-		cancel:      cancel,
-		runtimeDone: make(chan error, 1),
+		loop:         eventloop.NewEventLoop(),
+		runtime:      dbspruntime.NewRuntime(logger),
+		db:           relation.NewDatabase("dbsp"),
+		logger:       logger,
+		ctx:          ctx,
+		cancel:       cancel,
+		runtimeDone:  make(chan error, 1),
+		runtimeErrCh: make(chan dbspruntime.Error, dbspruntime.EventBufferSize),
 	}
+	v.runtime.SetErrorChannel(v.runtimeErrCh)
 	v.touchActivity()
 	v.logger.V(1).Info("vm created")
 
@@ -82,6 +89,8 @@ func NewVM(logger logr.Logger) (*VM, error) {
 		v.runtimeDone <- err
 		close(v.runtimeDone)
 	}()
+
+	go v.forwardRuntimeErrors()
 
 	return v, nil
 }
@@ -195,6 +204,9 @@ func (v *VM) waitRuntimeStop(timeout time.Duration) error {
 
 	select {
 	case err, ok := <-v.runtimeDone:
+		if rtErr := v.firstRuntimeError(); rtErr != nil {
+			return rtErr
+		}
 		if !ok || err == nil {
 			return nil
 		}
@@ -203,8 +215,65 @@ func (v *VM) waitRuntimeStop(timeout time.Duration) error {
 		}
 		return fmt.Errorf("runtime failed: %w", err)
 	case <-time.After(timeout):
+		if rtErr := v.firstRuntimeError(); rtErr != nil {
+			return rtErr
+		}
 		return fmt.Errorf("timed out waiting for runtime shutdown")
 	}
+}
+
+func (v *VM) forwardRuntimeErrors() {
+	for {
+		select {
+		case <-v.ctx.Done():
+			return
+		case rtErr := <-v.runtimeErrCh:
+			h := v.runtimeErrorHandler()
+			if h == nil {
+				v.logger.Error(rtErr.Err, "unhandled runtime error", "origin", rtErr.Origin)
+				v.recordRuntimeError(fmt.Errorf("runtime error from %s: %w", rtErr.Origin, rtErr.Err))
+				continue
+			}
+
+			rtErrCopy := rtErr
+			v.schedule(func() {
+				payload := map[string]any{
+					"origin":  rtErrCopy.Origin,
+					"message": rtErrCopy.Err.Error(),
+				}
+				if _, err := h(goja.Undefined(), v.rt.ToValue(payload)); err != nil {
+					v.recordRuntimeError(fmt.Errorf("runtime.onError callback failed: %w", err))
+				}
+			})
+		}
+	}
+}
+
+func (v *VM) runtimeErrorHandler() goja.Callable {
+	v.errMu.RLock()
+	defer v.errMu.RUnlock()
+	return v.runtimeErrHandler
+}
+
+func (v *VM) setRuntimeErrorHandler(handler goja.Callable) {
+	v.errMu.Lock()
+	v.runtimeErrHandler = handler
+	v.errMu.Unlock()
+}
+
+func (v *VM) recordRuntimeError(err error) {
+	v.errMu.Lock()
+	if v.firstRuntimeErrOut == nil {
+		v.firstRuntimeErrOut = err
+	}
+	v.errMu.Unlock()
+	v.Close()
+}
+
+func (v *VM) firstRuntimeError() error {
+	v.errMu.RLock()
+	defer v.errMu.RUnlock()
+	return v.firstRuntimeErrOut
 }
 
 func (v *VM) toJSEntries(data zset.ZSet) ([]any, error) {
@@ -323,6 +392,39 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 	if err := consumerObj.Set("redis", v.wrap(v.redisConsumer)); err != nil {
+		return err
+	}
+
+	if err := v.rt.Set("publish", v.wrap(v.publish)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("subscribe", v.wrap(v.subscribe)); err != nil {
+		return err
+	}
+
+	runtimeObj := v.rt.NewObject()
+	if err := runtimeObj.Set("sql", sqlObj); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("aggregate", aggObj); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("producer", v.rt.Get("producer")); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("consumer", v.rt.Get("consumer")); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("publish", v.wrap(v.publish)); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("subscribe", v.wrap(v.subscribe)); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("onError", v.wrap(v.runtimeOnError)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("runtime", runtimeObj); err != nil {
 		return err
 	}
 

@@ -21,6 +21,13 @@ func (v *VM) genericConsumer(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("consumer callback must be a function")
 	}
 
+	v.registerCallbackConsumer(topic, jsFn)
+
+	return goja.Undefined(), nil
+}
+
+func (v *VM) registerCallbackConsumer(topic string, jsFn goja.Callable) {
+
 	sub := v.runtime.NewSubscriber()
 	sub.Subscribe(topic)
 
@@ -39,8 +46,6 @@ func (v *VM) genericConsumer(call goja.FunctionCall) (goja.Value, error) {
 			})
 		}
 	}()
-
-	return goja.Undefined(), nil
 }
 
 func (v *VM) redisConsumer(call goja.FunctionCall) (goja.Value, error) {
