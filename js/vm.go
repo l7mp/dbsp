@@ -15,6 +15,7 @@ import (
 	"github.com/dop251/goja_nodejs/eventloop"
 	"github.com/go-logr/logr"
 
+	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
@@ -40,6 +41,10 @@ type VM struct {
 	errMu              sync.RWMutex
 	runtimeErrHandler  goja.Callable
 	firstRuntimeErrOut error
+
+	k8sMu              sync.Mutex
+	k8sRuntime         *k8sruntime.Runtime
+	k8sNativeAvailable bool
 }
 
 const (

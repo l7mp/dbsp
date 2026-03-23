@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/l7mp/dbsp/engine/zset"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 type collectingConsumer struct {
@@ -209,5 +211,33 @@ runtime.onError((e) => {
 
 		Expect(origin).To(Equal("emitter-1"))
 		Expect(fmt.Sprint(message)).To(ContainSubstring(sentinel.Error()))
+	})
+
+	It("runs without kubeconfig until kubernetes plumbing is requested", func() {
+		oldKubeconfig, hadKubeconfig := os.LookupEnv("KUBECONFIG")
+		Expect(os.Setenv("KUBECONFIG", "/nonexistent/kubeconfig")).To(Succeed())
+		DeferCleanup(func() {
+			if hadKubeconfig {
+				Expect(os.Setenv("KUBECONFIG", oldKubeconfig)).To(Succeed())
+				return
+			}
+			Expect(os.Unsetenv("KUBECONFIG")).To(Succeed())
+		})
+
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		Expect(runScript(vm, `runtime.publish("plain", [[{id: 1}, 1]]);`)).To(Succeed())
+		Expect(vm.k8sRuntime).To(BeNil())
+
+		_, err = vm.parseGVK("v1/Pod")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("only view resources can be used"))
+
+		viewGVK := schema.GroupVersionKind{Group: "demo.view.dcontroller.io", Version: "v1alpha1", Kind: "Widget"}
+		got, err := vm.parseGVK("demo.view.dcontroller.io/v1alpha1/Widget")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(viewGVK))
 	})
 })
