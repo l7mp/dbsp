@@ -13,10 +13,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/l7mp/dbsp/connectors/kubernetes/consumer"
 	"github.com/l7mp/dbsp/connectors/kubernetes/producer"
+	kruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
+	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	kauth "github.com/l7mp/dbsp/connectors/kubernetes/runtime/auth"
+	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
+	rtstore "github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -80,6 +89,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 
 	It("updater writes and removes native Kubernetes objects", func() {
 		u, err := consumer.NewUpdater(consumer.Config{
+			Name:       "updater-test",
 			Client:     suite.K8sClient,
 			OutputName: "out",
 			TargetGVK:  schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
@@ -146,6 +156,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 		Expect(suite.K8sClient.Create(ctx, seed)).To(Succeed())
 
 		p, err := consumer.NewPatcher(consumer.Config{
+			Name:       "patcher-test",
 			Client:     suite.K8sClient,
 			OutputName: "out",
 			TargetGVK:  schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
@@ -208,6 +219,94 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			return replicas == int64(1)
 		}, suite.Timeout, suite.Interval).Should(BeTrue())
 	})
+
+	It("auth kubeconfig can query both native and view resources through the embedded API server", func() {
+		apicfg, err := kruntime.NewDefaultAPIServerConfig("127.0.0.1", 0, true, false, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		apicfg.EnableOpenAPI = false
+
+		krt, err := kruntime.New(kruntime.Config{
+			RESTConfig: suite.Cfg,
+			CacheOptions: rtstore.CacheOptions{
+				Options: rtstore.Options{Scheme: suite.Scheme},
+			},
+			ClientOptions: rtstore.ClientOptions{Scheme: suite.Scheme},
+			APIServer:     &apicfg,
+			Auth:          &kruntime.AuthConfig{},
+			Logger:        logr.Discard(),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		ctxRun, cancelRun := context.WithCancel(ctx)
+		defer cancelRun()
+		errCh := make(chan error, 1)
+		go func() { errCh <- krt.Start(ctxRun) }()
+
+		gvk := viewv1a1.GroupVersionKind("integration", "Widget")
+		Expect(krt.GetAPIServer().RegisterGVKs([]schema.GroupVersionKind{gvk})).To(Succeed())
+		Expect(krt.GetDiscovery().RegisterViewGVK(gvk)).To(Succeed())
+
+		viewObj := object.NewViewObject("integration", "Widget")
+		object.SetName(viewObj, suite.Namespace, "widget-1")
+		object.SetContent(viewObj, map[string]any{"spec": map[string]any{"value": "ok"}})
+		Expect(krt.GetViewCache().Add(viewObj)).To(Succeed())
+
+		nativeCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "auth-native-cm", Namespace: suite.Namespace},
+			Data:       map[string]string{"k": "v"},
+		}
+		Expect(suite.K8sClient.Create(ctx, nativeCM)).To(Succeed())
+
+		kopts := kauth.DefaultKubeconfigOptions()
+		kopts.HTTPMode = true
+		kopts.Insecure = true
+		kcfg, err := krt.GenerateKubeconfig("alice", kopts)
+		Expect(err).NotTo(HaveOccurred())
+		restCfg, err := restConfigFromGeneratedKubeconfig(kcfg)
+		Expect(err).NotTo(HaveOccurred())
+
+		fetchedCM := &corev1.ConfigMap{}
+		Eventually(func() error {
+			return krt.GetClient().Get(ctx, client.ObjectKey{Namespace: suite.Namespace, Name: "auth-native-cm"}, fetchedCM)
+		}, suite.Timeout, suite.Interval).Should(Succeed())
+		Expect(fetchedCM.Data).To(HaveKeyWithValue("k", "v"))
+
+		dyn, err := dynamic.NewForConfig(restCfg)
+		Expect(err).NotTo(HaveOccurred())
+		gvr := schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: "widget"}
+
+		var fetchedView *unstructured.Unstructured
+		Eventually(func() error {
+			obj, e := dyn.Resource(gvr).Namespace(suite.Namespace).Get(ctx, "widget-1", metav1.GetOptions{})
+			if e != nil {
+				return e
+			}
+			fetchedView = obj
+			return nil
+		}, suite.Timeout, suite.Interval).Should(Succeed())
+		v, ok, err := unstructured.NestedString(fetchedView.Object, "spec", "value")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+		Expect(v).To(Equal("ok"))
+
+		dc, err := discovery.NewDiscoveryClientForConfig(restCfg)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() bool {
+			groups, err := dc.ServerGroups()
+			if err != nil {
+				return false
+			}
+			for _, g := range groups.Groups {
+				if g.Name == viewv1a1.Group("integration") {
+					return true
+				}
+			}
+			return false
+		}, suite.Timeout, suite.Interval).Should(BeTrue())
+
+		cancelRun()
+		Eventually(errCh, suite.Timeout, suite.Interval).Should(Receive(BeNil()))
+	})
 })
 
 func output(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {
@@ -253,4 +352,30 @@ func allFieldValues(z zset.ZSet, path ...string) []string {
 	}
 	sort.Strings(vals)
 	return vals
+}
+
+func restConfigFromGeneratedKubeconfig(cfg *clientcmdapi.Config) (*rest.Config, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("kubeconfig is nil")
+	}
+	ctx, ok := cfg.Contexts[cfg.CurrentContext]
+	if !ok {
+		return nil, fmt.Errorf("current context not found")
+	}
+	cluster, ok := cfg.Clusters[ctx.Cluster]
+	if !ok {
+		return nil, fmt.Errorf("cluster not found")
+	}
+	auth, ok := cfg.AuthInfos[ctx.AuthInfo]
+	if !ok {
+		return nil, fmt.Errorf("auth info not found")
+	}
+
+	return &rest.Config{
+		Host:        cluster.Server,
+		BearerToken: auth.Token,
+		TLSClientConfig: rest.TLSClientConfig{
+			Insecure: cluster.InsecureSkipTLSVerify,
+		},
+	}, nil
 }

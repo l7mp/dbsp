@@ -22,7 +22,7 @@ func NewViewRESTMapper() *ViewRESTMapper {
 
 // KindFor returns the Kind for the given view resource.
 func (m *ViewRESTMapper) KindFor(resource schema.GroupVersionResource) (schema.GroupVersionKind, error) {
-	if viewv1a1.IsViewGroup(resource.Group) {
+	if !viewv1a1.IsViewGroup(resource.Group) {
 		return schema.GroupVersionKind{}, fmt.Errorf("not a view group: %s", resource.Group)
 	}
 
@@ -47,7 +47,7 @@ func (m *ViewRESTMapper) KindsFor(resource schema.GroupVersionResource) ([]schem
 
 // ResourceFor returns the Resource for the given view input.
 func (m *ViewRESTMapper) ResourceFor(input schema.GroupVersionResource) (schema.GroupVersionResource, error) {
-	if viewv1a1.IsViewGroup(input.Group) {
+	if !viewv1a1.IsViewGroup(input.Group) {
 		return schema.GroupVersionResource{}, fmt.Errorf("not a view group: %s", input.Group)
 	}
 
@@ -70,7 +70,7 @@ func (m *ViewRESTMapper) ResourcesFor(input schema.GroupVersionResource) ([]sche
 
 // RESTMapping returns the RESTMapping for the given view GroupKind.
 func (m *ViewRESTMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
-	if viewv1a1.IsViewGroup(gk.Group) {
+	if !viewv1a1.IsViewGroup(gk.Group) {
 		return nil, fmt.Errorf("not a view group: %s", gk.Group)
 	}
 

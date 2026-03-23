@@ -28,6 +28,10 @@ func NewTokenGenerator(privateKey *rsa.PrivateKey) *TokenGenerator {
 
 // GenerateToken creates a JWT token for a user with namespace and RBAC rules
 func (g *TokenGenerator) GenerateToken(username string, namespaces []string, rules []rbacv1.PolicyRule, expiry time.Duration) (string, error) {
+	if expiry <= 0 {
+		expiry = 24 * time.Hour
+	}
+
 	now := time.Now()
 	claims := Claims{
 		Username:   username,

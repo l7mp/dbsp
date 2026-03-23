@@ -5,6 +5,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
@@ -254,6 +256,53 @@ var _ = Describe("CompositeCache Client", func() {
 			err = compositeCache.List(ctx, list)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list.Items).To(HaveLen(1))
+		})
+	})
+
+	Describe("Unconfigured composite client safety", func() {
+		It("returns a typed error instead of panicking when cache is missing", func() {
+			_, err := NewCompositeClient(nil, nil, ClientOptions{})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("composite cache is required"))
+		})
+
+		It("returns a typed error instead of panicking when cache is unset", func() {
+			cc := &CompositeClient{}
+			obj := object.NewViewObject("test", "MissingCacheView")
+			object.SetName(obj, "default", "missing")
+
+			err := cc.Get(ctx, client.ObjectKeyFromObject(obj), obj)
+			Expect(err).To(HaveOccurred())
+			Expect(apierrors.IsInternalError(err)).To(BeTrue())
+		})
+
+		It("returns typed errors for write and watch when native client is unset", func() {
+			cc := &CompositeClient{}
+
+			obj := object.NewViewObject("test", "NoNativeClient")
+			object.SetName(obj, "default", "x")
+
+			Expect(apierrors.IsInternalError(cc.Create(ctx, obj))).To(BeTrue())
+			Expect(apierrors.IsInternalError(cc.Update(ctx, obj))).To(BeTrue())
+			Expect(apierrors.IsInternalError(cc.Delete(ctx, obj))).To(BeTrue())
+
+			list := NewViewObjectList("test", "NoNativeClient")
+			_, err := cc.Watch(ctx, list)
+			Expect(err).To(HaveOccurred())
+			Expect(apierrors.IsInternalError(err)).To(BeTrue())
+		})
+
+		It("returns typed errors for native kinds without native client", func() {
+			cc := &CompositeClient{}
+
+			native := object.New()
+			native.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
+			native.SetNamespace("default")
+			native.SetName("cm")
+
+			err := cc.Get(ctx, client.ObjectKeyFromObject(native), native)
+			Expect(err).To(HaveOccurred())
+			Expect(apierrors.IsInternalError(err)).To(BeTrue())
 		})
 	})
 })

@@ -22,11 +22,10 @@ func newTestStoreComponents() (compositeClient *store.CompositeClient, composite
 	if err != nil {
 		return nil, nil, err
 	}
-	compositeClient, err = store.NewCompositeClient(nil, store.ClientOptions{})
+	compositeClient, err = store.NewCompositeClient(nil, compositeCache, store.ClientOptions{})
 	if err != nil {
 		return nil, nil, err
 	}
-	compositeClient.SetCache(compositeCache)
 	return compositeClient, compositeDiscovery, nil
 }
 

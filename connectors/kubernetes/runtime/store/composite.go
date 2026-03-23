@@ -87,6 +87,11 @@ func (cc *CompositeCache) GetViewCache() ViewCacheInterface {
 	return cc.viewCache
 }
 
+// NewClient creates a composite client bound to this cache.
+func (cc *CompositeCache) NewClient(config *rest.Config, options ClientOptions) (*CompositeClient, error) {
+	return NewCompositeClient(config, cc, options)
+}
+
 // GetInformer fetches or constructs an informer for the given object.
 func (cc *CompositeCache) GetInformer(ctx context.Context, obj client.Object, opts ...ctrlcache.InformerGetOption) (ctrlcache.Informer, error) {
 	gvk := obj.GetObjectKind().GroupVersionKind()

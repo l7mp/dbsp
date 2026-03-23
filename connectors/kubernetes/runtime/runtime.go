@@ -116,11 +116,10 @@ func New(cfg Config) (*Runtime, error) {
 	r.cache = cache
 
 	// 4. Composite client.
-	client, err := store.NewCompositeClient(cfg.RESTConfig, cfg.ClientOptions)
+	client, err := r.cache.NewClient(cfg.RESTConfig, cfg.ClientOptions)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: client: %w", err)
 	}
-	client.SetCache(r.cache)
 	r.client = client
 
 	if cfg.RESTConfig == nil {
