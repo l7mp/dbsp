@@ -3,6 +3,7 @@ package producer
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/go-logr/logr"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,7 +17,9 @@ import (
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	kpredicate "github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
 // Config configures a Kubernetes watch-backed DBSP producer.
@@ -60,6 +63,11 @@ var _ dbspruntime.Producer = (*Watcher)(nil)
 // Name returns the watcher's unique component name.
 func (w *Watcher) Name() string { return w.name }
 
+// String implements fmt.Stringer.
+func (w *Watcher) String() string {
+	return fmt.Sprintf("producer<k8s>{name=%q, topic=%q}", w.name, w.inputName)
+}
+
 // NewWatcher creates a Kubernetes producer. Name uniqueness is enforced when
 // the watcher is passed to Runtime.Add.
 func NewWatcher(cfg Config) (*Watcher, error) {
@@ -79,7 +87,7 @@ func NewWatcher(cfg Config) (*Watcher, error) {
 		inputName:   inputName,
 		rt:          cfg.Runtime,
 		sourceCache: map[schema.GroupVersionKind]*store.Store{},
-		log:         log.WithName("kubernetes-producer").WithValues("name", cfg.Name, "input", inputName),
+		log:         log.WithName("kubernetes-producer").WithValues("topic", inputName),
 	}
 
 	p.pub = cfg.Runtime.NewPublisher()
@@ -174,6 +182,12 @@ func (p *Watcher) handleEvent(ctx context.Context, evt watch.Event) error {
 		return nil
 	}
 
+	var docs []string
+	if p.log.V(2).Enabled() {
+		docs = k8sDocsSummary(zs)
+	}
+	dbspruntime.LogFlowEvent(p.log, "producer.emit", "producer", p.String(), "output", p.inputName, "", zs, docs, "watch_event", string(evt.Type))
+
 	return p.pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }
 
@@ -221,4 +235,19 @@ func (p *Watcher) allow(t watch.EventType, oldObj, newObj *unstructured.Unstruct
 
 func objectKey(obj *unstructured.Unstructured) string {
 	return client.ObjectKeyFromObject(obj).String()
+}
+
+func k8sDocsSummary(zs zset.ZSet) []string {
+	entries := zs.Entries()
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		u, ok := e.Document.(*dbunstructured.Unstructured)
+		if !ok {
+			out = append(out, fmt.Sprintf("%s@%d", e.Document.String(), e.Weight))
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s@%d", kobject.DumpContent(u.Fields()), e.Weight))
+	}
+	sort.Strings(out)
+	return out
 }

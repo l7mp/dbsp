@@ -150,11 +150,148 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(ok).To(BeTrue())
 		Expect(gotA).To(Equal(int64(1)))
 	})
+
+	It("collapses mixed add and delete for one key into one patch update", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "app")
+		seed.Object = map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]any{
+				"name":      "app",
+				"namespace": "default",
+			},
+			"spec": map[string]any{
+				"template": map[string]any{
+					"metadata": map[string]any{
+						"annotations": map[string]any{"dcontroller.io/configmap-version": "210"},
+					},
+				},
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
+
+		p, err := NewPatcher(Config{Name: "test-patcher-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		oldDoc := map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]any{
+				"name":      "app",
+				"namespace": "default",
+			},
+			"spec": map[string]any{
+				"template": map[string]any{
+					"metadata": map[string]any{
+						"annotations": map[string]any{"dcontroller.io/configmap-version": "210"},
+					},
+				},
+			},
+		}
+		newDoc := map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]any{
+				"name":      "app",
+				"namespace": "default",
+			},
+			"spec": map[string]any{
+				"template": map[string]any{
+					"metadata": map[string]any{
+						"annotations": map[string]any{"dcontroller.io/configmap-version": "219"},
+					},
+				},
+			},
+		}
+
+		Expect(p.Consume(ctx, outMany("out",
+			docWeight{doc: newDoc, w: 1},
+			docWeight{doc: oldDoc, w: -1},
+		))).To(Succeed())
+
+		obj := keyObject(gvk, "default", "app")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		version, ok, err := unstructured.NestedString(obj.Object, "spec", "template", "metadata", "annotations", "dcontroller.io/configmap-version")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+		Expect(version).To(Equal("219"))
+	})
+
+	It("collapses mixed add and delete for one key into one updater upsert", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "cfg")
+		seed.Object = map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      "cfg",
+				"namespace": "default",
+			},
+			"data": map[string]any{"version": "210"},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
+
+		u, err := NewUpdater(Config{Name: "test-updater-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		oldDoc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      "cfg",
+				"namespace": "default",
+			},
+			"data": map[string]any{"version": "210"},
+		}
+		newDoc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      "cfg",
+				"namespace": "default",
+			},
+			"data": map[string]any{"version": "219"},
+		}
+
+		Expect(u.Consume(ctx, outMany("out",
+			docWeight{doc: newDoc, w: 1},
+			docWeight{doc: oldDoc, w: -1},
+		))).To(Succeed())
+
+		obj := keyObject(gvk, "default", "cfg")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		version, ok, err := unstructured.NestedString(obj.Object, "data", "version")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+		Expect(version).To(Equal("219"))
+	})
 })
+
+type docWeight struct {
+	doc map[string]any
+	w   zset.Weight
+}
 
 func out(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {
 	z := zset.New()
 	z.Insert(dbunstructured.New(doc, nil), w)
+	return dbspruntime.Event{Name: name, Data: z}
+}
+
+func outMany(name string, entries ...docWeight) dbspruntime.Event {
+	z := zset.New()
+	for _, e := range entries {
+		z.Insert(dbunstructured.New(e.doc, nil), e.w)
+	}
 	return dbspruntime.Event{Name: name, Data: z}
 }
 

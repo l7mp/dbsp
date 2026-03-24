@@ -14,26 +14,52 @@ import (
 
 var scheme = runtime.NewScheme()
 
-// Dump converts an unstuctured object into a human-readable form.
+// Dump converts an object into a compact, deterministic, human-readable form.
 func Dump(obj Object) string {
-	// copy
-	ro := DeepCopy(obj)
-
-	// strip useless stuff
-	as := ro.GetAnnotations()
-	if _, ok := as["kubectl.kubernetes.io/last-applied-configuration"]; ok {
-		delete(as, "kubectl.kubernetes.io/last-applied-configuration")
-		ro.SetAnnotations(as)
+	if obj == nil {
+		return "<nil>"
 	}
-	ro.SetManagedFields(nil)
+	return DumpContent(obj.UnstructuredContent())
+}
 
-	b, err := json.Marshal(ro)
+// DumpContent converts an object content map into a compact,
+// deterministic, human-readable form.
+//
+// It strips metadata fields that are typically noisy in logs and unstable across
+// reconciliations (for example managedFields, resourceVersion, uid).
+func DumpContent(content map[string]any) string {
+	if content == nil {
+		return "null"
+	}
+
+	obj := runtime.DeepCopyJSON(content)
+
+	meta := obj["metadata"]
+	if m, ok := meta.(map[string]any); ok {
+		delete(m, "creationTimestamp")
+		delete(m, "deletionTimestamp")
+		delete(m, "generation")
+		delete(m, "managedFields")
+		delete(m, "selfLink")
+		delete(m, "uid")
+
+		if anns, ok := m["annotations"].(map[string]any); ok {
+			delete(anns, "kubectl.kubernetes.io/last-applied-configuration")
+			if len(anns) == 0 {
+				delete(m, "annotations")
+			}
+		}
+
+		if len(m) == 0 {
+			delete(obj, "metadata")
+		}
+	}
+
+	b, err := json.Marshal(obj)
 	if err != nil {
-		return fmt.Sprintf("%#v", ro)
+		return fmt.Sprintf("%#v", obj)
 	}
-	output := string(b)
-
-	return output
+	return string(b)
 }
 
 // ConvertRuntimeObjectToClientObject converts a core runtime objects into a full client.Object.

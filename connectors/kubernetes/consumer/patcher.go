@@ -36,17 +36,21 @@ func (c *Patcher) Start(ctx context.Context) error {
 
 // Consume applies output Z-set deltas with patcher behavior.
 func (c *Patcher) Consume(ctx context.Context, out dbspruntime.Event) error {
+	deltas, err := c.classifyDeltas(out.Data)
+	if err != nil {
+		return err
+	}
 
-	for _, e := range out.Data.Entries() {
-		desired, isDelete, err := c.objectFromElem(e)
-		if err != nil {
-			return err
-		}
-		if desired == nil {
-			continue
-		}
+	for _, d := range deltas {
+		pk := d.Key.String()
 
-		if isDelete {
+		dbspruntime.LogFlowApply(c.log, "consumer.apply", "consumer", c.String(),
+			"apply", out.Name, "", pk, d.Weight, func() string {
+				return kobject.DumpContent(d.Object.UnstructuredContent())
+			})
+
+		desired := d.Object
+		if d.EventType == kobject.Deleted {
 			if err := c.patchDelete(ctx, desired); err != nil {
 				return err
 			}
@@ -59,6 +63,11 @@ func (c *Patcher) Consume(ctx context.Context, out dbspruntime.Event) error {
 	}
 
 	return nil
+}
+
+// String implements fmt.Stringer.
+func (c *Patcher) String() string {
+	return fmt.Sprintf("patcher<k8s>{name=%q topic=%q}", c.Name(), c.outputName)
 }
 
 func (c *Patcher) patchUpsert(ctx context.Context, desired *unstructured.Unstructured) error {

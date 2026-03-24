@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
@@ -34,16 +35,19 @@ func (c *Updater) Start(ctx context.Context) error {
 
 // Consume applies output Z-set deltas with updater behavior.
 func (c *Updater) Consume(ctx context.Context, out dbspruntime.Event) error {
-	for _, e := range out.Data.Entries() {
-		desired, isDelete, err := c.objectFromElem(e)
-		if err != nil {
-			return err
-		}
-		if desired == nil {
-			continue
-		}
+	deltas, err := c.classifyDeltas(out.Data)
+	if err != nil {
+		return err
+	}
 
-		if isDelete {
+	for _, d := range deltas {
+		pk := d.Key.String()
+		dbspruntime.LogFlowApply(c.log, "consumer.apply", "consumer", c.String(), "apply", out.Name, "", pk, d.Weight, func() string {
+			return kobject.DumpContent(d.Object.UnstructuredContent())
+		})
+
+		desired := d.Object
+		if d.EventType == kobject.Deleted {
 			if err := c.client.Delete(ctx, desired); err != nil && !apierrors.IsNotFound(err) {
 				return err
 			}
@@ -56,6 +60,11 @@ func (c *Updater) Consume(ctx context.Context, out dbspruntime.Event) error {
 	}
 
 	return nil
+}
+
+// String implements fmt.Stringer.
+func (c *Updater) String() string {
+	return fmt.Sprintf("consumer<k8s-updater>{name=%q, topic=%q}", c.Name(), c.outputName)
 }
 
 func (c *Updater) upsert(ctx context.Context, desired *unstructured.Unstructured) error {

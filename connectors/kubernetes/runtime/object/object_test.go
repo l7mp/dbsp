@@ -69,4 +69,34 @@ var _ = Describe("Object", func() {
 			"a": "x",
 		}))
 	})
+
+	It("dump strips noisy metadata", func() {
+		obj := New()
+		obj.SetUnstructuredContent(map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":              "cm1",
+				"namespace":         "default",
+				"resourceVersion":   "123",
+				"uid":               "uid-1",
+				"managedFields":     []any{map[string]any{"manager": "x"}},
+				"creationTimestamp": "now",
+				"annotations": map[string]any{
+					"kubectl.kubernetes.io/last-applied-configuration": "...",
+					"app": "demo",
+				},
+			},
+			"data": map[string]any{"k": "v"},
+		})
+
+		dump := Dump(obj)
+		Expect(dump).To(ContainSubstring(`"name":"cm1"`))
+		Expect(dump).To(ContainSubstring(`"namespace":"default"`))
+		Expect(dump).To(ContainSubstring(`"app":"demo"`))
+		Expect(dump).NotTo(ContainSubstring("resourceVersion"))
+		Expect(dump).NotTo(ContainSubstring("managedFields"))
+		Expect(dump).NotTo(ContainSubstring("creationTimestamp"))
+		Expect(dump).NotTo(ContainSubstring("last-applied-configuration"))
+	})
 })

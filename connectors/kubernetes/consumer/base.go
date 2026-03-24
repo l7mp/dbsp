@@ -3,6 +3,8 @@ package consumer
 import (
 	"context"
 	"fmt"
+	"sort"
+	"sync"
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -42,6 +44,27 @@ type baseConsumer struct {
 	outputName string
 	targetGVK  schema.GroupVersionKind
 	log        logr.Logger
+
+	knownM sync.Mutex
+	known  map[client.ObjectKey]struct{}
+}
+
+type classifiedDelta struct {
+	EventType kobject.DeltaType
+	Key       client.ObjectKey
+	Object    kobject.Object
+	Weight    zset.Weight
+}
+
+type candidate struct {
+	obj    kobject.Object
+	weight zset.Weight
+}
+
+type groupedDelta struct {
+	key client.ObjectKey
+	pos map[string]*candidate
+	neg map[string]*candidate
 }
 
 // newBase constructs the shared consumer state. Name uniqueness is enforced
@@ -51,7 +74,7 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 	if log.GetSink() == nil {
 		log = logr.Discard()
 	}
-	log = log.WithName(consumerType).WithValues("name", cfg.Name, "output", cfg.OutputName)
+	log = log.WithName(consumerType).WithValues("topic", cfg.OutputName)
 
 	if cfg.Runtime == nil {
 		return nil, fmt.Errorf("runtime is required")
@@ -74,6 +97,7 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 		outputName:   cfg.OutputName,
 		targetGVK:    cfg.TargetGVK,
 		log:          log,
+		known:        map[client.ObjectKey]struct{}{},
 	}
 
 	return b, nil
@@ -95,6 +119,175 @@ func (c *baseConsumer) objectFromElem(e zset.Elem) (kobject.Object, bool, error)
 
 	obj = normalizeResultObject(obj, c.targetGVK)
 	return obj, e.Weight < 0, nil
+}
+
+// classifyDeltas groups event entries by object key and derives one effective
+// delta per key.
+func (c *baseConsumer) classifyDeltas(data zset.ZSet) ([]classifiedDelta, error) {
+	groups := map[string]*groupedDelta{}
+
+	for _, e := range data.Entries() {
+		obj, isDelete, err := c.objectFromElem(e)
+		if err != nil {
+			return nil, err
+		}
+		if obj == nil {
+			continue
+		}
+
+		key := client.ObjectKeyFromObject(obj)
+		groupKey := key.String()
+		g, ok := groups[groupKey]
+		if !ok {
+			g = &groupedDelta{key: key, pos: map[string]*candidate{}, neg: map[string]*candidate{}}
+			groups[groupKey] = g
+		}
+
+		docHash := e.Document.Hash()
+		if isDelete {
+			cand, ok := g.neg[docHash]
+			if !ok {
+				cand = &candidate{obj: obj}
+				g.neg[docHash] = cand
+			}
+			cand.weight += e.Weight
+			continue
+		}
+
+		cand, ok := g.pos[docHash]
+		if !ok {
+			cand = &candidate{obj: obj}
+			g.pos[docHash] = cand
+		}
+		cand.weight += e.Weight
+	}
+
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([]classifiedDelta, 0, len(keys))
+
+	c.knownM.Lock()
+	defer c.knownM.Unlock()
+
+	for _, key := range keys {
+		g := groups[key]
+		cancelOppositeWeights(g.pos, g.neg)
+
+		hasPos := hasResidualWeight(g.pos)
+		hasNeg := hasResidualWeight(g.neg)
+		if !hasPos && !hasNeg {
+			continue
+		}
+
+		if hasPos && hasNeg {
+			obj, w := selectCandidate(g.pos)
+			if obj == nil {
+				continue
+			}
+			c.known[g.key] = struct{}{}
+			out = append(out, classifiedDelta{
+				EventType: kobject.Updated,
+				Key:       g.key,
+				Object:    obj,
+				Weight:    w,
+			})
+			continue
+		}
+
+		if hasPos {
+			obj, w := selectCandidate(g.pos)
+			if obj == nil {
+				continue
+			}
+			eventType := kobject.Added
+			if _, ok := c.known[g.key]; ok {
+				eventType = kobject.Updated
+			}
+			c.known[g.key] = struct{}{}
+			out = append(out, classifiedDelta{
+				EventType: eventType,
+				Key:       g.key,
+				Object:    obj,
+				Weight:    w,
+			})
+			continue
+		}
+
+		obj, w := selectCandidate(g.neg)
+		if obj == nil {
+			continue
+		}
+		delete(c.known, g.key)
+		out = append(out, classifiedDelta{
+			EventType: kobject.Deleted,
+			Key:       g.key,
+			Object:    obj,
+			Weight:    w,
+		})
+	}
+
+	return out, nil
+}
+
+func cancelOppositeWeights(pos, neg map[string]*candidate) {
+	for hash, p := range pos {
+		n, ok := neg[hash]
+		if !ok {
+			continue
+		}
+
+		pWeight := p.weight
+		nWeight := -n.weight
+		if pWeight <= 0 || nWeight <= 0 {
+			continue
+		}
+
+		cancel := minWeight(pWeight, nWeight)
+		p.weight -= cancel
+		n.weight += cancel
+
+		if p.weight == 0 {
+			delete(pos, hash)
+		}
+		if n.weight == 0 {
+			delete(neg, hash)
+		}
+	}
+}
+
+func hasResidualWeight(cands map[string]*candidate) bool {
+	for _, c := range cands {
+		if c.weight != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func selectCandidate(cands map[string]*candidate) (kobject.Object, zset.Weight) {
+	hashes := make([]string, 0, len(cands))
+	for hash, c := range cands {
+		if c.weight != 0 {
+			hashes = append(hashes, hash)
+		}
+	}
+	if len(hashes) == 0 {
+		return nil, 0
+	}
+	sort.Strings(hashes)
+	chosen := cands[hashes[len(hashes)-1]]
+	return chosen.obj, chosen.weight
+}
+
+func minWeight(a, b zset.Weight) zset.Weight {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func toObject(doc datamodel.Document) (kobject.Object, error) {
