@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
+	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/expression"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -122,7 +123,7 @@ func (o *Select) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 // Project transforms elements.
 type Project struct {
 	linearOp
-	projection expression.Expression // Must return datamodel.Document.
+	projection expression.Expression
 }
 
 // NewProject creates a new Project operator.
@@ -150,8 +151,19 @@ func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 		}
 		newElem, ok := val.(datamodel.Document)
 		if !ok {
-			evalErr = fmt.Errorf("projection must return datamodel.Document, got %T", val)
-			return false
+			if m, ok := val.(map[string]any); ok {
+				u := unstructured.New(map[string]any{}, nil)
+				for k, v := range m {
+					if err := u.SetField(k, v); err != nil {
+						evalErr = fmt.Errorf("projection map field %s: %w", k, err)
+						return false
+					}
+				}
+				newElem = u
+			} else {
+				evalErr = fmt.Errorf("projection must return datamodel.Document, got %T", val)
+				return false
+			}
 		}
 		result.Insert(newElem, weight)
 		return true

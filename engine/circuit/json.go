@@ -20,16 +20,21 @@ type jsonCircuit struct {
 	Edges []jsonEdge                 `json:"edges"`
 }
 
+func (c *Circuit) String() string {
+	js, err := c.MarshalJSON()
+	if err != nil {
+		// return "<INVALID-CIRCUIT>"
+		return fmt.Sprintf("<INVALID-CIRCUIT>: %s", err.Error())
+	}
+	return string(js)
+}
+
 // MarshalJSON implements json.Marshaler.
 // Each node is serialized as its operator's JSON. Absorb nodes are omitted
 // (they are auto-created by AddNode when the delay emit node is added).
 // Edge targets pointing at absorb nodes are rewritten back to the emit ID so
 // that the round-trip through UnmarshalJSON is correct.
 func (c *Circuit) MarshalJSON() ([]byte, error) {
-	if c == nil {
-		return []byte("null"), nil
-	}
-
 	nodes := make(map[string]json.RawMessage, len(c.nodes))
 	for id, node := range c.nodes {
 		// Absorb nodes are auto-created; skip them.

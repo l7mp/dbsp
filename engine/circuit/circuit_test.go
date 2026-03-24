@@ -62,6 +62,18 @@ var _ = Describe("Circuit", func() {
 		})
 	})
 
+	Describe("Naming", func() {
+		It("builds deterministic topic names", func() {
+			Expect(InputTopic("Test Op", "Foo")).To(Equal("test-op/foo/input"))
+			Expect(OutputTopic("Test Op", "Bar")).To(Equal("test-op/bar/output"))
+		})
+
+		It("builds deterministic node IDs", func() {
+			Expect(InputNodeID("test-op/foo/input")).To(Equal("input_test_op_foo_input"))
+			Expect(OutputNodeID("test-op/bar/output")).To(Equal("output_test_op_bar_output"))
+		})
+	})
+
 	Describe("Edge", func() {
 		It("creates edges with port", func() {
 			e := NewEdge("a", "b", 0)

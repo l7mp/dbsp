@@ -1,14 +1,16 @@
 package aggregation
 
 import (
+	"encoding/json"
 	"sort"
 
+	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/executor"
+	"github.com/l7mp/dbsp/engine/internal/logger"
 	"github.com/l7mp/dbsp/engine/operator"
 	"github.com/l7mp/dbsp/engine/zset"
-	"github.com/l7mp/dbsp/engine/internal/logger"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -16,7 +18,7 @@ import (
 var _ = Describe("Aggregation compiler parity", func() {
 	makeExec := func(srcs []string, pipeline string) (*executor.Executor, string) {
 		GinkgoHelper()
-		c := New(srcs, []string{"output"})
+		c := New(toIdentityBindings(srcs), toIdentityBindings([]string{"output"}))
 		q, err := c.CompileString(pipeline)
 		Expect(err).NotTo(HaveOccurred())
 		exec, err := executor.New(q.Circuit, logger.DiscardLogger())
@@ -35,7 +37,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	}
 
 	It("compiles single op and list forms", func() {
-		c := New([]string{"Pod"}, []string{"output"})
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
 		q1, err := c.CompileString(`{"@project":{"$.metadata":"$.metadata"}}`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(q1.Circuit).NotTo(BeNil())
@@ -43,6 +45,47 @@ var _ = Describe("Aggregation compiler parity", func() {
 		q2, err := c.CompileString(`[{"@project":{"$.metadata":"$.metadata"}}]`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(q2.Circuit).NotTo(BeNil())
+	})
+
+	It("supports explicit external-to-logical input/output bindings", func() {
+		c := New(
+			[]Binding{{Name: "test-op/foo/input", Logical: "Foo"}},
+			[]Binding{{Name: "test-op/bar/output", Logical: "Bar"}},
+		)
+		q, err := c.CompileString(`[{"@project":{"$.":"$."}}]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(q.InputMap).To(HaveKey("test-op/foo/input"))
+		Expect(q.OutputMap).To(HaveKey("test-op/bar/output"))
+		Expect(q.InputLogicalName("test-op/foo/input")).To(Equal("Foo"))
+		Expect(q.OutputLogicalName("test-op/bar/output")).To(Equal("Bar"))
+
+		exec, err := executor.New(q.Circuit, logger.DiscardLogger())
+		Expect(err).NotTo(HaveOccurred())
+
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1"}}, nil), 1)
+		outs, err := exec.Execute(map[string]zset.ZSet{q.InputMap["test-op/foo/input"]: in})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(outs[q.OutputMap["test-op/bar/output"]].Size()).To(Equal(1))
+	})
+
+	It("allows identical logical names for source and configured output", func() {
+		c := New(
+			[]Binding{{Name: "test-op/deployment/input", Logical: "Deployment"}},
+			[]Binding{{Name: "test-op/deployment/output", Logical: "Deployment"}},
+		)
+		q, err := c.CompileString(`[{"@project":{"$.":"$."}}]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		exec, err := executor.New(q.Circuit, logger.DiscardLogger())
+		Expect(err).NotTo(HaveOccurred())
+
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "d1"}}, nil), 1)
+		outs, err := exec.Execute(map[string]zset.ZSet{q.InputMap["test-op/deployment/input"]: in})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(outs[q.OutputMap["test-op/deployment/output"]].Size()).To(Equal(1))
 	})
 
 	It("evaluates select true/false and missing fields", func() {
@@ -181,7 +224,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	})
 
 	It("errors for gather alias and accepts aggregate form", func() {
-		c := New([]string{"Pod"}, []string{"output"})
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
 		_, err := c.CompileString(`[{"@gather":["$.metadata.namespace","$.spec.a"]}]`)
 		Expect(err).To(HaveOccurred())
 
@@ -280,7 +323,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	})
 
 	It("exposes unwind nameAppend flag in compiled operator", func() {
-		c := New([]string{"Pod"}, []string{"output"})
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
 		q, err := c.CompileString(`[{"@unwind":"$.spec.list"}]`)
 		Expect(err).NotTo(HaveOccurred())
 		n := q.Circuit.Node("b0_op_0")
@@ -291,7 +334,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	})
 
 	It("uses configured logical output name", func() {
-		c := New([]string{"Pod"}, []string{"pods_out"})
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"pods_out"}))
 		q, err := c.CompileString(`[{"@project":{"$.metadata":"$.metadata"}}]`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(q.OutputMap).To(HaveKeyWithValue("pods_out", "output_pods_out"))
@@ -299,7 +342,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	})
 
 	It("rejects multiple configured outputs for now", func() {
-		c := New([]string{"Pod"}, []string{"out1", "out2"})
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"out1", "out2"}))
 		_, err := c.CompileString(`[{"@project":{"$.metadata":"$.metadata"}}]`)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("configured output"))
@@ -307,7 +350,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	})
 
 	It("returns stage-aware parse errors with argument context", func() {
-		c := New([]string{"Pod"}, []string{"output"})
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
 		_, err := c.CompileString(`[
 			{"@select":{"@eq":["$.metadata.name", "ok"]}},
 			{"@project":{"$.x":{"@doesnotexist":1}}}
@@ -319,7 +362,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	})
 
 	It("supports explicit multi-branch graph wiring", func() {
-		c := New([]string{"Pod"}, []string{"final"})
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"final"}))
 		q, err := c.CompileString(`[
 			[
 				{"@inputs":["Pod"]},
@@ -343,8 +386,44 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(outs[q.OutputMap["final"]].Size()).To(Equal(1))
 	})
 
+	It("round-trips compiled circuits with wrapped expressions", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep"}), toIdentityBindings([]string{"output"}))
+		q, err := c.CompileString(`[
+			{"@join":{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]}},
+			{"@select":{"@eq":["$.pod.metadata.namespace","default"]}},
+			{"@project":{"metadata":{"name":"result"},"pod":"$.pod","dep":"$.dep"}}
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		payload, err := q.Circuit.MarshalJSON()
+		Expect(err).NotTo(HaveOccurred())
+
+		var cloned circuit.Circuit
+		Expect(json.Unmarshal(payload, &cloned)).To(Succeed())
+
+		execOrig, err := executor.New(q.Circuit, logger.DiscardLogger())
+		Expect(err).NotTo(HaveOccurred())
+		execClone, err := executor.New(&cloned, logger.DiscardLogger())
+		Expect(err).NotTo(HaveOccurred())
+
+		pods := zset.New()
+		deps := zset.New()
+		deps.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "dep1"}}, nil), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1", "namespace": "default"}, "spec": map[string]any{"parent": "dep1"}}, nil), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod2", "namespace": "other"}, "spec": map[string]any{"parent": "dep1"}}, nil), 1)
+
+		inputs := map[string]zset.ZSet{"input_pod": pods, "input_dep": deps}
+		outsOrig, err := execOrig.Execute(inputs)
+		Expect(err).NotTo(HaveOccurred())
+		outsClone, err := execClone.Execute(inputs)
+		Expect(err).NotTo(HaveOccurred())
+
+		outID := q.OutputMap["output"]
+		Expect(outsClone[outID].Equal(outsOrig[outID])).To(BeTrue())
+	})
+
 	It("rejects branch dependency cycles", func() {
-		c := New([]string{"Pod"}, []string{"a"})
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"a"}))
 		_, err := c.CompileString(`[
 			[
 				{"@inputs":["b"]},

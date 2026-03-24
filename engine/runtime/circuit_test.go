@@ -234,7 +234,10 @@ var _ = Describe("Circuit", func() {
 })
 
 func mustCompileCircuitQuery() *compiler.Query {
-	c := aggregation.New([]string{"Pod"}, []string{"output"})
+	c := aggregation.New(
+		[]aggregation.Binding{{Name: "Pod", Logical: "Pod"}},
+		[]aggregation.Binding{{Name: "output", Logical: "output"}},
+	)
 	q, err := c.CompileString(`[{"@project":{"$.":"$."}}]`)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return q

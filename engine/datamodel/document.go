@@ -39,4 +39,7 @@ type Document interface {
 	// SetField sets the value for a field name.
 	// It may return ErrFieldNotFound when the field is missing.
 	SetField(key string, value any) error
+
+	// Fields returns a deep copy of the document fields map.
+	Fields() map[string]any
 }

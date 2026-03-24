@@ -26,6 +26,8 @@ var _ = Describe("Base components", func() {
 			Topics:        []string{"in"},
 		})
 		Expect(err).NotTo(HaveOccurred())
+		Expect(c.String()).To(ContainSubstring(`name="base-consumer"`))
+		Expect(c.String()).To(ContainSubstring("topics=[in]"))
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
@@ -60,6 +62,8 @@ var _ = Describe("Base components", func() {
 			Topics:        []string{"in"},
 		})
 		Expect(err).NotTo(HaveOccurred())
+		Expect(p.String()).To(ContainSubstring(`name="base-processor"`))
+		Expect(p.String()).To(ContainSubstring("topics=[in]"))
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
@@ -92,8 +96,11 @@ var _ = Describe("Base components", func() {
 			Publisher:     rt.NewPublisher(),
 			ErrorReporter: rt,
 			Logger:        logr.Discard(),
+			Topics:        []string{"out"},
 		})
 		Expect(err).NotTo(HaveOccurred())
+		Expect(p.String()).To(ContainSubstring(`name="base-producer"`))
+		Expect(p.String()).To(ContainSubstring("topics=[out]"))
 
 		event := runtime.Event{Name: "out", Data: zset.New()}
 		Expect(p.Publish(event)).To(Succeed())

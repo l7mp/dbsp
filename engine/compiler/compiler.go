@@ -11,11 +11,20 @@ type Query struct {
 	// Circuit is the DBSP circuit implementing the query.
 	Circuit *circuit.Circuit
 
-	// InputMap maps logical input names (e.g., table names) to circuit input node IDs.
+	// InputMap maps external input names/topics to circuit input node IDs.
 	InputMap map[string]string
 
-	// OutputMap maps logical output names to circuit output node IDs.
+	// InputLogicalMap maps external input names/topics to internal logical names
+	// used by the compiler inside expressions. If a name is missing, it is
+	// treated as identity (external == logical).
+	InputLogicalMap map[string]string
+
+	// OutputMap maps external output names/topics to circuit output node IDs.
 	OutputMap map[string]string
+
+	// OutputLogicalMap maps external output names/topics to internal logical
+	// output names. If a name is missing, it is treated as identity.
+	OutputLogicalMap map[string]string
 }
 
 // IR is a compiler intermediate representation.
@@ -42,6 +51,30 @@ func (q *Query) OutputNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// InputLogicalName returns the internal logical name for an external input
+// name/topic.
+func (q *Query) InputLogicalName(name string) string {
+	if q == nil || q.InputLogicalMap == nil {
+		return name
+	}
+	if logical, ok := q.InputLogicalMap[name]; ok && logical != "" {
+		return logical
+	}
+	return name
+}
+
+// OutputLogicalName returns the internal logical name for an external output
+// name/topic.
+func (q *Query) OutputLogicalName(name string) string {
+	if q == nil || q.OutputLogicalMap == nil {
+		return name
+	}
+	if logical, ok := q.OutputLogicalMap[name]; ok && logical != "" {
+		return logical
+	}
+	return name
 }
 
 // Compiler turns query sources into DBSP circuits.

@@ -240,4 +240,154 @@ runtime.onError((e) => {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal(viewGVK))
 	})
+
+	It("compiles aggregate pipelines with string input/output names", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("agg-collector", vm.runtime, "agg-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {
+  inputs: "agg-in",
+  output: "agg-out"
+});
+c.validate();
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			_ = runScript(vm, `publish("agg-in", [[{id: 11}, 1]]);`)
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(first.Name).To(Equal("agg-out"))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:11"}))
+	})
+
+	It("compiles aggregate pipelines with binding objects", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("agg-bind-collector", vm.runtime, "agg-bind-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  [
+    {"@inputs": ["Foo"]},
+    {"@project": {"$.": "$."}},
+    {"@output": "Bar"}
+  ]
+], {
+  inputs: [{name: "agg-bind-in", logicalName: "Foo"}],
+  output: {name: "agg-bind-out", logicalName: "Bar"}
+});
+c.validate();
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			_ = runScript(vm, `publish("agg-bind-in", [[{id: 22}, 1]]);`)
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(first.Name).To(Equal("agg-bind-out"))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:22"}))
+	})
+
+	It("compiles SQL with string output name", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("sql-collector", vm.runtime, "sql-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+sql.table("t", "id int");
+const c = sql.compile("select id from t", { output: "sql-out" });
+c.validate();
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			_ = runScript(vm, `publish("t", [[{id: 31}, 1]]);`)
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(first.Name).To(Equal("sql-out"))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:31"}))
+	})
+
+	It("requires explicit SQL output option", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		script := `
+sql.table("t_missing_out", "id int");
+sql.compile("select id from t_missing_out");
+`
+		err = runScript(vm, script)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("options.output is required"))
+	})
+
+	It("compiles SQL with output binding object", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("sql-bind-collector", vm.runtime, "sql-bind-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+sql.table("t2", "id int");
+const c = sql.compile("select id from t2", { output: { name: "sql-bind-out", logicalName: "output" } });
+c.validate();
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			_ = runScript(vm, `publish("t2", [[{id: 41}, 1]]);`)
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(first.Name).To(Equal("sql-bind-out"))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:41"}))
+	})
 })

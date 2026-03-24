@@ -9,9 +9,9 @@ import (
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/executor"
+	"github.com/l7mp/dbsp/engine/internal/logger"
 	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
-	"github.com/l7mp/dbsp/engine/internal/logger"
 )
 
 // Option configures an Engine.
@@ -83,9 +83,11 @@ func (e *baseEngine) Compile(source string) error {
 			return err
 		}
 		compiled = &compiler.Query{
-			Circuit:   incr,
-			InputMap:  cloneMap(query.InputMap),
-			OutputMap: cloneMap(query.OutputMap),
+			Circuit:          incr,
+			InputMap:         cloneMap(query.InputMap),
+			InputLogicalMap:  cloneMap(query.InputLogicalMap),
+			OutputMap:        cloneMap(query.OutputMap),
+			OutputLogicalMap: cloneMap(query.OutputLogicalMap),
 		}
 	}
 	e.query = compiled

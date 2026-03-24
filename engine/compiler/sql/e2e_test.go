@@ -26,7 +26,7 @@ var _ = Describe("SQL end-to-end", func() {
 
 		outputs, err := exec.Execute(map[string]zset.ZSet{"input_t": input})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(outputs["output"].Size()).To(Equal(1))
+		Expect(outputs[query.OutputMap["output"]].Size()).To(Equal(1))
 	})
 
 	It("compiles and executes a join", func() {
@@ -48,6 +48,6 @@ var _ = Describe("SQL end-to-end", func() {
 
 		outputs, err := exec.Execute(map[string]zset.ZSet{"input_a": inputA, "input_b": inputB})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(outputs["output"].Size()).To(Equal(1))
+		Expect(outputs[query.OutputMap["output"]].Size()).To(Equal(1))
 	})
 })

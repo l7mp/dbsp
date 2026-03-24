@@ -48,14 +48,10 @@ type Aggregate struct {
 // NewAggregate creates a generic aggregate.
 func NewAggregate(keyExpr, valueExpr, reduceExpr expression.Expression, outField string, opts ...Option) *Aggregate {
 	if valueExpr == nil {
-		valueExpr = expression.Func(func(ctx *expression.EvalContext) (any, error) {
-			return ctx.Subject(), nil
-		})
+		valueExpr = exprdbsp.NewSubject()
 	}
 	if reduceExpr == nil {
-		reduceExpr = expression.Func(func(ctx *expression.EvalContext) (any, error) {
-			return ctx.Subject(), nil
-		})
+		reduceExpr = exprdbsp.NewSubject()
 	}
 	if outField == "" {
 		outField = "value"
@@ -88,9 +84,26 @@ func (o *Aggregate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 		setExpr:    o.setExpr,
 		outField:   o.outField,
 	}
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("dbsp runtime state",
+			"event_type", "aggregate.state.before",
+			"component_type", "operator",
+			"component", o.String(),
+			"state", o.state.snapshot(),
+		)
+	}
 	result, err := o.state.applyDelta(inputs[0], reducer)
 	if err != nil {
 		return zset.New(), err
+	}
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("dbsp runtime state",
+			"event_type", "aggregate.state.after",
+			"component_type", "operator",
+			"component", o.String(),
+			"state", o.state.snapshot(),
+			"delta", result.String(),
+		)
 	}
 	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
 	return result, nil
@@ -109,9 +122,7 @@ func NewAggregateWithSet(keyExpr, valueExpr, reduceExpr, setExpr expression.Expr
 
 // NewDistinctPi returns a generic aggregate operator equivalent to the distinct_π semantics
 func NewDistinctPi(opts ...Option) *Aggregate {
-	op := NewAggregate(nil, nil, exprdbsp.NewLexMin(expression.Func(func(ctx *expression.EvalContext) (any, error) {
-		return ctx.Subject(), nil
-	})), "value", opts...)
+	op := NewAggregate(nil, nil, exprdbsp.NewLexMin(exprdbsp.NewSubject()), "value", opts...)
 	op.display = "Aggregate(distinct_pi)"
 	return op
 }
@@ -223,6 +234,33 @@ func (s *keyedState) applyDelta(delta zset.ZSet, reducer keyedReducer) (zset.ZSe
 	}
 
 	return result, nil
+}
+
+func (s *keyedState) snapshot() []string {
+	if s == nil || len(s.pkIndex) == 0 {
+		return []string{}
+	}
+	pks := make([]string, 0, len(s.pkIndex))
+	for pk := range s.pkIndex {
+		pks = append(pks, pk)
+	}
+	sort.Strings(pks)
+
+	out := make([]string, 0)
+	for _, pk := range pks {
+		docs := s.pkIndex[pk]
+		hashes := make([]string, 0, len(docs))
+		for h := range docs {
+			hashes = append(hashes, h)
+		}
+		sort.Strings(hashes)
+		for _, h := range hashes {
+			doc := docs[h]
+			w := s.weights[h]
+			out = append(out, fmt.Sprintf("pk=%s hash=%s weight=%d doc=%s", pk, h, w, doc.String()))
+		}
+	}
+	return out
 }
 
 type aggregateReducer struct {

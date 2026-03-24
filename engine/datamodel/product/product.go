@@ -102,6 +102,14 @@ func (p *Product) SetField(key string, value any) error {
 	return d.SetField(parts[1], value)
 }
 
+func (p *Product) Fields() map[string]any {
+	fieldsMap := map[string]any{}
+	for k, v := range p.parts {
+		fieldsMap[k] = v
+	}
+	return fieldsMap
+}
+
 func (p *Product) MarshalJSON() ([]byte, error) {
 	obj := map[string]any{}
 	for k, v := range p.parts {

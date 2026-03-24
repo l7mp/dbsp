@@ -70,6 +70,7 @@ type BaseConsumerConfig struct {
 type BaseConsumer struct {
 	*BaseComponent
 	Subscriber
+	topics []string
 }
 
 // NewBaseConsumer creates a BaseConsumer and subscribes it to all configured topics.
@@ -83,12 +84,17 @@ func NewBaseConsumer(cfg BaseConsumerConfig) (*BaseConsumer, error) {
 		return nil, err
 	}
 
-	c := &BaseConsumer{BaseComponent: b, Subscriber: cfg.Subscriber}
+	c := &BaseConsumer{BaseComponent: b, Subscriber: cfg.Subscriber, topics: append([]string(nil), cfg.Topics...)}
 	for _, topic := range cfg.Topics {
 		c.Subscribe(topic)
 	}
 
 	return c, nil
+}
+
+// String implements fmt.Stringer.
+func (c *BaseConsumer) String() string {
+	return fmt.Sprintf("consumer<runtime>{name=%q, topics=%v}", c.Name(), c.topics)
 }
 
 // Run receives events from the embedded subscriber and calls h.Consume.
@@ -117,12 +123,15 @@ type BaseProducerConfig struct {
 	Publisher
 	ErrorReporter
 	logr.Logger
+
+	Topics []string
 }
 
 // BaseProducer provides shared identity and error reporting for producers.
 type BaseProducer struct {
 	*BaseComponent
 	Publisher
+	topics []string
 }
 
 // NewBaseProducer creates a BaseProducer.
@@ -136,7 +145,12 @@ func NewBaseProducer(cfg BaseProducerConfig) (*BaseProducer, error) {
 		return nil, err
 	}
 
-	return &BaseProducer{BaseComponent: b, Publisher: cfg.Publisher}, nil
+	return &BaseProducer{BaseComponent: b, Publisher: cfg.Publisher, topics: append([]string(nil), cfg.Topics...)}, nil
+}
+
+// String implements fmt.Stringer.
+func (p *BaseProducer) String() string {
+	return fmt.Sprintf("producer<runtime>{name=%q, topics=%v}", p.Name(), p.topics)
 }
 
 // BaseProcessorConfig configures a BaseProcessor.
@@ -156,6 +170,7 @@ type BaseProcessor struct {
 	*BaseComponent
 	Publisher
 	Subscriber
+	topics []string
 }
 
 // NewBaseProcessor creates a BaseProcessor and subscribes it to all configured topics.
@@ -172,12 +187,17 @@ func NewBaseProcessor(cfg BaseProcessorConfig) (*BaseProcessor, error) {
 		return nil, err
 	}
 
-	p := &BaseProcessor{BaseComponent: b, Publisher: cfg.Publisher, Subscriber: cfg.Subscriber}
+	p := &BaseProcessor{BaseComponent: b, Publisher: cfg.Publisher, Subscriber: cfg.Subscriber, topics: append([]string(nil), cfg.Topics...)}
 	for _, topic := range cfg.Topics {
 		p.Subscribe(topic)
 	}
 
 	return p, nil
+}
+
+// String implements fmt.Stringer.
+func (p *BaseProcessor) String() string {
+	return fmt.Sprintf("processor<runtime>{name=%q, topics=%v}", p.Name(), p.topics)
 }
 
 // Run receives events from the embedded subscriber and calls h.Consume.

@@ -48,31 +48,115 @@ func (v *VM) sqlCompile(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("sql.compile: empty query")
 	}
 
+	if len(call.Arguments) < 2 {
+		return nil, fmt.Errorf("sql.compile options.output is required")
+	}
+
 	options := struct {
-		Output string `json:"output"`
+		Output any `json:"output"`
 	}{}
-	if len(call.Arguments) > 1 {
-		if err := decodeOptionValue(call.Argument(1), &options); err != nil {
-			return nil, fmt.Errorf("sql.compile options: %w", err)
-		}
+	binding := sqlOutputBinding{}
+	if err := decodeOptionValue(call.Argument(1), &options); err != nil {
+		return nil, fmt.Errorf("sql.compile options: %w", err)
 	}
-	if options.Output == "" {
-		options.Output = "output"
+	parsed, err := parseSQLOutputBinding(options.Output)
+	if err != nil {
+		return nil, fmt.Errorf("sql.compile options.output: %w", err)
 	}
+	if parsed.Name == "" {
+		return nil, fmt.Errorf("sql.compile options.output.name is required")
+	}
+	binding = parsed
 
 	compiled, err := compilersql.New(v.db).CompileString(query)
 	if err != nil {
 		return nil, fmt.Errorf("sql.compile: %w", err)
 	}
 
-	outputMap, err := renameOutputMap(options.Output, compiled.OutputMap)
+	originalOutputMap := compiled.OutputMap
+	originalOutputLogicalMap := compiled.OutputLogicalMap
+
+	outputMap, err := renameOutputMap(binding.Name, compiled.OutputMap)
 	if err != nil {
 		return nil, fmt.Errorf("sql.compile: %w", err)
 	}
 
 	compiled.OutputMap = outputMap
+	compiled.OutputLogicalMap = remapOutputLogicalMap(originalOutputMap, originalOutputLogicalMap, outputMap, binding.Name, binding.Logical)
 	h := &circuitHandle{c: compiled.Circuit, query: compiled, vm: v}
 	return h.jsObject(), nil
+}
+
+type sqlOutputBinding struct {
+	Name    string
+	Logical string
+}
+
+func parseSQLOutputBinding(raw any) (sqlOutputBinding, error) {
+	if raw == nil {
+		return sqlOutputBinding{}, nil
+	}
+
+	switch out := raw.(type) {
+	case string:
+		if out == "" {
+			return sqlOutputBinding{}, nil
+		}
+		return sqlOutputBinding{Name: out, Logical: "output"}, nil
+	case map[string]any:
+		name := ""
+		if x, ok := out["name"]; ok {
+			s, ok := x.(string)
+			if !ok {
+				return sqlOutputBinding{}, fmt.Errorf("field 'name' must be a string")
+			}
+			name = s
+		}
+		logical := "output"
+		if x, ok := out["logicalName"]; ok {
+			s, ok := x.(string)
+			if !ok {
+				return sqlOutputBinding{}, fmt.Errorf("field 'logicalName' must be a string")
+			}
+			logical = s
+		}
+		if x, ok := out["logical"]; ok {
+			s, ok := x.(string)
+			if !ok {
+				return sqlOutputBinding{}, fmt.Errorf("field 'logical' must be a string")
+			}
+			logical = s
+		}
+		return sqlOutputBinding{Name: name, Logical: logical}, nil
+	default:
+		return sqlOutputBinding{}, fmt.Errorf("must be a string or binding object")
+	}
+}
+
+func remapOutputLogicalMap(originalOutputMap, originalLogicalMap, renamedOutputMap map[string]string, baseName, baseLogical string) map[string]string {
+	logicalByNode := make(map[string]string, len(originalOutputMap))
+	for oldName, nodeID := range originalOutputMap {
+		logical := oldName
+		if originalLogicalMap != nil {
+			if l, ok := originalLogicalMap[oldName]; ok && l != "" {
+				logical = l
+			}
+		}
+		logicalByNode[nodeID] = logical
+	}
+
+	out := make(map[string]string, len(renamedOutputMap))
+	for newName, nodeID := range renamedOutputMap {
+		logical := logicalByNode[nodeID]
+		if logical == "" {
+			logical = newName
+		}
+		if newName == baseName {
+			logical = baseLogical
+		}
+		out[newName] = logical
+	}
+	return out
 }
 
 func renameOutputMap(outputBase string, out map[string]string) (map[string]string, error) {

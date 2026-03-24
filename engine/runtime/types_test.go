@@ -43,6 +43,8 @@ type fakeProducer struct {
 	fakePublisher
 }
 
+func (f *fakeProducer) String() string { return "fakeProducer" }
+
 type fakeSubscriber struct{ ch chan runtime.Event }
 
 func (f *fakeSubscriber) Subscribe(topic string) {}
@@ -55,6 +57,8 @@ type fakeConsumer struct {
 	fakeRunnable
 	fakeSubscriber
 }
+
+func (f *fakeConsumer) String() string { return "fakeConsumer" }
 
 type fakeManager struct{ r []runtime.Runnable }
 

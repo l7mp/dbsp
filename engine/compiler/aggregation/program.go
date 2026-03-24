@@ -53,7 +53,7 @@ func parseProgram(source []byte, sources, outputs []string) (*program, error) {
 		if err := validateProgramGraph(branches, sources, outputs); err != nil {
 			return nil, err
 		}
-		order, err := buildTopoOrder(branches)
+		order, err := buildTopoOrder(branches, sources)
 		if err != nil {
 			return nil, err
 		}
@@ -66,7 +66,7 @@ func parseProgram(source []byte, sources, outputs []string) (*program, error) {
 		if err := validateProgramGraph(branches, sources, outputs); err != nil {
 			return nil, err
 		}
-		order, err := buildTopoOrder(branches)
+		order, err := buildTopoOrder(branches, sources)
 		if err != nil {
 			return nil, err
 		}
@@ -83,7 +83,7 @@ func parseProgram(source []byte, sources, outputs []string) (*program, error) {
 		if err := validateProgramGraph(branches, sources, outputs); err != nil {
 			return nil, err
 		}
-		order, err := buildTopoOrder(branches)
+		order, err := buildTopoOrder(branches, sources)
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +107,7 @@ func parseProgram(source []byte, sources, outputs []string) (*program, error) {
 		return nil, err
 	}
 
-	order, err := buildTopoOrder(branches)
+	order, err := buildTopoOrder(branches, sources)
 	if err != nil {
 		return nil, err
 	}
@@ -228,26 +228,21 @@ func validateProgramGraph(branches []branchSpec, sources, outputs []string) erro
 	producer := map[string]int{}
 	sourceSet := map[string]bool{}
 	for _, s := range sources {
-		sourceSet[s] = true
+		sourceSet[sourceStreamKey(s)] = true
 	}
 
 	for _, b := range branches {
-		if sourceSet[b.Output] {
-			return fmt.Errorf("branch[%d]: output %q conflicts with external source name", b.Index, b.Output)
-		}
-		if prev, ok := producer[b.Output]; ok {
+		outKey := outputStreamKey(b.Output)
+		if prev, ok := producer[outKey]; ok {
 			return fmt.Errorf("duplicate producer for %q: branch[%d] and branch[%d]", b.Output, prev, b.Index)
 		}
-		producer[b.Output] = b.Index
+		producer[outKey] = b.Index
 	}
 
 	for _, b := range branches {
 		for _, in := range b.Inputs {
-			_, internal := producer[in]
-			external := sourceSet[in]
-			if internal && external {
-				return fmt.Errorf("branch[%d]: input %q ambiguously bound to internal and external source", b.Index, in)
-			}
+			_, internal := producer[outputStreamKey(in)]
+			external := sourceSet[sourceStreamKey(in)]
 			if !internal && !external {
 				return fmt.Errorf("branch[%d]: input %q is unbound", b.Index, in)
 			}
@@ -256,10 +251,11 @@ func validateProgramGraph(branches []branchSpec, sources, outputs []string) erro
 
 	if len(outputs) > 0 {
 		for _, out := range outputs {
-			if !sourceSet[out] {
-				if _, ok := producer[out]; !ok {
-					return fmt.Errorf("configured output %q is unbound", out)
-				}
+			if sourceSet[sourceStreamKey(out)] {
+				continue
+			}
+			if _, ok := producer[outputStreamKey(out)]; !ok {
+				return fmt.Errorf("configured output %q is unbound", out)
 			}
 		}
 	}
@@ -273,7 +269,10 @@ func validateProgramGraph(branches []branchSpec, sources, outputs []string) erro
 	}
 	for _, b := range branches {
 		for _, in := range b.Inputs {
-			if p, ok := producer[in]; ok {
+			if sourceSet[sourceStreamKey(in)] {
+				continue
+			}
+			if p, ok := producer[outputStreamKey(in)]; ok {
 				if p == b.Index {
 					return fmt.Errorf("graph cycle: branch[%d] feeds itself via %q", b.Index, in)
 				}
@@ -288,10 +287,14 @@ func validateProgramGraph(branches []branchSpec, sources, outputs []string) erro
 	return nil
 }
 
-func buildTopoOrder(branches []branchSpec) ([]int, error) {
+func buildTopoOrder(branches []branchSpec, sources []string) ([]int, error) {
 	producer := map[string]int{}
+	sourceSet := map[string]bool{}
+	for _, s := range sources {
+		sourceSet[sourceStreamKey(s)] = true
+	}
 	for _, b := range branches {
-		producer[b.Output] = b.Index
+		producer[outputStreamKey(b.Output)] = b.Index
 	}
 
 	g := simple.NewDirectedGraph()
@@ -303,7 +306,13 @@ func buildTopoOrder(branches []branchSpec) ([]int, error) {
 	}
 	for _, b := range branches {
 		for _, in := range b.Inputs {
-			if p, ok := producer[in]; ok {
+			if sourceSet[sourceStreamKey(in)] {
+				continue
+			}
+			if p, ok := producer[outputStreamKey(in)]; ok {
+				if p == b.Index {
+					return nil, fmt.Errorf("graph cycle: branch[%d] feeds itself via %q", b.Index, in)
+				}
 				g.SetEdge(g.NewEdge(nodes[p], nodes[b.Index]))
 			}
 		}

@@ -33,7 +33,8 @@ type Circuit struct {
 	exec        *executor.Executor
 	state       map[string]zset.ZSet
 
-	topicToInput map[string]string
+	topicToInput  map[string]string
+	docsFormatter func(Event) []string
 
 	logger logr.Logger
 }
@@ -77,6 +78,19 @@ func NewCircuit(name string, rt *Runtime, q *compiler.Query, logger logr.Logger)
 // Name returns the circuit's unique component name.
 func (c *Circuit) Name() string { return c.name }
 
+// String implements fmt.Stringer.
+func (c *Circuit) String() string {
+	if c == nil {
+		return "processor<circuit>{<nil>}"
+	}
+	return fmt.Sprintf("processor<circuit>{name=%q, topics=%v, outputs=%v, incremental=%t}", c.name, c.inputNames, c.outputNames, c.incremental)
+}
+
+// SetDocsFormatter overrides full-doc flow logging payloads.
+func (c *Circuit) SetDocsFormatter(f func(Event) []string) {
+	c.docsFormatter = f
+}
+
 // Start subscribes to all query inputs and forwards outputs via Publisher.
 // Execute and publish errors are non-critical: they are reported via the
 // runtime error channel and the circuit continues processing subsequent events.
@@ -97,7 +111,6 @@ func (c *Circuit) Start(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			c.logger.V(1).Info("runtime input event", "topic", in.Name, "docs", in.Data.Size())
 			logical, ok := c.topicToInput[in.Name]
 			if !ok {
 				continue
@@ -109,7 +122,11 @@ func (c *Circuit) Start(ctx context.Context) error {
 				continue
 			}
 			for _, out := range outs {
-				c.logger.V(1).Info("runtime output event", "topic", out.Name, "docs", out.Data.Size())
+				var docs []string
+				if c.docsFormatter != nil && c.logger.V(2).Enabled() {
+					docs = c.docsFormatter(out)
+				}
+				LogFlowEvent(c.logger, "processor.send", "processor", c.String(), "output", out.Name, "", out.Data, docs)
 				if err := c.Publish(out); err != nil {
 					c.rt.ReportError(c.name, err)
 				}

@@ -10,6 +10,7 @@ import (
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
+	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/expression"
 	"github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/operator"
@@ -87,7 +88,7 @@ func (c *Compiler) compileSelect(sel *sqlparser.Select, bindVars map[string]*que
 		return nil, err
 	}
 
-	outputID := "output"
+	outputID := circuit.OutputNodeID("output")
 	if err := compiledCircuit.AddNode(circuit.Output(outputID)); err != nil {
 		return nil, err
 	}
@@ -96,12 +97,22 @@ func (c *Compiler) compileSelect(sel *sqlparser.Select, bindVars map[string]*que
 	}
 
 	return &compiler.Query{
-		Circuit:  compiledCircuit,
-		InputMap: inputMap,
+		Circuit:         compiledCircuit,
+		InputMap:        inputMap,
+		InputLogicalMap: identityMap(inputMap),
 		OutputMap: map[string]string{
 			"output": outputID,
 		},
+		OutputLogicalMap: map[string]string{"output": "output"},
 	}, nil
+}
+
+func identityMap(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k := range m {
+		out[k] = k
+	}
+	return out
 }
 
 func (c *Compiler) compileFrom(expr sqlparser.TableExpr, compiledCircuit *circuit.Circuit, inputMap map[string]string) (string, error) {
@@ -134,7 +145,7 @@ func (c *Compiler) compileTable(expr *sqlparser.AliasedTableExpr, compiledCircui
 	if !expr.As.IsEmpty() {
 		logicalName = expr.As.String()
 	}
-	inputID := fmt.Sprintf("input_%s", logicalName)
+	inputID := circuit.InputNodeID(logicalName)
 	if err := compiledCircuit.AddNode(circuit.Input(inputID)); err != nil {
 		return "", err
 	}
@@ -245,11 +256,13 @@ func compileProjection(selectExprs sqlparser.SelectExprs, bindVars map[string]*q
 	}
 	sort.Strings(keys)
 
-	return expression.Func(func(ctx *expression.EvalContext) (any, error) {
+	original := dbsp.NewDict(entries)
+
+	return expression.NewCompiled(func(ctx *expression.EvalContext) (any, error) {
 		if ctx == nil || ctx.Document() == nil {
 			return nil, fmt.Errorf("projection: missing document")
 		}
-		newDoc := ctx.Document().New()
+		newDoc := unstructured.New(map[string]any{}, nil)
 		// Evaluate each expression in the original input context so that
 		// field lookups read from the input document, not from the (empty)
 		// output document.
@@ -263,7 +276,7 @@ func compileProjection(selectExprs sqlparser.SelectExprs, bindVars map[string]*q
 			}
 		}
 		return newDoc, nil
-	}), nil
+	}, original), nil
 }
 
 func fieldName(col *sqlparser.ColName) string {
