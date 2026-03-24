@@ -129,6 +129,14 @@ func NewPeriodicProducer(cfg PeriodicConfig) (*PeriodicProducer, error) {
 // Name returns the producer's unique component name.
 func (p *baseProducer) Name() string { return p.name }
 
+// String implements fmt.Stringer.
+func (p *baseProducer) String() string {
+	if p == nil {
+		return "producer<misc>{<nil>}"
+	}
+	return fmt.Sprintf("producer<misc>{name=%q, topic=%q, type=%q}", p.name, p.inputName, p.sourceType)
+}
+
 // newBase constructs the shared producer state. Name uniqueness is enforced
 // when the producer is passed to Runtime.Add.
 func newBase(rt *dbspruntime.Runtime, name, input, sourceType, triggerKind, namespace, triggerName string, logger logr.Logger, defaultTriggerName, loggerName string) (*baseProducer, error) {
@@ -158,7 +166,7 @@ func newBase(rt *dbspruntime.Runtime, name, input, sourceType, triggerKind, name
 		namespace:   namespace,
 		triggerName: triggerName,
 		rt:          rt,
-		log:         logger.WithName(loggerName).WithValues("name", name, "input", input),
+		log:         logger.WithName(loggerName).WithValues("topic", input),
 	}
 	if rt != nil {
 		b.publisher = rt.NewPublisher()
@@ -216,6 +224,8 @@ func (p *baseProducer) emit() error {
 	if pub == nil {
 		return nil
 	}
+
+	dbspruntime.LogFlowEvent(p.log, "producer.emit", "producer", p.String(), "output", p.inputName, "", zs, nil)
 
 	return pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }

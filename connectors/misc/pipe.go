@@ -2,6 +2,7 @@ package misc
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
@@ -35,6 +36,14 @@ func NewPipeConsumer(name string, out chan<- dbspruntime.Event) *PipeConsumer {
 }
 
 func (p *PipeProducer) Name() string { return p.name }
+
+func (p *PipeProducer) String() string {
+	if p == nil {
+		return "producer<pipe>{<nil>}"
+	}
+	return fmt.Sprintf("producer<pipe>{name=%q, topic=%q}", p.name, "<passthrough>")
+}
+
 func (p *PipeProducer) SetPublisher(pub dbspruntime.Publisher) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -78,6 +87,14 @@ func (p *PipeProducer) Start(ctx context.Context) error {
 }
 
 func (p *PipeConsumer) Name() string { return p.name }
+
+func (p *PipeConsumer) String() string {
+	if p == nil {
+		return "consumer<pipe>{<nil>}"
+	}
+	return fmt.Sprintf("consumer<pipe>{name=%q, topic=%q}", p.name, "<passthrough>")
+}
+
 func (c *PipeConsumer) Start(ctx context.Context) error {
 	for {
 		select {
