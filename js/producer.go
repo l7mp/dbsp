@@ -33,6 +33,12 @@ func (h *producerHandle) jsObject() *goja.Object {
 		}
 		return goja.Undefined(), nil
 	}))
+	_ = obj.Set("toJSON", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		return h.vm.rt.ToValue(map[string]any{
+			"kind":  "producer",
+			"topic": h.topic,
+		}), nil
+	}))
 	return obj
 }
 

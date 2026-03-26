@@ -2,6 +2,7 @@ package misc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -85,6 +86,20 @@ func (p *PipeProducer) String() string {
 	return fmt.Sprintf("producer<pipe>{name=%q, topic=%q}", p.Name(), "<passthrough>")
 }
 
+// MarshalJSON provides a stable machine-readable representation.
+func (p *PipeProducer) MarshalJSON() ([]byte, error) {
+	if p == nil {
+		return json.Marshal(map[string]any{"component": "producer", "type": "pipe", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component": "producer",
+		"type":      "pipe",
+		"name":      p.Name(),
+		"topic":     "<passthrough>",
+	})
+}
+
 func (p *PipeProducer) SetPublisher(pub dbspruntime.Publisher) {
 	if pub == nil {
 		pub = dbspruntime.PublishFunc(func(dbspruntime.Event) error { return nil })
@@ -122,6 +137,20 @@ func (p *PipeConsumer) String() string {
 		return "consumer<pipe>{<nil>}"
 	}
 	return fmt.Sprintf("consumer<pipe>{name=%q, topic=%q}", p.Name(), "<passthrough>")
+}
+
+// MarshalJSON provides a stable machine-readable representation.
+func (p *PipeConsumer) MarshalJSON() ([]byte, error) {
+	if p == nil {
+		return json.Marshal(map[string]any{"component": "consumer", "type": "pipe", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component": "consumer",
+		"type":      "pipe",
+		"name":      p.Name(),
+		"topic":     "<passthrough>",
+	})
 }
 
 func (c *PipeConsumer) Start(ctx context.Context) error {

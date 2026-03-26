@@ -2,6 +2,7 @@ package misc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -132,6 +133,21 @@ func (p *baseProducer) String() string {
 		return "producer<misc>{<nil>}"
 	}
 	return fmt.Sprintf("producer<misc>{name=%q, topic=%q, type=%q}", p.Name(), p.inputName, p.sourceType)
+}
+
+// MarshalJSON provides a stable machine-readable representation.
+func (p *baseProducer) MarshalJSON() ([]byte, error) {
+	if p == nil {
+		return json.Marshal(map[string]any{"component": "producer", "type": "misc", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component":  "producer",
+		"type":       "misc",
+		"name":       p.Name(),
+		"topic":      p.inputName,
+		"sourceType": p.sourceType,
+	})
 }
 
 // newBase constructs the shared producer state. Name uniqueness is enforced

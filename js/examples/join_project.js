@@ -18,11 +18,13 @@ sql.table("products", "pid INT PRIMARY KEY, name TEXT, price FLOAT");
 sql.table("orders",   "oid INT PRIMARY KEY, product_id INT, qty INT");
 
 // === SQL incremental join circuit ===
-sql.compile(
+const c = sql.compile(
     `SELECT oid, product_id, pid, name, price, qty
        FROM orders JOIN products ON product_id = pid`,
     { output: "joined-orders" }
 ).incrementalize().validate();
+
+console.log("circuit:", c);
 
 // Fires once when products are published (join is empty — no orders yet),
 // then again when orders are published (with joined rows).

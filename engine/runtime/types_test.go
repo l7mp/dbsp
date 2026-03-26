@@ -44,6 +44,9 @@ type fakeProducer struct {
 }
 
 func (f *fakeProducer) String() string { return "fakeProducer" }
+func (f *fakeProducer) MarshalJSON() ([]byte, error) {
+	return []byte(`{"kind":"fakeProducer"}`), nil
+}
 
 type fakeSubscriber struct{ ch chan runtime.Event }
 
@@ -59,6 +62,9 @@ type fakeConsumer struct {
 }
 
 func (f *fakeConsumer) String() string { return "fakeConsumer" }
+func (f *fakeConsumer) MarshalJSON() ([]byte, error) {
+	return []byte(`{"kind":"fakeConsumer"}`), nil
+}
 
 type fakeManager struct{ r []runtime.Runnable }
 

@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -65,6 +66,21 @@ type groupedDelta struct {
 	key client.ObjectKey
 	pos map[string]*candidate
 	neg map[string]*candidate
+}
+
+// MarshalJSON provides a stable machine-readable representation.
+func (c *baseConsumer) MarshalJSON() ([]byte, error) {
+	if c == nil {
+		return json.Marshal(map[string]any{"component": "consumer", "type": "kubernetes", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component": "consumer",
+		"type":      "kubernetes",
+		"name":      c.Name(),
+		"topic":     c.outputName,
+		"targetGVK": c.targetGVK.String(),
+	})
 }
 
 // newBase constructs the shared consumer state. Name uniqueness is enforced

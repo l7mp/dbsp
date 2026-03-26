@@ -2,6 +2,7 @@ package producer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -66,6 +67,20 @@ func (w *Watcher) Name() string { return w.BaseProducer.Name() }
 // String implements fmt.Stringer.
 func (w *Watcher) String() string {
 	return fmt.Sprintf("producer<k8s>{name=%q, topic=%q}", w.Name(), w.inputName)
+}
+
+// MarshalJSON provides a stable machine-readable representation.
+func (w *Watcher) MarshalJSON() ([]byte, error) {
+	if w == nil {
+		return json.Marshal(map[string]any{"component": "producer", "type": "kubernetes", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component": "producer",
+		"type":      "kubernetes",
+		"name":      w.Name(),
+		"topic":     w.inputName,
+	})
 }
 
 // NewWatcher creates a Kubernetes producer. Name uniqueness is enforced when

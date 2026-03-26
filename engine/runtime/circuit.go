@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"sort"
@@ -96,6 +97,22 @@ func (c *Circuit) String() string {
 		return "processor<circuit>{<nil>}"
 	}
 	return fmt.Sprintf("processor<circuit>{name=%q, topics=%v, outputs=%v, incremental=%t}", c.name, c.inputNames, c.outputNames, c.incremental)
+}
+
+// MarshalJSON provides a stable machine-readable representation.
+func (c *Circuit) MarshalJSON() ([]byte, error) {
+	if c == nil {
+		return json.Marshal(map[string]any{"component": "processor", "type": "circuit", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component":   "processor",
+		"type":        "circuit",
+		"name":        c.name,
+		"inputs":      append([]string(nil), c.inputNames...),
+		"outputs":     append([]string(nil), c.outputNames...),
+		"incremental": c.incremental,
+	})
 }
 
 // SetDocsFormatter overrides full-doc flow logging payloads.

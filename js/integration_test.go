@@ -371,6 +371,56 @@ runtime.observe("aggregation", (e) => {
 		Expect(fmt.Sprint(node)).NotTo(BeEmpty())
 	})
 
+	It("prints JSON for runtime objects and documents via console.log", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("console-json-collector", vm.runtime, "console-json")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {
+  inputs: "console-in",
+  output: "console-out"
+});
+
+c.validate();
+const p = producer("console-in");
+
+console.log(c);
+console.log(p);
+console.log(runtime);
+
+consumer("console-out", (entries) => {
+  for (const [doc, weight] of entries) {
+    console.log(doc);
+    runtime.publish("console-json", [[doc, weight]]);
+  }
+  cancel();
+});
+
+publish("console-in", [[{id: 77, name: "json"}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		rows := zsetRowsByField(first, "id")
+		Expect(rows).To(Equal([]string{"1:77"}))
+	})
+
 	It("runs without kubeconfig until kubernetes plumbing is requested", func() {
 		oldKubeconfig, hadKubeconfig := os.LookupEnv("KUBECONFIG")
 		Expect(os.Setenv("KUBECONFIG", "/nonexistent/kubeconfig")).To(Succeed())

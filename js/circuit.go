@@ -187,5 +187,16 @@ func (h *circuitHandle) jsObject() *goja.Object {
 		return obj, nil
 	}))
 
+	_ = obj.Set("toJSON", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		payload := map[string]any{
+			"kind":        "circuit",
+			"name":        h.c.Name(),
+			"validated":   h.proc != nil,
+			"observed":    h.obsFn != nil,
+			"incremental": true,
+		}
+		return h.vm.rt.ToValue(payload), nil
+	}))
+
 	return obj
 }

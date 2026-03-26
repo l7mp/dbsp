@@ -359,6 +359,10 @@ func (v *VM) fromJSEntries(value goja.Value) (zset.ZSet, error) {
 }
 
 func (v *VM) injectGlobals() error {
+	if err := v.injectConsole(); err != nil {
+		return err
+	}
+
 	sqlObj := v.rt.NewObject()
 	if err := sqlObj.Set("table", v.wrap(v.sqlTable)); err != nil {
 		return err
@@ -447,6 +451,14 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 	if err := runtimeObj.Set("cancel", v.wrap(v.cancel)); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("toJSON", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		return v.rt.ToValue(map[string]any{
+			"kind": "runtime",
+			"apis": []string{"sql", "aggregate", "producer", "consumer", "publish", "subscribe", "observe", "onError", "cancel"},
+		}), nil
+	})); err != nil {
 		return err
 	}
 	if err := v.rt.Set("runtime", runtimeObj); err != nil {

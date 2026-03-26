@@ -1,6 +1,9 @@
 package runtime
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Producer is a runnable event source.
 //
@@ -9,6 +12,7 @@ type Producer interface {
 	Runnable
 	Publisher
 	fmt.Stringer
+	json.Marshaler
 }
 
 // Consumer is a runnable event sink.
@@ -19,6 +23,7 @@ type Consumer interface {
 	Runnable
 	Subscriber
 	fmt.Stringer
+	json.Marshaler
 }
 
 // Processor is both a Producer and a Consumer.

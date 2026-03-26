@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -97,6 +98,20 @@ func (c *BaseConsumer) String() string {
 	return fmt.Sprintf("consumer<runtime>{name=%q, topics=%v}", c.Name(), c.topics)
 }
 
+// MarshalJSON provides a stable machine-readable representation.
+func (c *BaseConsumer) MarshalJSON() ([]byte, error) {
+	if c == nil {
+		return json.Marshal(map[string]any{"component": "consumer", "type": "runtime", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component": "consumer",
+		"type":      "runtime",
+		"name":      c.Name(),
+		"topics":    append([]string(nil), c.topics...),
+	})
+}
+
 // Run receives events from the embedded subscriber and calls h.Consume.
 // Handler errors are non-critical and are reported through ErrorReporter.
 func (c *BaseConsumer) Run(ctx context.Context, h ConsumeHandler) error {
@@ -153,6 +168,20 @@ func (p *BaseProducer) String() string {
 	return fmt.Sprintf("producer<runtime>{name=%q, topics=%v}", p.Name(), p.topics)
 }
 
+// MarshalJSON provides a stable machine-readable representation.
+func (p *BaseProducer) MarshalJSON() ([]byte, error) {
+	if p == nil {
+		return json.Marshal(map[string]any{"component": "producer", "type": "runtime", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component": "producer",
+		"type":      "runtime",
+		"name":      p.Name(),
+		"topics":    append([]string(nil), p.topics...),
+	})
+}
+
 // BaseProcessorConfig configures a BaseProcessor.
 type BaseProcessorConfig struct {
 	Name string
@@ -198,6 +227,20 @@ func NewBaseProcessor(cfg BaseProcessorConfig) (*BaseProcessor, error) {
 // String implements fmt.Stringer.
 func (p *BaseProcessor) String() string {
 	return fmt.Sprintf("processor<runtime>{name=%q, topics=%v}", p.Name(), p.topics)
+}
+
+// MarshalJSON provides a stable machine-readable representation.
+func (p *BaseProcessor) MarshalJSON() ([]byte, error) {
+	if p == nil {
+		return json.Marshal(map[string]any{"component": "processor", "type": "runtime", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component": "processor",
+		"type":      "runtime",
+		"name":      p.Name(),
+		"topics":    append([]string(nil), p.topics...),
+	})
 }
 
 // Run receives events from the embedded subscriber and calls h.Consume.
