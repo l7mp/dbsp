@@ -25,15 +25,15 @@ controllers:
               "@concat": [$.spec.serviceName, "-", $.spec.ports.protocol, "-", $.spec.ports.port]
             namespace: $.metadata.namespace
           spec: $.spec
-    target:
-      kind: ServiceView
+    targets:
+      - kind: ServiceView
   # endpointslice controller:
   # - join services with the corresponding endpoint slices
-  # - create a unique service-id that will be used in gather
+  # - create a unique service-id used for grouping
   # - demux on "$.endpoints"
   # - filter ready addresses
   # - demux on $.endpoints.addresses
-  # - gather into a single endpoint list per service-id
+  # - group into a single endpoint list per service-id
   # - convert into simpler shape
   - name: endpointslice-controller
     sources:
@@ -53,7 +53,12 @@ controllers:
             metadata:
               name: $.ServiceView.metadata.name
               namespace: $.ServiceView.metadata.namespace
-            spec: $.ServiceView.spec
+            spec:
+              serviceName: $.ServiceView.spec.serviceName
+              type: $.ServiceView.spec.type
+              port: $.ServiceView.spec.ports.port
+              targetPort: $.ServiceView.spec.ports.targetPort
+              protocol: $.ServiceView.spec.ports.protocol
             endpoints: $.EndpointSlice.endpoints
             id:
               name: $.ServiceView.spec.serviceName
@@ -61,29 +66,30 @@ controllers:
               type: $.ServiceView.spec.type
               protocol: $.ServiceView.spec.ports.protocol
               port: $.ServiceView.spec.ports.port
+              targetPort: $.ServiceView.spec.ports.targetPort
       - "@unwind": $.endpoints
       - "@select":
           "@eq": ["$.endpoints.conditions.ready", true]
       - "@unwind": $.endpoints.addresses
-      - "@gather":
+      - "@groupBy":
           - $.id
           - $.endpoints.addresses
       - "@project":
           metadata:
-            namespace: $.metadata.namespace
+            namespace: $.key.namespace
             name:
               "@concat":
-                - $.id.name
+                - $.key.name
                 - "-"
-                - $.id.protocol
+                - $.key.protocol
                 - "-"
-                - $.id.port
+                - $.key.port
           spec:
-            serviceName: $.spec.serviceName
-            type: $.spec.type
-            port: $.spec.ports.port
-            targetPort: $.spec.ports.targetPort
-            protocol: $.spec.ports.protocol
-            addresses: $.endpoints.addresses
-    target:
-      kind: EndpointView
+            serviceName: $.key.name
+            type: $.key.type
+            port: $.key.port
+            targetPort: $.key.targetPort
+            protocol: $.key.protocol
+            addresses: $.values
+    targets:
+      - kind: EndpointView

@@ -3,14 +3,17 @@ package controller_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
+	"go.uber.org/zap/zapcore"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/datamodel"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
@@ -25,6 +28,15 @@ import (
 
 // testPipelineJSON is a minimal project pipeline: projects spec.x into metadata.name.
 const testPipelineJSON = `{"@project":{"$.metadata.name":"$.spec.x"}}`
+const timeout = 100 * time.Millisecond
+const logLevel = -10
+
+var logger = zap.New(zap.UseFlagOptions(&zap.Options{
+	Development: true,
+	DestWriter:  os.Stderr,
+	Level:       zapcore.Level(logLevel),
+	TimeEncoder: zapcore.RFC3339NanoTimeEncoder,
+}))
 
 func rawPipeline(s string) *apiextensionsv1.JSON {
 	return &apiextensionsv1.JSON{Raw: []byte(s)}
@@ -73,6 +85,7 @@ func specWithPipeline(pipeline string) opv1a1.Controller {
 		Pipeline: rawPipeline(pipeline),
 		Targets: []opv1a1.Target{{
 			Resource: opv1a1.Resource{Kind: "Bar"},
+			Type:     opv1a1.Updater,
 		}},
 	}
 }
@@ -106,17 +119,49 @@ func joinSpecWithPipeline(pipeline string) opv1a1.Controller {
 var _ = Describe("Controller", func() {
 	Describe("compiles a simple projection pipeline", func() {
 		It("should create the controller without error", func() {
-			rt := dbspruntime.NewRuntime(logr.Discard())
+			rt := dbspruntime.NewRuntime(logger)
 			krt, err := k8sruntime.New(k8sruntime.Config{})
 			Expect(err).NotTo(HaveOccurred())
 			ctrl, err := controller.New(controller.Config{
-				Spec:       defaultSpec(),
-				Runtime:    rt,
-				K8sRuntime: krt,
+				OperatorName: "test",
+				Spec:         defaultSpec(),
+				Runtime:      rt,
+				K8sRuntime:   krt,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ctrl).NotTo(BeNil())
 			Expect(ctrl.GetCircuit()).NotTo(BeNil())
+		})
+
+		It("should compile when source and target kinds are identical", func() {
+			rt := dbspruntime.NewRuntime(logger)
+			krt, err := k8sruntime.New(k8sruntime.Config{})
+			Expect(err).NotTo(HaveOccurred())
+
+			spec := opv1a1.Controller{
+				Name: "same-kind-op",
+				Sources: []opv1a1.Source{{
+					Resource: opv1a1.Resource{Kind: "Deployment"},
+					Type:     opv1a1.Periodic,
+					Parameters: &apiextensionsv1.JSON{
+						Raw: []byte(`{"period":"1h"}`),
+					},
+				}},
+				Pipeline: rawPipeline(`[{"@project":{"$.":"$."}}]`),
+				Targets: []opv1a1.Target{{
+					Resource: opv1a1.Resource{Kind: "Deployment"},
+					Type:     opv1a1.Updater,
+				}},
+			}
+
+			ctrl, err := controller.New(controller.Config{
+				OperatorName: "test",
+				Spec:         spec,
+				Runtime:      rt,
+				K8sRuntime:   krt,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ctrl).NotTo(BeNil())
 		})
 	})
 
@@ -258,23 +303,29 @@ var _ = Describe("Controller", func() {
 				},
 			},
 			{
-				name:     "aggregate emits rows with grouped list field",
-				pipeline: `[{"@aggregate":["$.class","$.grade","$$.","grades"]}]`,
+				name: "groupBy emits rows with grouped list field",
+				pipeline: `[
+					{"@groupBy":["$.class","$.grade"]},
+					{"@project":{"key":"$.key","grades":"$.values"}}
+				]`,
 				input: zsetFromDocs(
 					map[string]any{"class": "Algebra", "grade": int64(90)},
 					map[string]any{"class": "Algebra", "grade": int64(80)},
 				),
 				assert: func(evt dbspruntime.Event) {
-					Expect(evt.Data.Size()).To(Equal(2))
+					Expect(evt.Data.Size()).To(Equal(1))
 					grades := collectFieldStrings(evt.Data, "grades")
-					Expect(grades).To(HaveLen(2))
-					Expect(grades[0]).To(SatisfyAny(ContainSubstring("80"), ContainSubstring("90")))
-					Expect(grades[1]).To(SatisfyAny(ContainSubstring("80"), ContainSubstring("90")))
+					Expect(grades).To(HaveLen(1))
+					Expect(grades[0]).To(ContainSubstring("80"))
+					Expect(grades[0]).To(ContainSubstring("90"))
 				},
 			},
 			{
-				name:     "aggregate keeps independent rows",
-				pipeline: `[{"@aggregate":["$.class","$.grade","$$.","grades"]}]`,
+				name: "groupBy keeps independent rows",
+				pipeline: `[
+					{"@groupBy":["$.class","$.grade"]},
+					{"@project":{"key":"$.key","grades":"$.values"}}
+				]`,
 				input: zsetFromDocs(
 					map[string]any{"class": "Algebra", "grade": int64(90)},
 					map[string]any{"class": "Geometry", "grade": int64(70)},
@@ -292,17 +343,22 @@ var _ = Describe("Controller", func() {
 		for _, tc := range cases {
 			tc := tc
 			It("should process injected event: "+tc.name, func() {
-				rt := dbspruntime.NewRuntime(logr.Discard())
+				inTopic := circuit.InputTopic("test-op", "Foo")
+				outTopic := circuit.OutputTopic("test-op", "Bar")
+
+				rt := dbspruntime.NewRuntime(logger)
 				krt, err := k8sruntime.New(k8sruntime.Config{})
 				Expect(err).NotTo(HaveOccurred())
 
 				sub := rt.NewSubscriber()
-				sub.Subscribe("Bar")
+				sub.Subscribe(outTopic)
 
 				ctrl, err := controller.New(controller.Config{
-					Spec:       specWithPipeline(tc.pipeline),
-					Runtime:    rt,
-					K8sRuntime: krt,
+					OperatorName: "test",
+					Spec:         specWithPipeline(tc.pipeline),
+					Runtime:      rt,
+					K8sRuntime:   krt,
+					Logger:       logger,
 				})
 				Expect(err).NotTo(HaveOccurred())
 
@@ -314,10 +370,10 @@ var _ = Describe("Controller", func() {
 				pub := rt.NewPublisher()
 				var out dbspruntime.Event
 				Eventually(func() bool {
-					_ = pub.Publish(dbspruntime.Event{Name: "Foo", Data: tc.input})
+					_ = pub.Publish(dbspruntime.Event{Name: inTopic, Data: tc.input})
 					select {
 					case evt, ok := <-sub.GetChannel():
-						if !ok || evt.Name != "Bar" {
+						if !ok || evt.Name != outTopic {
 							return false
 						}
 						out = evt
@@ -325,19 +381,23 @@ var _ = Describe("Controller", func() {
 					default:
 						return false
 					}
-				}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+				}, timeout, 10*time.Millisecond).Should(BeTrue())
 
 				tc.assert(out)
 			})
 		}
 
 		It("should process a simple two-source join and project expected content", func() {
-			rt := dbspruntime.NewRuntime(logr.Discard())
+			fooTopic := circuit.InputTopic("test-join-op", "Foo")
+			depTopic := circuit.InputTopic("test-join-op", "Dep")
+			outTopic := circuit.OutputTopic("test-join-op", "Bar")
+
+			rt := dbspruntime.NewRuntime(logger)
 			krt, err := k8sruntime.New(k8sruntime.Config{})
 			Expect(err).NotTo(HaveOccurred())
 
 			sub := rt.NewSubscriber()
-			sub.Subscribe("Bar")
+			sub.Subscribe(outTopic)
 
 			pipeline := `[
 				{"@join":{"@eq":["$.Dep.metadata.name","$.Foo.spec.parent"]}},
@@ -345,9 +405,10 @@ var _ = Describe("Controller", func() {
 			]`
 
 			ctrl, err := controller.New(controller.Config{
-				Spec:       joinSpecWithPipeline(pipeline),
-				Runtime:    rt,
-				K8sRuntime: krt,
+				OperatorName: "test",
+				Spec:         joinSpecWithPipeline(pipeline),
+				Runtime:      rt,
+				K8sRuntime:   krt,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -368,13 +429,13 @@ var _ = Describe("Controller", func() {
 			pub := rt.NewPublisher()
 			var out dbspruntime.Event
 			Eventually(func() bool {
-				_ = pub.Publish(dbspruntime.Event{Name: "Foo", Data: foo})
-				_ = pub.Publish(dbspruntime.Event{Name: "Dep", Data: dep})
+				_ = pub.Publish(dbspruntime.Event{Name: fooTopic, Data: foo})
+				_ = pub.Publish(dbspruntime.Event{Name: depTopic, Data: dep})
 
 				for {
 					select {
 					case evt, ok := <-sub.GetChannel():
-						if !ok || evt.Name != "Bar" {
+						if !ok || evt.Name != outTopic {
 							continue
 						}
 						if evt.Data.Size() == 0 {
@@ -386,7 +447,7 @@ var _ = Describe("Controller", func() {
 						return false
 					}
 				}
-			}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+			}, timeout, 10*time.Millisecond).Should(BeTrue())
 
 			Expect(out.Data.Size()).To(Equal(1))
 			fooNames := collectFieldStrings(out.Data, "fooName")
@@ -395,6 +456,75 @@ var _ = Describe("Controller", func() {
 			Expect(fooNames).To(ConsistOf("foo-1"))
 			Expect(depNames).To(ConsistOf("dep-a"))
 			Expect(depVersions).To(ConsistOf("v1"))
+		})
+
+		It("should process a pipeline with multiple branches", func() {
+			inTopic := circuit.InputTopic("test-op", "Foo")
+			outTopic := circuit.OutputTopic("test-op", "Bar")
+
+			rt := dbspruntime.NewRuntime(logger)
+			krt, err := k8sruntime.New(k8sruntime.Config{})
+			Expect(err).NotTo(HaveOccurred())
+
+			sub := rt.NewSubscriber()
+			sub.Subscribe(outTopic)
+
+			pipeline := `[
+				[
+					{"@inputs":["Foo"]},
+					{"@project":{"$.":"$."}},
+					{"@output":"Mid"}
+				],
+				[
+					{"@inputs":["Mid"]},
+					{"@project":[{"$.":"$."},{"$.spec.y":"$.spec.x"}]},
+					{"@output":"Bar"}
+				]
+			]`
+
+			ctrl, err := controller.New(controller.Config{
+				OperatorName: "test",
+				Spec:         specWithPipeline(pipeline),
+				Runtime:      rt,
+				K8sRuntime:   krt,
+				Logger:       logger,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			go func() { _ = ctrl.GetCircuit().Start(ctx) }()
+
+			in := zsetFromDocs(map[string]any{
+				"metadata": map[string]any{"name": "foo-obj", "namespace": "default"},
+				"spec":     map[string]any{"x": int64(7)},
+			})
+
+			pub := rt.NewPublisher()
+			var out dbspruntime.Event
+			Eventually(func() bool {
+				_ = pub.Publish(dbspruntime.Event{Name: inTopic, Data: in})
+				select {
+				case evt, ok := <-sub.GetChannel():
+					if !ok || evt.Name != outTopic {
+						return false
+					}
+					if evt.Data.Size() == 0 {
+						return false
+					}
+					out = evt
+					return true
+				default:
+					return false
+				}
+			}, timeout, 10*time.Millisecond).Should(BeTrue())
+
+			Expect(out.Data.Size()).To(Equal(1))
+			xs := collectFieldStrings(out.Data, "spec.x")
+			ys := collectFieldStrings(out.Data, "spec.y")
+			Expect(xs).To(ConsistOf("7"))
+			Expect(ys).To(ConsistOf("7"))
 		})
 	})
 
@@ -406,14 +536,15 @@ var _ = Describe("Controller", func() {
 				return q, nil
 			}
 
-			rt := dbspruntime.NewRuntime(logr.Discard())
+			rt := dbspruntime.NewRuntime(logger)
 			krt, err := k8sruntime.New(k8sruntime.Config{})
 			Expect(err).NotTo(HaveOccurred())
 			ctrl, err := controller.New(controller.Config{
-				Spec:        defaultSpec(),
-				Runtime:     rt,
-				K8sRuntime:  krt,
-				Transformer: transformer,
+				OperatorName: "test",
+				Spec:         defaultSpec(),
+				Runtime:      rt,
+				K8sRuntime:   krt,
+				Transformer:  transformer,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(called).To(BeTrue())
@@ -436,11 +567,12 @@ var _ = Describe("Controller", func() {
 				Targets:  []opv1a1.Target{},
 			}
 
-			rt := dbspruntime.NewRuntime(logr.Discard())
+			rt := dbspruntime.NewRuntime(logger)
 			ctrl, err := controller.New(controller.Config{
-				Spec:       watcherSpec,
-				Runtime:    rt,
-				K8sRuntime: krt,
+				OperatorName: "test",
+				Spec:         watcherSpec,
+				Runtime:      rt,
+				K8sRuntime:   krt,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ctrl).NotTo(BeNil())
@@ -462,10 +594,11 @@ var _ = Describe("Controller", func() {
 				Targets:  []opv1a1.Target{},
 			}
 
-			rt := dbspruntime.NewRuntime(logr.Discard())
+			rt := dbspruntime.NewRuntime(logger)
 			ctrl, err := controller.New(controller.Config{
-				Spec:    spec,
-				Runtime: rt,
+				OperatorName: "test",
+				Spec:         spec,
+				Runtime:      rt,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ctrl).NotTo(BeNil())

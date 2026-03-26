@@ -24,11 +24,11 @@ spec:
               type: $.spec.type
               ports: $.spec.ports
         - "@unwind": $.spec.ports
-      target:
-        kind: ServiceView
+      targets:
+        - kind: ServiceView
     # endpointslice controller:
     # - join services with the corresponding endpoint slices
-    # - create a unique service-id that will be used in gather
+    # - create a unique service-id used for grouping
     # - demux on "$.endpoints"
     # - filter ready addresses
     # - demux on $.endpoints.addresses
@@ -51,7 +51,12 @@ spec:
               metadata:
                 name: $.ServiceView.metadata.name
                 namespace: $.ServiceView.metadata.namespace
-              spec: $.ServiceView.spec
+              spec:
+                serviceName: $.ServiceView.spec.serviceName
+                type: $.ServiceView.spec.type
+                port: $.ServiceView.spec.ports.port
+                targetPort: $.ServiceView.spec.ports.targetPort
+                protocol: $.ServiceView.spec.ports.protocol
               endpoints: $.EndpointSlice.endpoints
         - "@unwind": $.endpoints
         - "@select":
@@ -63,9 +68,9 @@ spec:
             spec:
               serviceName: $.spec.serviceName
               type: $.spec.type
-              port: $.spec.ports.port
-              targetPort: $.spec.ports.targetPort
-              protocol: $.spec.ports.protocol
+              port: $.spec.port
+              targetPort: $.spec.targetPort
+              protocol: $.spec.protocol
               address: $.endpoints.addresses
         - "@project":
             - "$.": $.
@@ -75,5 +80,6 @@ spec:
                     - $.spec.serviceName
                     - "-"
                     - { "@hash": $.spec }
-      target:
-        kind: EndpointView
+                namespace: $.metadata.namespace
+      targets:
+        - kind: EndpointView

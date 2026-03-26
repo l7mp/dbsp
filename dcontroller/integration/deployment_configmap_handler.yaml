@@ -1,32 +1,24 @@
 apiVersion: dcontroller.io/v1alpha1
 kind: Operator
 metadata:
-  name: configdep-operator
+  name: deployment-configmap-handler
 spec:
   controllers:
-    - name: configmap-controller
+    - name: deployment-configmap-handler
       sources: 
         - apiGroup: ""
           kind: ConfigMap
         - apiGroup: "apps"
           kind: Deployment
-        - apiGroup: "dcontroller.io"
-          kind: ConfigDeployment
       pipeline:
         - "@join":
             "@and":
               - '@eq':
                   - $.ConfigMap.metadata.name
-                  - $.ConfigDeployment.spec.configMap
-              - '@eq':
-                  - $.Deployment.metadata.name
-                  - $.ConfigDeployment.spec.deployment
+                  - '$["Deployment"]["metadata"]["annotations"]["dcontroller.io/related-configmap"]'
               - '@eq':
                   - $.ConfigMap.metadata.namespace
                   - $.Deployment.metadata.namespace
-              - '@eq':
-                  - $.ConfigMap.metadata.namespace
-                  - $.ConfigDeployment.metadata.namespace
         - "@project":
             metadata:
               name: "$.Deployment.metadata.name"

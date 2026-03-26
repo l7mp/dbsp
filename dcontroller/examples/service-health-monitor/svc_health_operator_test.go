@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,15 +25,13 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/yaml"
 
-	"github.com/l7mp/dbsp/dcontroller/internal/testutils"
-	opv1a1 "github.com/l7mp/dbsp/dcontroller/pkg/api/operator/v1alpha1"
-	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
-	"github.com/l7mp/dbsp/dcontroller/pkg/kubernetes/controllers"
+	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
-	"github.com/l7mp/dbsp/dcontroller/pkg/testsuite"
+	opv1a1 "github.com/l7mp/dbsp/dcontroller/api/operator/v1alpha1"
+	itest "github.com/l7mp/dbsp/dcontroller/integration"
+	"github.com/l7mp/dbsp/dcontroller/operator"
 )
 
 const (
@@ -47,12 +46,11 @@ const (
 )
 
 var (
-	suite               *testsuite.Suite
+	suite               *itest.Suite
 	cfg                 *rest.Config
 	scheme              = runtime.NewScheme()
 	k8sClient, opClient client.Client
 	logger, setupLog    logr.Logger
-	api                 *cache.API
 )
 
 var _ = BeforeSuite(func() {
@@ -71,7 +69,7 @@ var _ = BeforeSuite(func() {
 	opv1a1.AddToScheme(scheme)
 
 	var err error
-	suite, err = testsuite.New(loglevel, filepath.Join("..", "..", "config", "crd", "resources"), "./")
+	suite, err = itest.NewSuite(loglevel, filepath.Join("..", "..", "config", "crd", "resources"), "./")
 	Expect(err).NotTo(HaveOccurred())
 	k8sClient = suite.K8sClient
 	cfg = suite.Cfg
@@ -124,11 +122,11 @@ var _ = Describe("Service health monitor controller test:", Ordered, func() {
 		}, "status", "conditions")
 
 		// Create test services (these will go to envtest)
-		svc1 = testutils.TestSvc.DeepCopy()
+		svc1 = itest.TestSvc.DeepCopy()
 		svc1.SetName("web-app")
 		svc1.SetNamespace("default")
 
-		svc2 = testutils.TestSvc.DeepCopy()
+		svc2 = itest.TestSvc.DeepCopy()
 		svc2.SetName("other-app")
 		svc2.SetNamespace("default")
 	})
@@ -139,32 +137,12 @@ var _ = Describe("Service health monitor controller test:", Ordered, func() {
 
 	It("should create and start the operator controller", func() {
 		setupLog.Info("setting up operator controller")
-		var err error
-		api, err = cache.NewAPI(suite.Cfg, cache.APIOptions{
-			CacheOptions: cache.CacheOptions{Logger: suite.Log},
-		})
-		Expect(err).NotTo(HaveOccurred())
-		c, err := controllers.NewOpController(cfg, api.Cache, ctrl.Options{
-			Scheme:                 scheme,
-			LeaderElection:         false, // disable leader-election
-			HealthProbeBindAddress: "0",   // disable health-check
-			Metrics: metricsserver.Options{
-				BindAddress: "0", // disable the metrics server
-			},
-			Logger: logger,
-		})
+		c, err := operator.NewOperatorController(k8sruntime.Config{RESTConfig: cfg, Logger: logger})
 		Expect(err).NotTo(HaveOccurred())
 
 		setupLog.Info("obtaining operator client")
 		opClient = c.GetClient()
 		Expect(opClient).NotTo(BeNil())
-
-		suite.Log.Info("starting shared view storage")
-		go func() {
-			defer GinkgoRecover()
-			err := api.Cache.Start(ctx)
-			Expect(err).NotTo(HaveOccurred(), "failed to start API server cache")
-		}()
 
 		setupLog.Info("starting operator controller")
 		go func() {
@@ -188,7 +166,11 @@ var _ = Describe("Service health monitor controller test:", Ordered, func() {
 		Eventually(func() bool {
 			get := &opv1a1.Operator{}
 			err := k8sClient.Get(ctx, key, get)
-			return err == nil && len(get.Status.Controllers) != 0
+			if err != nil {
+				return false
+			}
+			cond := meta.FindStatusCondition(get.Status.Conditions, string(opv1a1.OperatorConditionReady))
+			return cond != nil && cond.Status == metav1.ConditionTrue
 		}, timeout, interval).Should(BeTrue())
 	})
 
@@ -198,18 +180,13 @@ var _ = Describe("Service health monitor controller test:", Ordered, func() {
 		err := k8sClient.Get(ctx, key, opget)
 		Expect(err).NotTo(HaveOccurred())
 
-		ctrlStatuses := opget.Status.Controllers
-		Expect(ctrlStatuses).To(HaveLen(2))
-
-		for _, ctrlStatus := range ctrlStatuses {
-			Expect(ctrlStatus.LastErrors).To(BeEmpty())
-			Expect(ctrlStatus.Conditions).NotTo(BeEmpty())
-			cond := ctrlStatus.Conditions[0]
-			Expect(cond.Type).To(Equal(string(opv1a1.ControllerConditionReady)))
-			Expect(cond.Reason).To(Equal(string(opv1a1.ControllerReasonReady)))
-			Expect(cond.Message).NotTo(BeEmpty())
-			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
-		}
+		opConds := opget.Status.Conditions
+		Expect(opConds).NotTo(BeEmpty())
+		cond := meta.FindStatusCondition(opget.Status.Conditions, string(opv1a1.OperatorConditionReady))
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond.Reason).To(Equal(string(opv1a1.OperatorReasonReady)))
+		Expect(opget.Status.LastErrors).To(BeEmpty())
 	})
 
 	It("should add health annotation to Service when pods are ready", func() {

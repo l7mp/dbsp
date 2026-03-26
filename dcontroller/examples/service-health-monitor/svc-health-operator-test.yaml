@@ -11,22 +11,20 @@ spec:
       pipeline:
         - "@project":
             metadata:
-              name: "$.metadata.labels['app']"
+              name: "$.metadata.labels.app"
               namespace: "$.metadata.namespace"
             pods:
               podName: "$.metadata.name"
               ready: "$.status.conditions[?(@.type=='Ready')].status"
-        - "@gather":
-            # Key: group by service (name + namespace)
-            - "@concat":
-                - "$.metadata.name"
-                - "--"
-                - "$.metadata.namespace"
-            # Value: collapse the pods fields into a list (contains ready status)
+        - "@groupBy":
+            - "$.metadata"
             - "$.pods"
-      target:
-        kind: HealthView
-        type: Updater
+        - "@project":
+            metadata: "$.key"
+            pods: "$.values"
+      targets:
+        - kind: HealthView
+          type: Updater
 
     - name: svc-health-monitor
       sources:
@@ -53,7 +51,7 @@ spec:
                       - "/"
                       - "@string":
                           "@len": "$.HealthView.pods"
-      target:
-        apiGroup: ""
-        kind: Service
-        type: Patcher
+      targets:
+        - apiGroup: ""
+          kind: Service
+          type: Patcher
