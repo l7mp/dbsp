@@ -11,15 +11,6 @@ between producers and consumers, and the process exits automatically when the qu
 
 The example scripts live in `js/examples/`.
 
-```mermaid
-flowchart LR
-    A["JavaScript script"] --> B["SQL or aggregate compiler"]
-    B --> C["Circuit handle"]
-    C --> D["Validated runtime circuit"]
-    E["Topics and Z-sets"] --> D
-    D --> F["Consumers or Kubernetes targets"]
-```
-
 ## Build and run
 
 If you just want the CLI, install it directly:
@@ -78,7 +69,7 @@ const c = aggregate.compile([
   { "@project": { name: "$.metadata.name", status: "$.status" } }
 ], { inputs: "pods", output: "result" });
 
-c.incrementalize().validate();
+c.incrementalize();
 publish("pods", [[{ metadata: { name: "pod-a", namespace: "default" }, status: "Running" }, 1]]);
 ```
 
@@ -125,7 +116,7 @@ const c = sql.compile(
   { output: "senior-users" }
 );
 
-c.incrementalize().validate();
+c.incrementalize();
 
 publish("users", [
   [{ id: 1, name: "alice", age: 30 }, 1],
@@ -142,7 +133,7 @@ sql.table("orders", "id INTEGER PRIMARY KEY, user_id INTEGER, total REAL");
 sql.compile(
   "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id",
   { output: "user-orders" }
-).incrementalize().validate();
+).incrementalize());
 ```
 
 ### `aggregate.compile(pipeline, { inputs, output })`
@@ -158,7 +149,7 @@ const c = aggregate.compile([
   output: "obs-output",
 });
 
-c.incrementalize().validate();
+c.incrementalize();
 ```
 
 For pipelines with multiple logical inputs, bind topic names explicitly:
@@ -177,7 +168,7 @@ aggregate.compile(pipeline, {
     { name: "svc-topic", logical: "services" }
   ],
   output: { name: "result-topic", logical: "output" }
-}).incrementalize().validate();
+}).incrementalize();
 ```
 
 ### Circuit handles: `.incrementalize()`, `.validate()`, `.observe(fn)`
@@ -185,7 +176,7 @@ aggregate.compile(pipeline, {
 Both `sql.compile(...)` and `aggregate.compile(...)` return a circuit handle.
 
 `.incrementalize()` transforms the circuit into its incremental form and returns a new handle.
-`.validate()` checks the circuit and registers it with the runtime so it can process events.
+`.validate()` checks the circuit.
 `.observe(fn)` attaches a handle-scoped execution observer. Pass `null` or `undefined` to clear it.
 
 ```js
@@ -197,7 +188,7 @@ c.observe((e) => {
   console.log("node", e.node.id, "position", e.position);
 });
 
-c.incrementalize().validate();
+c.incrementalize();
 ```
 
 Handle-scoped observation is usually the easiest way to inspect a single script-built circuit.
@@ -269,15 +260,12 @@ If no error handler is installed, runtime errors are logged and the process exit
 
 ### `runtime.observe(circuitName, fn)`
 
-`runtime.observe` attaches an observer to a validated runtime circuit by name. This is useful when
-you want to observe a circuit after validation or from code that only knows the runtime name.
+`runtime.observe` attaches an observer to a runtime circuit by name. This is useful when you want to observe a circuit after validation or from code that only knows the runtime name.
 
 ```js
 const c = aggregate.compile([
   { "@project": { "$.": "$." } }
 ], { inputs: "obs-input", output: "obs-output" });
-
-c.validate();
 
 runtime.observe("aggregation", (e) => {
   console.log("runtime observer", e.node.id, e.schedule);
@@ -372,12 +360,3 @@ The CLI requires a script path today, because the interactive REPL is not implem
 
 If no kubeconfig is available, native Kubernetes resources are disabled, though view resources can
 still be used when the runtime can resolve them.
-
-## What to read next
-
-The best companion guides are:
-
-- `doc/concepts-basics-data-models-zsets-circuits-operators.md`
-- `doc/concepts-programming-compilers-and-expressions.md`
-- `doc/reference-aggregations.md`
-- `doc/reference-expressions.md`

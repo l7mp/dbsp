@@ -68,10 +68,10 @@ const c = aggregate.compile([
 The returned handle wraps the compiled circuit. By default, compiled circuits perform snapshot computation. To process changes, circuits need to be explicitly incrementalized.
 
 ```js
-c.incrementalize().validate();
+c.incrementalize();
 ```
 
-After `validate()`, the circuit is ready to process deltas: it subscribes to the `pods` topic, processes every incoming change as a Z-set, and publishes results to the `result` topic (again as a Z-set).
+At this point the circuit is ready to process deltas: it subscribes to the `pods` topic, processes every incoming change as a Z-set, and publishes results to the `result` topic (again as a Z-set).
 
 ### Incrementalization
 

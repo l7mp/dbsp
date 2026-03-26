@@ -1,4 +1,4 @@
-# Documentation Index
+# Documentation
 
 This directory is the technical documentation for DBSP in this repository. Start with the short overview documents if you are new to the project, then move on to the concepts and application-specific guides as needed.
 

@@ -125,10 +125,10 @@ sql.table("pods", "name TEXT, status TEXT, ns TEXT");
 const c = sql.compile(
     "SELECT name, status FROM pods WHERE ns = 'default'",
     { output: "filtered" }
-).incrementalize().validate();
+).incrementalize();
 ```
 
-After `validate()`, the processor is running. It reacts to events on its input topics and emits deltas on its output topics. Errors during execution are non-critical: they are reported to the runtime error handler and the processor continues processing subsequent events.
+At this point the processor is running. It reacts to events on its input topics and emits deltas on its output topics. Errors during execution are non-critical: they are reported to the runtime error handler and the processor continues processing subsequent events.
 
 ### Observers
 

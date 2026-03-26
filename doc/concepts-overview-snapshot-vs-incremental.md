@@ -15,20 +15,6 @@ pipeline `Q^Δ` maps deltas to deltas. The two are connected by integration
 (accumulating deltas into state) and differentiation (computing the
 difference between consecutive states).
 
-```mermaid
-flowchart LR
-    subgraph Snapshot
-        S_in["input state"] --> Q["Q"] --> S_out["output state"]
-    end
-
-    subgraph Incremental
-        D_in["input Δ"] --> QD["Q^Δ"] --> D_out["output Δ"]
-    end
-
-    D_in -- "integrate (I)" --> S_in
-    S_out -- "differentiate (D)" --> D_out
-```
-
 The snapshot model is the specification: it defines correct output for any
 input. The incremental model is an optimization: it produces the same
 accumulated output over time, but does less work per step. DBSP's

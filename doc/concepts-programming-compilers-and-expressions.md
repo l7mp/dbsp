@@ -18,7 +18,7 @@ The typical lifecycle is: compile a query, and optionally incrementalize the res
 
 ```js
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT, age INTEGER");
-sql.compile("SELECT name FROM users WHERE age > 25", { output: "out" }).incrementalize().validate();
+sql.compile("SELECT name FROM users WHERE age > 25", { output: "out" }).incrementalize();
 ```
 
 ## The SQL compiler
@@ -38,7 +38,7 @@ A basic filter-and-project query:
 sql.compile(
     "SELECT name, age FROM users WHERE age > 25",
     { output: "senior-users" }
-).incrementalize().validate();
+).incrementalize();
 ```
 
 Feed data by publishing rows to the table's topic:
@@ -58,7 +58,7 @@ JOIN clauses compile into a Cartesian product operator followed by the join cond
 sql.compile(
     "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id",
     { output: "user-orders" }
-).incrementalize().validate();
+).incrementalize();
 ```
 
 ```mermaid
@@ -84,7 +84,7 @@ const c = aggregate.compile([
         containers: { "@len": ["$.spec.containers"] }
     }}
 ], { inputs: "pods", output: "result" });
-c.incrementalize().validate();
+c.incrementalize();
 ```
 
 A pipeline can also be a single stage object instead of an array.
@@ -114,7 +114,7 @@ aggregate.compile(pipeline, {
 For the SQL compiler, table names serve as the input topic names by default, and the output binding is specified explicitly:
 
 ```js
-sql.compile("SELECT name FROM users", { output: "my-output-topic" }).incrementalize().validate();
+sql.compile("SELECT name FROM users", { output: "my-output-topic" }).incrementalize();
 ```
 
 ## Expressions
@@ -135,23 +135,15 @@ Inside aggregation pipeline stages, expressions follow three rules. A string sta
 
 Available expressions in this implementation:
 
-**Field access**: The [field and subject operators](reference-expressions.md#field-and-subject-operators) include `"$.path.to.field"`, which reads a value from the input document using JSONPath.
-
-**Arithmetic**: The [arithmetic operators](reference-expressions.md#arithmetic-operators) include `@add`, `@sub`, `@mul`, `@div`, and `@mod` for numeric operations.
-
-**Comparison**: The [comparison operators](reference-expressions.md#comparison-operators) include `@eq`, `@neq`, `@gt`, `@gte`, `@lt`, and `@lte`.
-
-**Boolean**: The [logical and conditional operators](reference-expressions.md#logical-and-conditional-operators) include `@and`, `@or`, and `@not`.
-
-**String**: The [string operators](reference-expressions.md#string-operators) include `@concat`, `@lower`, `@upper`, `@string`, and `@regexp`.
-
-**List**: The [list operators](reference-expressions.md#list-operators) include `@len`, `@in`, `@map`, `@filter`, `@sortBy`, `@sum`, `@min`, and `@max`.
-
-**Conditional**: The [`@cond`](reference-expressions.md#cond) operator is a ternary if-then-else: `{ "@cond": [test, ifTrue, ifFalse] }`.
-
-**Null handling**: The [null, SQL boolean, and utility operators](reference-expressions.md#null-sql-boolean-and-utility-operators) include `@isnull`, `@isnil`, and `@nil`.
-
-**Time**: The [`@now`](reference-expressions.md#now) operator produces a timestamp.
+- **Field access**: The [field and subject operators](reference-expressions.md#field-and-subject-operators) include `"$.path.to.field"`, which reads a value from the input document using JSONPath.
+- **Arithmetic**: The [arithmetic operators](reference-expressions.md#arithmetic-operators) include `@add`, `@sub`, `@mul`, `@div`, and `@mod` for numeric operations.
+- **Comparison**: The [comparison operators](reference-expressions.md#comparison-operators) include `@eq`, `@neq`, `@gt`, `@gte`, `@lt`, and `@lte`.
+- **Boolean**: The [logical and conditional operators](reference-expressions.md#logical-and-conditional-operators) include `@and`, `@or`, and `@not`.
+- **String**: The [string operators](reference-expressions.md#string-operators) include `@concat`, `@lower`, `@upper`, `@string`, and `@regexp`.
+- **List**: The [list operators](reference-expressions.md#list-operators) include `@len`, `@in`, `@map`, `@filter`, `@sortBy`, `@sum`, `@min`, and `@max`.
+- **Conditional**: The [`@cond`](reference-expressions.md#cond) operator is a ternary if-then-else: `{ "@cond": [test, ifTrue, ifFalse] }`.
+- **Null handling**: The [null, SQL boolean, and utility operators](reference-expressions.md#null-sql-boolean-and-utility-operators) include `@isnull`, `@isnil`, and `@nil`.
+- **Time**: The [`@now`](reference-expressions.md#now) operator produces a timestamp.
 
 ## A Kubernetes controller
 
@@ -177,7 +169,7 @@ const c = aggregate.compile([
     ],
     output: "pod-svc-pairs"
 });
-c.incrementalize().validate();
+c.incrementalize();
 
 // React to results
 subscribe("pod-svc-pairs", (entries) => {
@@ -187,4 +179,4 @@ subscribe("pod-svc-pairs", (entries) => {
 });
 ```
 
-The call `validate()` makes sure the compiled circuit is semantically correct. After this, the circuit is live. Every time a Pod or Service is created, updated, or deleted, the circuit processes only the change and emits the corresponding delta on the output topic.
+The circuit is now alive: every time a Pod or Service is created, updated, or deleted, the circuit processes only the change and emits the corresponding delta on the output topic.
