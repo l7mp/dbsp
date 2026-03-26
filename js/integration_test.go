@@ -213,6 +213,164 @@ runtime.onError((e) => {
 		Expect(fmt.Sprint(message)).To(ContainSubstring(sentinel.Error()))
 	})
 
+	It("supports cancel() inside consumer callback", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("cancel-collector", vm.runtime, "cancel-events")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+let called = 0;
+consumer("cancel-in", (entries) => {
+  called += 1;
+  runtime.publish("cancel-events", [[{count: called}, 1]]);
+  cancel();
+});
+
+publish("cancel-in", [[{id: 1}, 1]]);
+publish("cancel-in", [[{id: 2}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() int {
+			return len(collector.Snapshot())
+		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+	})
+
+	It("cancel() outside callback context stops the script", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		Expect(runScript(vm, `cancel();`)).To(Succeed())
+	})
+
+	It("invokes circuit.observe callback with execution payload", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("observe-collector", vm.runtime, "observe-events")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		outCollector, err := newCollectingConsumer("observe-out-collector", vm.runtime, "obs-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(outCollector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {
+  inputs: "obs-in",
+  output: "obs-out"
+});
+
+c.observe((e) => {
+  runtime.publish("observe-events", [[{
+    node: e.node.id,
+    kind: e.node.kind,
+    position: e.position,
+    scheduleLen: e.schedule.length
+  }, 1]]);
+});
+
+c.validate();
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() bool {
+			if err := runScript(vm, `publish("obs-in", [[{id: 101}, 1]]);`); err != nil {
+				return false
+			}
+			events := outCollector.Snapshot()
+			return len(events) > 0
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		entries := first.Data.Entries()
+		Expect(entries).NotTo(BeEmpty())
+		node, err := entries[0].Document.GetField("node")
+		Expect(err).NotTo(HaveOccurred())
+		kind, err := entries[0].Document.GetField("kind")
+		Expect(err).NotTo(HaveOccurred())
+		scheduleLen, err := entries[0].Document.GetField("scheduleLen")
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(fmt.Sprint(node)).NotTo(BeEmpty())
+		Expect(fmt.Sprint(kind)).NotTo(BeEmpty())
+		Expect(fmt.Sprint(scheduleLen)).NotTo(Equal("0"))
+	})
+
+	It("invokes runtime.observe callback for a named circuit", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("runtime-observe-collector", vm.runtime, "runtime-observe-events")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		outCollector, err := newCollectingConsumer("runtime-observe-out-collector", vm.runtime, "obs-runtime-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(outCollector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {
+  inputs: "obs-runtime-in",
+  output: "obs-runtime-out"
+});
+
+c.validate();
+
+runtime.observe("aggregation", (e) => {
+  runtime.publish("runtime-observe-events", [[{
+    node: e.node.id,
+    position: e.position
+  }, 1]]);
+});
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() bool {
+			if err := runScript(vm, `publish("obs-runtime-in", [[{id: 202}, 1]]);`); err != nil {
+				return false
+			}
+			events := outCollector.Snapshot()
+			return len(events) > 0
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		entries := first.Data.Entries()
+		Expect(entries).NotTo(BeEmpty())
+		node, err := entries[0].Document.GetField("node")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fmt.Sprint(node)).NotTo(BeEmpty())
+	})
+
 	It("runs without kubeconfig until kubernetes plumbing is requested", func() {
 		oldKubeconfig, hadKubeconfig := os.LookupEnv("KUBECONFIG")
 		Expect(os.Setenv("KUBECONFIG", "/nonexistent/kubeconfig")).To(Succeed())

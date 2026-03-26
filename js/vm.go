@@ -24,13 +24,13 @@ import (
 )
 
 type VM struct {
-	rt      *goja.Runtime
-	loop    *eventloop.EventLoop
-	runtime *dbspruntime.Runtime
-	db      *relation.Database
-	logger  logr.Logger
-	ctx     context.Context
-	cancel  context.CancelFunc
+	rt       *goja.Runtime
+	loop     *eventloop.EventLoop
+	runtime  *dbspruntime.Runtime
+	db       *relation.Database
+	logger   logr.Logger
+	ctx      context.Context
+	cancelVM context.CancelFunc
 
 	runtimeDone      chan error
 	runtimeErrCh     chan dbspruntime.Error
@@ -42,10 +42,21 @@ type VM struct {
 	runtimeErrHandler  goja.Callable
 	firstRuntimeErrOut error
 
+	ctxMu    sync.RWMutex
+	ctxStack []cancelContext
+
 	k8sMu              sync.Mutex
 	k8sRuntime         *k8sruntime.Runtime
 	k8sNativeAvailable bool
 }
+
+type cancelContext interface {
+	Cancel() error
+}
+
+type cancelContextFunc func() error
+
+func (f cancelContextFunc) Cancel() error { return f() }
 
 const (
 	idlePollInterval   = 25 * time.Millisecond
@@ -65,7 +76,7 @@ func NewVM(logger logr.Logger) (*VM, error) {
 		db:           relation.NewDatabase("dbsp"),
 		logger:       logger,
 		ctx:          ctx,
-		cancel:       cancel,
+		cancelVM:     cancel,
 		runtimeDone:  make(chan error, 1),
 		runtimeErrCh: make(chan dbspruntime.Error, dbspruntime.EventBufferSize),
 	}
@@ -103,7 +114,7 @@ func NewVM(logger logr.Logger) (*VM, error) {
 func (v *VM) Close() {
 	v.closeOnce.Do(func() {
 		v.logger.V(1).Info("vm shutdown requested")
-		v.cancel()
+		v.cancelVM()
 		if v.loop != nil {
 			v.loop.Terminate()
 		}
@@ -406,6 +417,9 @@ func (v *VM) injectGlobals() error {
 	if err := v.rt.Set("subscribe", v.wrap(v.subscribe)); err != nil {
 		return err
 	}
+	if err := v.rt.Set("cancel", v.wrap(v.cancel)); err != nil {
+		return err
+	}
 
 	runtimeObj := v.rt.NewObject()
 	if err := runtimeObj.Set("sql", sqlObj); err != nil {
@@ -429,6 +443,12 @@ func (v *VM) injectGlobals() error {
 	if err := runtimeObj.Set("onError", v.wrap(v.runtimeOnError)); err != nil {
 		return err
 	}
+	if err := runtimeObj.Set("observe", v.wrap(v.runtimeObserve)); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("cancel", v.wrap(v.cancel)); err != nil {
+		return err
+	}
 	if err := v.rt.Set("runtime", runtimeObj); err != nil {
 		return err
 	}
@@ -447,6 +467,34 @@ func (v *VM) wrap(fn func(call goja.FunctionCall) (goja.Value, error)) func(call
 		}
 		return value
 	}
+}
+
+func (v *VM) withCancelContext(ctx cancelContext, run func()) {
+	v.ctxMu.Lock()
+	v.ctxStack = append(v.ctxStack, ctx)
+	v.ctxMu.Unlock()
+
+	defer func() {
+		v.ctxMu.Lock()
+		v.ctxStack = v.ctxStack[:len(v.ctxStack)-1]
+		v.ctxMu.Unlock()
+	}()
+
+	run()
+}
+
+func (v *VM) currentCancelContext() cancelContext {
+	v.ctxMu.RLock()
+	defer v.ctxMu.RUnlock()
+
+	if len(v.ctxStack) == 0 {
+		return cancelContextFunc(func() error {
+			v.cancelVM()
+			return nil
+		})
+	}
+
+	return v.ctxStack[len(v.ctxStack)-1]
 }
 
 func toAnySlice(v any) ([]any, bool) {
