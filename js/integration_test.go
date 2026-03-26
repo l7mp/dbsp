@@ -105,6 +105,19 @@ func zsetRowsByField(ev dbspruntime.Event, field string) []string {
 	return rows
 }
 
+func zsetRowsJSON(ev dbspruntime.Event) []string {
+	rows := make([]string, 0, ev.Data.Size())
+	ev.Data.Iter(func(doc datamodel.Document, weight zset.Weight) bool {
+		b, err := doc.MarshalJSON()
+		if err == nil {
+			rows = append(rows, fmt.Sprintf("%d:%s", weight, string(b)))
+		}
+		return true
+	})
+	sort.Strings(rows)
+	return rows
+}
+
 var _ = Describe("VM integration", func() {
 	type scriptCase struct {
 		name     string
@@ -597,5 +610,242 @@ c.validate();
 
 		Expect(first.Name).To(Equal("sql-bind-out"))
 		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:41"}))
+	})
+
+	It("doc snippet basics: zset insert then update as delete plus insert", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("doc-basics-users", vm.runtime, "users")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+publish("users", [
+  [{ id: 1, name: "alice" }, 1],
+  [{ id: 2, name: "bob" }, 1]
+]);
+
+publish("users", [
+  [{ id: 1, name: "alice" }, -1],
+  [{ id: 2, name: "bob" }, -1],
+  [{ id: 2, name: "bob-updated" }, 1]
+]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() int {
+			return len(collector.Snapshot())
+		}, 2*time.Second, 10*time.Millisecond).Should(Equal(2))
+
+		events := collector.Snapshot()
+		Expect(zsetRowsByField(events[0], "id")).To(Equal([]string{"1:1", "1:2"}))
+		Expect(zsetRowsByField(events[1], "id")).To(Equal([]string{"-1:1", "-1:2", "1:2"}))
+	})
+
+	It("doc snippet basics: aggregate select project incrementalized", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("doc-basics-result", vm.runtime, "result")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@select": {"@eq": ["$.metadata.namespace", "default"]}},
+  {"@project": {name: "$.metadata.name", status: "$.status"}}
+], {inputs: "pods", output: "result"});
+c.incrementalize().validate();
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Expect(runScript(vm, `publish("pods", [[{metadata:{name:"pod-a",namespace:"default"},status:"Running"},1]]);`)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		rows := zsetRowsByField(first, "name")
+		Expect(rows).To(Equal([]string{"1:pod-a"}))
+	})
+
+	It("doc snippet runtime: publish and subscribe shorthands", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("doc-runtime-topic", vm.runtime, "my-topic-copy")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+subscribe("my-topic", (entries) => {
+  runtime.publish("my-topic-copy", entries);
+  cancel();
+});
+
+publish("my-topic", [[{ id: 1, name: "alice" }, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(first.Name).To(Equal("my-topic-copy"))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:1"}))
+	})
+
+	It("doc snippet runtime: processor with observer and runtime.observe", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("doc-runtime-obs", vm.runtime, "obs-events")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {inputs: "pods", output: "result-observed"});
+
+c.observe((e) => {
+  runtime.publish("obs-events", [[{via: "handle", node: e.node.id}, 1]]);
+});
+
+c.validate();
+
+runtime.observe("aggregation", (e) => {
+  runtime.publish("obs-events", [[{via: "runtime", node: e.node.id}, 1]]);
+  cancel();
+});
+
+publish("pods", [[{id: 9}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() int {
+			return len(collector.Snapshot())
+		}, 2*time.Second, 10*time.Millisecond).Should(BeNumerically(">=", 1))
+
+		events := collector.Snapshot()
+		allRows := make([]string, 0, len(events))
+		for _, e := range events {
+			allRows = append(allRows, zsetRowsByField(e, "via")...)
+		}
+		found := false
+		for _, row := range allRows {
+			if row == "1:runtime" {
+				found = true
+				break
+			}
+		}
+		Expect(found).To(BeTrue())
+	})
+
+	It("doc snippet programming: SQL table and filter query", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("doc-sql-senior", vm.runtime, "senior-users")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+sql.table("users", "id INTEGER PRIMARY KEY, name TEXT, age INTEGER");
+sql.compile("SELECT name, age FROM users WHERE age > 25", { output: "senior-users" }).incrementalize().validate();
+publish("users", [
+  [{ id: 1, name: "alice", age: 30 }, 1],
+  [{ id: 2, name: "bob", age: 22 }, 1]
+]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		rows := zsetRowsByField(first, "name")
+		Expect(rows).To(Equal([]string{"1:alice"}))
+	})
+
+	It("doc snippet programming: SQL compile accepts join query", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		script := `
+sql.table("users", "id INTEGER PRIMARY KEY, name TEXT");
+sql.table("orders", "id INTEGER PRIMARY KEY, user_id INTEGER, total REAL");
+sql.compile("SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id", { output: "user-orders" }).incrementalize().validate();
+`
+		Expect(runScript(vm, script)).To(Succeed())
+	})
+
+	It("doc snippet programming: aggregate pipeline with explicit bindings", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("doc-agg-bindings", vm.runtime, "result-topic")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const pipeline = [
+  [{"@inputs": ["pods", "services"]},
+   {"@join": {"@eq": ["$.pods.metadata.name", "$.services.metadata.name"]}},
+   {"@project": {pod: "$.pods.metadata.name", svc: "$.services.metadata.name"}},
+   {"@output": "output"}]
+];
+
+aggregate.compile(pipeline, {
+  inputs: [
+    {name: "pods-topic", logical: "pods"},
+    {name: "svc-topic", logical: "services"}
+  ],
+  output: {name: "result-topic", logical: "output"}
+}).incrementalize().validate();
+
+publish("pods-topic", [[{metadata:{name:"shared"}}, 1]]);
+publish("svc-topic", [[{metadata:{name:"shared"}}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			for _, ev := range events {
+				if got := zsetRowsByField(ev, "pod"); len(got) > 0 && got[0] == "1:shared" {
+					return true
+				}
+			}
+			return false
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
 	})
 })
