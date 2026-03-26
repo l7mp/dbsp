@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ohler55/ojg/jp"
+
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 )
@@ -65,6 +67,10 @@ func (p *Product) Merge(other datamodel.Document) datamodel.Document {
 func (p *Product) New() datamodel.Document { return &Product{parts: map[string]datamodel.Document{}} }
 
 func (p *Product) GetField(key string) (any, error) {
+	if strings.HasPrefix(key, "$[") {
+		return p.getJSONPath(key)
+	}
+
 	if key == "$" || key == "$." {
 		root := map[string]any{}
 		for k, v := range p.parts {
@@ -82,6 +88,32 @@ func (p *Product) GetField(key string) (any, error) {
 		return d, nil
 	}
 	return d.GetField(parts[1])
+}
+
+func (p *Product) getJSONPath(key string) (any, error) {
+	expr, err := jp.ParseString(key)
+	if err != nil {
+		return nil, fmt.Errorf("invalid JSONPath %q: %w", key, err)
+	}
+
+	root := map[string]any{}
+	for k, v := range p.parts {
+		if v == nil {
+			root[k] = nil
+			continue
+		}
+		root[k] = v.Fields()
+	}
+
+	results := expr.Get(root)
+	if len(results) == 0 {
+		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
+	}
+	if len(results) == 1 {
+		return results[0], nil
+	}
+
+	return results, nil
 }
 
 func (p *Product) SetField(key string, value any) error {

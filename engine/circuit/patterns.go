@@ -72,9 +72,9 @@ func BilinearIncremental(name string, bilinearOp operator.Operator) *Circuit {
 }
 
 // DistinctKeyedIncremental creates the incremental circuit for distinct_π.
-// It uses the generic aggregate reducer equivalent for distinct_π.
+// It uses the dedicated deterministic DistinctPi operator.
 //
-//	delta ──→ aggregate_keyed(distinct_π) ──→ out
+//	delta ──→ distinct_pi ──→ out
 func DistinctKeyedIncremental(name string) *Circuit {
 	c := New(name)
 

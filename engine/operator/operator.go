@@ -6,8 +6,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/l7mp/dbsp/engine/zset"
 	"github.com/l7mp/dbsp/engine/internal/logger"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
 // Operator is a computation on Z-sets.
@@ -83,8 +83,9 @@ const (
 	KindCartesian // CartesianProduct: A × B.
 
 	// Non-linear operators (D ∘ O ∘ ∫ wrapping).
-	KindDistinct  // Distinct: set conversion.
-	KindAggregate // Aggregate: generic incremental GROUP BY aggregate.
+	KindDistinct   // Distinct: set conversion.
+	KindDistinctPi // DistinctPi: deterministic keyed representative selector.
+	KindGroupBy    // GroupBy: generic incremental grouping.
 )
 
 // String returns a human-readable name for the operator kind.
@@ -118,8 +119,10 @@ func (k Kind) String() string {
 		return "cartesian"
 	case KindDistinct:
 		return "distinct"
-	case KindAggregate:
-		return "aggregate_keyed"
+	case KindDistinctPi:
+		return "distinct_pi"
+	case KindGroupBy:
+		return "group_by"
 	default:
 		return "unknown"
 	}

@@ -23,6 +23,9 @@ func (s StringElem) Merge(other datamodel.Document) datamodel.Document {
 func (s StringElem) New() datamodel.Document        { return StringElem("") }
 func (s StringElem) GetField(_ string) (any, error) { return string(s), nil }
 func (s StringElem) SetField(_ string, _ any) error { return nil }
+func (s StringElem) Fields() map[string]any {
+	return map[string]any{"value": string(s)}
+}
 func (s StringElem) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(s))
 }
@@ -77,8 +80,8 @@ func (r Record) UnmarshalJSON(data []byte) error {
 	_ = fields
 	return nil
 }
-func (r Record) Fields() []string {
-	return []string{"id", "value"}
+func (r Record) Fields() map[string]any {
+	return map[string]any{"id": r.ID, "value": r.Value}
 }
 
 // ArrayRecord is a test document with an array field for Unwind testing.
@@ -128,8 +131,10 @@ func (r ArrayRecord) UnmarshalJSON(data []byte) error {
 	_ = fields
 	return nil
 }
-func (r ArrayRecord) Fields() []string {
-	return []string{"id", "values"}
+func (r ArrayRecord) Fields() map[string]any {
+	values := make([]any, len(r.Values))
+	copy(values, r.Values)
+	return map[string]any{"id": r.ID, "values": values}
 }
 
 // MutableRecord is a mutable test document with pointer receiver.
@@ -185,6 +190,16 @@ func (r *MutableRecord) SetField(key string, value any) error {
 	r.FieldMap[key] = value
 	return nil
 }
+func (r *MutableRecord) Fields() map[string]any {
+	if r == nil || r.FieldMap == nil {
+		return nil
+	}
+	out := make(map[string]any, len(r.FieldMap))
+	for k, v := range r.FieldMap {
+		out[k] = deepCopyAny(v)
+	}
+	return out
+}
 func (r *MutableRecord) MarshalJSON() ([]byte, error) {
 	return json.Marshal(r.FieldMap)
 }
@@ -193,4 +208,23 @@ func (r *MutableRecord) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("MutableRecord must be non-nil for JSON decoding")
 	}
 	return json.Unmarshal(data, &r.FieldMap)
+}
+
+func deepCopyAny(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, vv := range x {
+			m[k] = deepCopyAny(vv)
+		}
+		return m
+	case []any:
+		s := make([]any, len(x))
+		for i, vv := range x {
+			s[i] = deepCopyAny(vv)
+		}
+		return s
+	default:
+		return v
+	}
 }

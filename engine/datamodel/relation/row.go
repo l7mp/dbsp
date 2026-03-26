@@ -168,20 +168,42 @@ func (r *Row) SetField(field string, value any) error {
 	return fmt.Errorf("%w: column %s not found", datamodel.ErrFieldNotFound, field)
 }
 
-// Fields returns column names for this row.
-func (r *Row) Fields() []string {
+// Fields returns a deep copy of row fields as a map.
+func (r *Row) Fields() map[string]any {
 	if r.Table == nil || r.Table.Schema == nil {
 		return nil
 	}
-	fields := make([]string, 0, len(r.Table.Schema.Columns))
-	for _, col := range r.Table.Schema.Columns {
-		if col.QualifiedName != "" {
-			fields = append(fields, col.QualifiedName)
-			continue
+	fields := make(map[string]any, len(r.Table.Schema.Columns))
+	for i, col := range r.Table.Schema.Columns {
+		var value any
+		if i < len(r.Data) {
+			value = deepCopyRowValue(r.Data[i])
 		}
-		fields = append(fields, col.Name)
+		fields[col.Name] = value
+		if col.QualifiedName != "" {
+			fields[col.QualifiedName] = value
+		}
 	}
 	return fields
+}
+
+func deepCopyRowValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, vv := range x {
+			m[k] = deepCopyRowValue(vv)
+		}
+		return m
+	case []any:
+		s := make([]any, len(x))
+		for i, vv := range x {
+			s[i] = deepCopyRowValue(vv)
+		}
+		return s
+	default:
+		return v
+	}
 }
 
 func (s *Schema) AliasForColumn(name string) (string, bool) {

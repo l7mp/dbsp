@@ -107,6 +107,12 @@ var _ = Describe("JSON round-trip", func() {
 			Expect(j2).To(Equal(j1))
 		})
 
+		It("@get bracketed JSONPath", func() {
+			j1, j2 := stableJSON(dbsp.NewGet(`$["fieldname"]`))
+			Expect(j1).To(Equal(`"$[\"fieldname\"]"`))
+			Expect(j2).To(Equal(j1))
+		})
+
 		It("@add", func() {
 			j1, j2 := stableJSON(dbsp.NewAdd(dbsp.NewInt(1), dbsp.NewInt(2)))
 			Expect(j1).To(Equal(`{"@add":[1,2]}`))
@@ -247,6 +253,8 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@list empty", `[]`),
 			Entry("@get", `"$.fieldname"`),
 			Entry("@getsub", `"$$.fieldname"`),
+			Entry("@get bracketed JSONPath", `"$[\"fieldname\"]"`),
+			Entry("@getsub bracketed JSONPath", `"$$[\"fieldname\"]"`),
 			Entry("@dict plain", `{"key":1}`),
 			Entry("@add binary", `{"@add":[1,2]}`),
 			Entry("@add variadic", `{"@add":[1,2,3]}`),
@@ -259,6 +267,7 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@or", `{"@or":[true,false]}`),
 			Entry("@not", `{"@not":true}`),
 			Entry("@eq", `{"@eq":["$.x",1]}`),
+			Entry("@eq with bracketed @get", `{"@eq":["$[\"lhs\"]","$[\"rhs\"]"]}`),
 			Entry("@neq", `{"@neq":["$.x",0]}`),
 			Entry("@gt", `{"@gt":["$.age",18]}`),
 			Entry("@gte", `{"@gte":["$.age",18]}`),
@@ -330,6 +339,14 @@ var _ = Describe("JSON round-trip", func() {
 
 		It("explicit @get form also parses (normalises to natural form)", func() {
 			Expect(canonicalJSON(`{"@get":"fieldname"}`)).To(Equal(`"$.fieldname"`))
+		})
+
+		It("explicit @get bracketed JSONPath also parses", func() {
+			Expect(canonicalJSON(`{"@get":"$[\"fieldname\"]"}`)).To(Equal(`"$[\"fieldname\"]"`))
+		})
+
+		It("explicit @getsub bracketed JSONPath also parses", func() {
+			Expect(canonicalJSON(`{"@getsub":"$[\"fieldname\"]"}`)).To(Equal(`"$$[\"fieldname\"]"`))
 		})
 	})
 

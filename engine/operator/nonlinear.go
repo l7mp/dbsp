@@ -1,13 +1,13 @@
 package operator
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/expression"
-	exprdbsp "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -32,73 +32,55 @@ func (o *Distinct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
-// Aggregate is a generic self-contained incremental GROUP BY aggregate.
-// It computes one output row per affected primary key using expression-based
-// key/value extraction and reduce logic.
-type Aggregate struct {
+// DistinctPi is a deterministic keyed representative selector.
+//
+// Documents are grouped by primary key. For each group with positive
+// multiplicity it emits exactly one representative document selected by
+// lexicographically minimal document hash (lexmin).
+//
+// Output rows have the shape:
+//   - key: primary key string.
+//   - value: representative document.
+type DistinctPi struct {
 	nonLinearOp
-	state      keyedState
-	keyExpr    expression.Expression
-	valueExpr  expression.Expression
-	reduceExpr expression.Expression
-	setExpr    expression.Expression
-	outField   string
+	state distinctPiState
 }
 
-// NewAggregate creates a generic aggregate.
-func NewAggregate(keyExpr, valueExpr, reduceExpr expression.Expression, outField string, opts ...Option) *Aggregate {
-	if valueExpr == nil {
-		valueExpr = exprdbsp.NewSubject()
-	}
-	if reduceExpr == nil {
-		reduceExpr = exprdbsp.NewSubject()
-	}
-	if outField == "" {
-		outField = "value"
-	}
-	return &Aggregate{
-		nonLinearOp: newNonLinearOp(KindAggregate, 1, "Aggregate", opts),
-		state: keyedState{
-			pkIndex: map[string]map[string]datamodel.Document{},
-			weights: map[string]zset.Weight{},
+// NewDistinctPi creates a strict distinct_pi operator.
+func NewDistinctPi(opts ...Option) *DistinctPi {
+	return &DistinctPi{
+		nonLinearOp: newNonLinearOp(KindDistinctPi, 1, "DistinctPi", opts),
+		state: distinctPiState{
+			buckets: map[string]*distinctPiBucket{},
 		},
-		keyExpr:    keyExpr,
-		valueExpr:  valueExpr,
-		reduceExpr: reduceExpr,
-		setExpr:    nil,
-		outField:   outField,
 	}
 }
 
-// Set initializes Aggregate state from v.
-func (o *Aggregate) Set(v zset.ZSet) {
-	o.state.resetFrom(v)
+// Set initializes DistinctPi state from a full input snapshot.
+func (o *DistinctPi) Set(v zset.ZSet) {
+	o.state = distinctPiState{buckets: map[string]*distinctPiBucket{}}
+	_, _ = o.state.applyDelta(v)
 }
 
 // Apply implements Operator.
-func (o *Aggregate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
-	reducer := aggregateReducer{
-		keyExpr:    o.keyExpr,
-		valueExpr:  o.valueExpr,
-		reduceExpr: o.reduceExpr,
-		setExpr:    o.setExpr,
-		outField:   o.outField,
-	}
+func (o *DistinctPi) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	if o.logger.V(2).Enabled() {
 		o.logger.V(2).Info("dbsp runtime state",
-			"event_type", "aggregate.state.before",
+			"event_type", "distinct_pi.state.before",
 			"component_type", "operator",
 			"component", o.String(),
 			"state", o.state.snapshot(),
 		)
 	}
-	result, err := o.state.applyDelta(inputs[0], reducer)
+
+	result, err := o.state.applyDelta(inputs[0])
 	if err != nil {
 		return zset.New(), err
 	}
+
 	if o.logger.V(2).Enabled() {
 		o.logger.V(2).Info("dbsp runtime state",
-			"event_type", "aggregate.state.after",
+			"event_type", "distinct_pi.state.after",
 			"component_type", "operator",
 			"component", o.String(),
 			"state", o.state.snapshot(),
@@ -109,252 +91,524 @@ func (o *Aggregate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
-// NewAggregateWithSet creates a keyed aggregate that preserves a
-// representative input document and applies setExpr to write the reduced value.
-// In setExpr evaluation, Document() is the representative document and Subject()
-// is the reduced value.
-func NewAggregateWithSet(keyExpr, valueExpr, reduceExpr, setExpr expression.Expression, opts ...Option) *Aggregate {
-	op := NewAggregate(keyExpr, valueExpr, reduceExpr, "", opts...)
-	op.setExpr = setExpr
-	op.display = "Aggregate(set)"
-	return op
+type distinctPiBucket struct {
+	docs    map[string]datamodel.Document
+	weights map[string]zset.Weight
 }
 
-// NewDistinctPi returns a generic aggregate operator equivalent to the distinct_π semantics
-func NewDistinctPi(opts ...Option) *Aggregate {
-	op := NewAggregate(nil, nil, exprdbsp.NewLexMin(exprdbsp.NewSubject()), "value", opts...)
-	op.display = "Aggregate(distinct_pi)"
-	return op
+type distinctPiState struct {
+	buckets map[string]*distinctPiBucket
 }
 
-type keyedState struct {
-	pkIndex map[string]map[string]datamodel.Document // pk → hash → Document (positive-weight only)
-	weights map[string]zset.Weight                   // hash → accumulated weight
-}
-
-func (s *keyedState) ensure() {
-	if s.pkIndex == nil {
-		s.pkIndex = map[string]map[string]datamodel.Document{}
-	}
-	if s.weights == nil {
-		s.weights = map[string]zset.Weight{}
+func (s *distinctPiState) ensure() {
+	if s.buckets == nil {
+		s.buckets = map[string]*distinctPiBucket{}
 	}
 }
 
-func (s *keyedState) resetFrom(v zset.ZSet) {
-	s.pkIndex = map[string]map[string]datamodel.Document{}
-	s.weights = map[string]zset.Weight{}
-	if v.Size() == 0 {
-		return
-	}
-	v.Iter(func(elem datamodel.Document, w zset.Weight) bool {
-		h := elem.Hash()
-		s.weights[h] = w
-		if w > 0 {
-			pk, _ := elem.PrimaryKey()
-			if s.pkIndex[pk] == nil {
-				s.pkIndex[pk] = map[string]datamodel.Document{}
-			}
-			s.pkIndex[pk][h] = elem
-		}
-		return true
-	})
-}
-
-type keyedReducer interface {
-	before(pk string, docs map[string]datamodel.Document, weights map[string]zset.Weight) (datamodel.Document, error)
-	after(pk string, docs map[string]datamodel.Document, weights map[string]zset.Weight) (datamodel.Document, error)
-}
-
-func (s *keyedState) applyDelta(delta zset.ZSet, reducer keyedReducer) (zset.ZSet, error) {
-	s.ensure()
-
-	affectedPKs := map[string]struct{}{}
-	var iterErr error
-	delta.Iter(func(elem datamodel.Document, _ zset.Weight) bool {
-		pk, err := elem.PrimaryKey()
-		if err != nil {
-			iterErr = fmt.Errorf("keyed reducer: PrimaryKey: %w", err)
-			return false
-		}
-		affectedPKs[pk] = struct{}{}
-		return true
-	})
-	if iterErr != nil {
-		return zset.New(), iterErr
-	}
-
-	result := zset.New()
-	keys := make([]string, 0, len(affectedPKs))
-	for pk := range affectedPKs {
-		keys = append(keys, pk)
-	}
-	sort.Strings(keys)
-
-	for _, pk := range keys {
-		oldRow, err := reducer.before(pk, s.pkIndex[pk], s.weights)
-		if err != nil {
-			return zset.New(), err
-		}
-
-		delta.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-			epk, err := elem.PrimaryKey()
-			if err != nil || epk != pk {
-				return true
-			}
-			h := elem.Hash()
-			oldWeight := s.weights[h]
-			newWeight := oldWeight + weight
-			s.weights[h] = newWeight
-			if oldWeight <= 0 && newWeight > 0 {
-				if s.pkIndex[pk] == nil {
-					s.pkIndex[pk] = map[string]datamodel.Document{}
-				}
-				s.pkIndex[pk][h] = elem
-			} else if oldWeight > 0 && newWeight <= 0 {
-				delete(s.pkIndex[pk], h)
-				if len(s.pkIndex[pk]) == 0 {
-					delete(s.pkIndex, pk)
-				}
-			}
-			return true
-		})
-
-		newRow, err := reducer.after(pk, s.pkIndex[pk], s.weights)
-		if err != nil {
-			return zset.New(), err
-		}
-
-		if oldRow != nil && (newRow == nil || oldRow.Hash() != newRow.Hash()) {
-			result.Insert(oldRow, -1)
-		}
-		if newRow != nil && (oldRow == nil || oldRow.Hash() != newRow.Hash()) {
-			result.Insert(newRow, 1)
-		}
-	}
-
-	return result, nil
-}
-
-func (s *keyedState) snapshot() []string {
-	if s == nil || len(s.pkIndex) == 0 {
+func (s *distinctPiState) snapshot() []string {
+	if s == nil || len(s.buckets) == 0 {
 		return []string{}
 	}
-	pks := make([]string, 0, len(s.pkIndex))
-	for pk := range s.pkIndex {
+
+	pks := make([]string, 0, len(s.buckets))
+	for pk := range s.buckets {
 		pks = append(pks, pk)
 	}
 	sort.Strings(pks)
 
 	out := make([]string, 0)
 	for _, pk := range pks {
-		docs := s.pkIndex[pk]
-		hashes := make([]string, 0, len(docs))
-		for h := range docs {
+		bucket := s.buckets[pk]
+		hashes := make([]string, 0, len(bucket.docs))
+		for h := range bucket.docs {
 			hashes = append(hashes, h)
 		}
 		sort.Strings(hashes)
 		for _, h := range hashes {
-			doc := docs[h]
-			w := s.weights[h]
+			doc := bucket.docs[h]
+			w := bucket.weights[h]
 			out = append(out, fmt.Sprintf("pk=%s hash=%s weight=%d doc=%s", pk, h, w, doc.String()))
 		}
 	}
+
 	return out
 }
 
-type aggregateReducer struct {
-	keyExpr    expression.Expression
-	valueExpr  expression.Expression
-	reduceExpr expression.Expression
-	setExpr    expression.Expression
-	outField   string
+func (s *distinctPiState) applyDelta(delta zset.ZSet) (zset.ZSet, error) {
+	s.ensure()
+
+	affected := map[string]struct{}{}
+	var iterErr error
+
+	delta.Iter(func(elem datamodel.Document, _ zset.Weight) bool {
+		pk, err := elem.PrimaryKey()
+		if err != nil {
+			iterErr = fmt.Errorf("distinct_pi: primary key: %w", err)
+			return false
+		}
+		affected[pk] = struct{}{}
+		return true
+	})
+	if iterErr != nil {
+		return zset.New(), iterErr
+	}
+
+	oldRows := map[string]datamodel.Document{}
+	pks := make([]string, 0, len(affected))
+	for pk := range affected {
+		pks = append(pks, pk)
+	}
+	sort.Strings(pks)
+
+	for _, pk := range pks {
+		oldRows[pk] = buildDistinctPiRow(pk, s.buckets[pk])
+	}
+
+	delta.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+		pk, err := elem.PrimaryKey()
+		if err != nil {
+			iterErr = fmt.Errorf("distinct_pi: primary key: %w", err)
+			return false
+		}
+
+		bucket := s.buckets[pk]
+		if bucket == nil {
+			bucket = &distinctPiBucket{
+				docs:    map[string]datamodel.Document{},
+				weights: map[string]zset.Weight{},
+			}
+			s.buckets[pk] = bucket
+		}
+
+		h := elem.Hash()
+		oldW := bucket.weights[h]
+		newW := oldW + weight
+
+		switch {
+		case oldW <= 0 && newW > 0:
+			bucket.docs[h] = elem
+			bucket.weights[h] = newW
+		case oldW > 0 && newW <= 0:
+			delete(bucket.docs, h)
+			delete(bucket.weights, h)
+		case newW > 0:
+			bucket.weights[h] = newW
+		default:
+			delete(bucket.weights, h)
+		}
+
+		if len(bucket.docs) == 0 {
+			delete(s.buckets, pk)
+		}
+		return true
+	})
+	if iterErr != nil {
+		return zset.New(), iterErr
+	}
+
+	out := zset.New()
+	for _, pk := range pks {
+		newRow := buildDistinctPiRow(pk, s.buckets[pk])
+		oldRow := oldRows[pk]
+
+		if oldRow != nil && (newRow == nil || oldRow.Hash() != newRow.Hash()) {
+			out.Insert(oldRow, -1)
+		}
+		if newRow != nil && (oldRow == nil || oldRow.Hash() != newRow.Hash()) {
+			out.Insert(newRow, 1)
+		}
+	}
+
+	return out, nil
 }
 
-func (r aggregateReducer) before(pk string, docs map[string]datamodel.Document, weights map[string]zset.Weight) (datamodel.Document, error) {
-	return r.row(pk, docs, weights)
+func buildDistinctPiRow(pk string, bucket *distinctPiBucket) datamodel.Document {
+	if bucket == nil || len(bucket.docs) == 0 {
+		return nil
+	}
+
+	minHash := ""
+	for h := range bucket.docs {
+		if minHash == "" || h < minHash {
+			minHash = h
+		}
+	}
+	if minHash == "" {
+		return nil
+	}
+
+	representative := bucket.docs[minHash]
+	if representative == nil {
+		return nil
+	}
+
+	return unstructured.New(map[string]any{"key": pk, "value": representative}, nil)
 }
 
-func (r aggregateReducer) after(pk string, docs map[string]datamodel.Document, weights map[string]zset.Weight) (datamodel.Document, error) {
-	return r.row(pk, docs, weights)
+// GroupBy is a self-contained incremental grouping operator.
+//
+// For each affected key it emits at most two row-level deltas: remove old row
+// with weight -1 and add new row with weight +1.
+//
+// Output row schema:
+//   - key: grouping key value.
+//   - values: list of valueExpr outputs.
+//   - documents: list of full source documents.
+//
+// Bag semantics are the default: multiplicity follows input Z-set weights.
+// With distinct=true duplicates are removed independently from values and
+// documents.
+type GroupBy struct {
+	nonLinearOp
+	state     groupState
+	keyExpr   expression.Expression
+	valueExpr expression.Expression
+	distinct  bool
 }
 
-func (r aggregateReducer) row(pk string, docs map[string]datamodel.Document, weights map[string]zset.Weight) (datamodel.Document, error) {
-	if len(docs) == 0 {
+// NewGroupBy creates an incremental GROUP BY operator.
+//
+// keyExpr may be nil; in that case document primary key is used as group key.
+// valueExpr may be nil; in that case the whole document is used as value.
+func NewGroupBy(keyExpr, valueExpr expression.Expression, opts ...Option) *GroupBy {
+	if valueExpr == nil {
+		valueExpr = expression.Func(func(ctx *expression.EvalContext) (any, error) {
+			return ctx.Subject(), nil
+		})
+	}
+	return &GroupBy{
+		nonLinearOp: newNonLinearOp(KindGroupBy, 1, "GroupBy", opts),
+		state: groupState{
+			groups: map[string]*groupBucket{},
+		},
+		keyExpr:   keyExpr,
+		valueExpr: valueExpr,
+	}
+}
+
+// WithDistinct toggles duplicate elimination in output lists.
+func (o *GroupBy) WithDistinct(distinct bool) *GroupBy {
+	o.distinct = distinct
+	if distinct {
+		o.display = "GroupBy(distinct)"
+	} else {
+		o.display = "GroupBy"
+	}
+	return o
+}
+
+// Set initializes GroupBy state from a full input snapshot.
+func (o *GroupBy) Set(v zset.ZSet) {
+	o.state = groupState{groups: map[string]*groupBucket{}}
+	_, _ = o.state.applyDelta(v, o.keyExpr, o.valueExpr, o.distinct)
+}
+
+// Apply implements Operator.
+func (o *GroupBy) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("dbsp runtime state",
+			"event_type", "group_by.state.before",
+			"component_type", "operator",
+			"component", o.String(),
+			"state", o.state.snapshot(),
+		)
+	}
+
+	result, err := o.state.applyDelta(inputs[0], o.keyExpr, o.valueExpr, o.distinct)
+	if err != nil {
+		return zset.New(), err
+	}
+
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("dbsp runtime state",
+			"event_type", "group_by.state.after",
+			"component_type", "operator",
+			"component", o.String(),
+			"state", o.state.snapshot(),
+			"delta", result.String(),
+		)
+	}
+	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	return result, nil
+}
+
+type groupBucket struct {
+	key     any
+	docs    map[string]datamodel.Document
+	weights map[string]zset.Weight
+}
+
+type groupState struct {
+	groups map[string]*groupBucket
+}
+
+func (s *groupState) ensure() {
+	if s.groups == nil {
+		s.groups = map[string]*groupBucket{}
+	}
+}
+
+func (s *groupState) snapshot() []string {
+	if s == nil || len(s.groups) == 0 {
+		return []string{}
+	}
+
+	ids := make([]string, 0, len(s.groups))
+	for id := range s.groups {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	out := make([]string, 0)
+	for _, id := range ids {
+		bucket := s.groups[id]
+		hashes := make([]string, 0, len(bucket.docs))
+		for h := range bucket.docs {
+			hashes = append(hashes, h)
+		}
+		sort.Strings(hashes)
+		for _, h := range hashes {
+			doc := bucket.docs[h]
+			w := bucket.weights[h]
+			out = append(out, fmt.Sprintf("group=%s hash=%s weight=%d doc=%s", id, h, w, doc.String()))
+		}
+	}
+
+	return out
+}
+
+func (s *groupState) applyDelta(delta zset.ZSet, keyExpr, valueExpr expression.Expression, distinct bool) (zset.ZSet, error) {
+	s.ensure()
+
+	affected := map[string]struct{}{}
+	var iterErr error
+
+	delta.Iter(func(elem datamodel.Document, _ zset.Weight) bool {
+		id, _, err := evaluateGroupKey(elem, keyExpr)
+		if err != nil {
+			iterErr = err
+			return false
+		}
+		affected[id] = struct{}{}
+		return true
+	})
+	if iterErr != nil {
+		return zset.New(), iterErr
+	}
+
+	oldRows := map[string]datamodel.Document{}
+	ids := make([]string, 0, len(affected))
+	for id := range affected {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	for _, id := range ids {
+		row, err := buildGroupRow(s.groups[id], valueExpr, distinct)
+		if err != nil {
+			return zset.New(), err
+		}
+		oldRows[id] = row
+	}
+
+	delta.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+		id, key, err := evaluateGroupKey(elem, keyExpr)
+		if err != nil {
+			iterErr = err
+			return false
+		}
+
+		bucket := s.groups[id]
+		if bucket == nil {
+			bucket = &groupBucket{
+				key:     key,
+				docs:    map[string]datamodel.Document{},
+				weights: map[string]zset.Weight{},
+			}
+			s.groups[id] = bucket
+		}
+
+		h := elem.Hash()
+		oldW := bucket.weights[h]
+		newW := oldW + weight
+
+		switch {
+		case oldW <= 0 && newW > 0:
+			bucket.docs[h] = elem
+			bucket.weights[h] = newW
+		case oldW > 0 && newW <= 0:
+			delete(bucket.docs, h)
+			delete(bucket.weights, h)
+		case newW > 0:
+			bucket.weights[h] = newW
+		default:
+			delete(bucket.weights, h)
+		}
+
+		if len(bucket.docs) == 0 {
+			delete(s.groups, id)
+		}
+		return true
+	})
+	if iterErr != nil {
+		return zset.New(), iterErr
+	}
+
+	out := zset.New()
+	for _, id := range ids {
+		newRow, err := buildGroupRow(s.groups[id], valueExpr, distinct)
+		if err != nil {
+			return zset.New(), err
+		}
+		oldRow := oldRows[id]
+
+		if oldRow != nil && (newRow == nil || oldRow.Hash() != newRow.Hash()) {
+			out.Insert(oldRow, -1)
+		}
+		if newRow != nil && (oldRow == nil || oldRow.Hash() != newRow.Hash()) {
+			out.Insert(newRow, 1)
+		}
+	}
+
+	return out, nil
+}
+
+func evaluateGroupKey(doc datamodel.Document, keyExpr expression.Expression) (string, any, error) {
+	var key any
+	if keyExpr == nil {
+		pk, err := doc.PrimaryKey()
+		if err != nil {
+			return "", nil, fmt.Errorf("group_by: primary key: %w", err)
+		}
+		key = pk
+	} else {
+		v, err := keyExpr.Evaluate(expression.NewContext(doc).WithSubject(doc))
+		if err != nil {
+			return "", nil, fmt.Errorf("group_by: key expr: %w", err)
+		}
+		key = v
+	}
+
+	id, err := digestKey(key)
+	if err != nil {
+		return "", nil, fmt.Errorf("group_by: key digest: %w", err)
+	}
+
+	return id, key, nil
+}
+
+func buildGroupRow(bucket *groupBucket, valueExpr expression.Expression, distinct bool) (datamodel.Document, error) {
+	if bucket == nil || len(bucket.docs) == 0 {
 		return nil, nil
 	}
 
+	hashes := make([]string, 0, len(bucket.docs))
+	for h := range bucket.docs {
+		hashes = append(hashes, h)
+	}
+	sort.Strings(hashes)
+
 	values := make([]any, 0)
-	for h, doc := range docs {
-		w := weights[h]
+	documents := make([]any, 0)
+	seenValues := map[string]struct{}{}
+	seenDocs := map[string]struct{}{}
+
+	for _, h := range hashes {
+		doc := bucket.docs[h]
+		w := bucket.weights[h]
 		if w <= 0 {
 			continue
 		}
-		v, err := r.valueExpr.Evaluate(expression.NewContext(doc).WithSubject(doc))
+
+		value, err := valueExpr.Evaluate(expression.NewContext(doc).WithSubject(doc))
 		if err != nil {
-			return nil, fmt.Errorf("aggregate keyed: value expr: %w", err)
+			return nil, fmt.Errorf("group_by: value expr: %w", err)
 		}
+
+		normDoc, err := normalizeAny(doc)
+		if err != nil {
+			return nil, fmt.Errorf("group_by: normalize document: %w", err)
+		}
+
 		for i := zset.Weight(0); i < w; i++ {
-			values = append(values, v)
-		}
-	}
-
-	if len(values) == 0 {
-		return nil, nil
-	}
-
-	keyDoc := representativeDoc(docs)
-	if keyDoc == nil {
-		return nil, nil
-	}
-
-	var keyValue any
-	if r.keyExpr == nil {
-		keyValue = pk
-	} else {
-		var err error
-		keyValue, err = r.keyExpr.Evaluate(expression.NewContext(keyDoc).WithSubject(keyDoc))
-		if err != nil {
-			return nil, fmt.Errorf("aggregate keyed: key expr: %w", err)
-		}
-	}
-
-	outValue, err := r.reduceExpr.Evaluate(expression.NewContext(nil).WithSubject(values))
-	if err != nil {
-		if len(values) == 1 {
-			if list, lerr := exprdbsp.AsList(values[0]); lerr == nil {
-				outValue, err = r.reduceExpr.Evaluate(expression.NewContext(nil).WithSubject(list))
-				if err == nil {
-					goto reduced
+			if distinct {
+				valueDigest, err := digestAny(value)
+				if err != nil {
+					return nil, fmt.Errorf("group_by: distinct value digest: %w", err)
 				}
+				if _, ok := seenValues[valueDigest]; !ok {
+					values = append(values, value)
+					seenValues[valueDigest] = struct{}{}
+				}
+
+				docDigest, err := digestAny(normDoc)
+				if err != nil {
+					return nil, fmt.Errorf("group_by: distinct document digest: %w", err)
+				}
+				if _, ok := seenDocs[docDigest]; !ok {
+					documents = append(documents, normDoc)
+					seenDocs[docDigest] = struct{}{}
+				}
+				continue
 			}
+
+			values = append(values, value)
+			documents = append(documents, normDoc)
 		}
-		return nil, fmt.Errorf("aggregate keyed: reduce expr: %w", err)
 	}
 
-reduced:
-
-	if r.setExpr != nil {
-		setValue, err := r.setExpr.Evaluate(expression.NewContext(keyDoc).WithSubject(outValue))
-		if err != nil {
-			return nil, fmt.Errorf("aggregate keyed: set expr: %w", err)
-		}
-		doc, ok := setValue.(datamodel.Document)
-		if !ok {
-			return nil, fmt.Errorf("aggregate keyed: set expr must return a document, got %T", setValue)
-		}
-		return doc, nil
+	if len(values) == 0 && len(documents) == 0 {
+		return nil, nil
 	}
 
-	return unstructured.New(map[string]any{"key": keyValue, r.outField: outValue}, nil), nil
+	keyValue, err := normalizeAny(bucket.key)
+	if err != nil {
+		return nil, fmt.Errorf("group_by: normalize key: %w", err)
+	}
+
+	return unstructured.New(map[string]any{
+		"key":       keyValue,
+		"values":    values,
+		"documents": documents,
+	}, nil), nil
 }
 
-func representativeDoc(docs map[string]datamodel.Document) datamodel.Document {
-	var rep datamodel.Document
-	for h, doc := range docs {
-		if rep == nil || h < rep.Hash() {
-			rep = doc
-		}
+func digestKey(v any) (string, error) {
+	norm, err := normalizeAny(v)
+	if err != nil {
+		return "", err
 	}
-	return rep
+	b, err := json.Marshal(norm)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func digestAny(v any) (string, error) {
+	norm, err := normalizeAny(v)
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(norm)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func normalizeAny(v any) (any, error) {
+	if doc, ok := v.(datamodel.Document); ok {
+		b, err := doc.MarshalJSON()
+		if err != nil {
+			return nil, err
+		}
+		var out any
+		if err := json.Unmarshal(b, &out); err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	return v, nil
 }

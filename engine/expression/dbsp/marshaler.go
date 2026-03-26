@@ -233,6 +233,9 @@ func (e *dictExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 func (e *getExpr) MarshalJSON() ([]byte, error) {
 	if c, ok := e.field.(*constExpr); ok {
 		if s, ok := c.value.(string); ok {
+			if strings.HasPrefix(s, "$") {
+				return json.Marshal(s)
+			}
 			return json.Marshal("$." + s)
 		}
 	}
@@ -245,6 +248,9 @@ func (e *getExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 func (e *getSubExpr) MarshalJSON() ([]byte, error) {
 	if c, ok := e.field.(*constExpr); ok {
 		if s, ok := c.value.(string); ok {
+			if strings.HasPrefix(s, "$") {
+				return json.Marshal("$" + s)
+			}
 			return json.Marshal("$$." + s)
 		}
 	}

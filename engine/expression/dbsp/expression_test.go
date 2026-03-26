@@ -3,7 +3,10 @@ package dbsp_test
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/ohler55/ojg/jp"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -58,6 +61,21 @@ func (d *TestDoc) Merge(other datamodel.Document) datamodel.Document {
 }
 
 func (d *TestDoc) GetField(key string) (any, error) {
+	if strings.HasPrefix(key, "$") {
+		expr, err := jp.ParseString(key)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSONPath %q: %w", key, err)
+		}
+		results := expr.Get(d.fields)
+		if len(results) == 0 {
+			return nil, datamodel.ErrFieldNotFound
+		}
+		if len(results) == 1 {
+			return results[0], nil
+		}
+		return results, nil
+	}
+
 	v, ok := d.fields[key]
 	if !ok {
 		return nil, datamodel.ErrFieldNotFound
@@ -68,6 +86,38 @@ func (d *TestDoc) GetField(key string) (any, error) {
 func (d *TestDoc) SetField(key string, value any) error {
 	d.fields[key] = value
 	return nil
+}
+
+func (d *TestDoc) Fields() map[string]any {
+	if d == nil || d.fields == nil {
+		return nil
+	}
+
+	out := make(map[string]any, len(d.fields))
+	for k, v := range d.fields {
+		out[k] = deepCopyTestValue(v)
+	}
+
+	return out
+}
+
+func deepCopyTestValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, vv := range x {
+			m[k] = deepCopyTestValue(vv)
+		}
+		return m
+	case []any:
+		s := make([]any, len(x))
+		for i, vv := range x {
+			s[i] = deepCopyTestValue(vv)
+		}
+		return s
+	default:
+		return v
+	}
 }
 
 func (d *TestDoc) MarshalJSON() ([]byte, error) {
@@ -382,6 +432,25 @@ var _ = Describe("Field Operators", func() {
 		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(int64(30)))
+	})
+
+	It("should evaluate bracketed document JSONPath shorthand", func() {
+		doc := NewTestDoc(map[string]any{
+			"EndpointSlice": map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]any{
+						"kubernetes.io/service-name": "test-service-1",
+					},
+				},
+			},
+		})
+
+		expr, err := dbsp.Compile([]byte(`"$[\"EndpointSlice\"][\"metadata\"][\"labels\"][\"kubernetes.io/service-name\"]"`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal("test-service-1"))
 	})
 
 	It("should evaluate $. as document copy", func() {

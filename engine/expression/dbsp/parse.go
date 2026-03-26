@@ -53,13 +53,21 @@ func (p *Parser) parseValue(v any) (Expression, error) {
 		if val == "$$." {
 			return p.callFactory("@subject", nil)
 		}
+		// Check for $$.field shorthand (subject field).
+		if strings.HasPrefix(val, "$$.") {
+			return p.callFactory("@getsub", val[3:])
+		}
+		// Check for $$["field"] JSONPath shorthand (subject field).
+		if strings.HasPrefix(val, "$$[") {
+			return p.callFactory("@getsub", val[1:])
+		}
 		// Check for $.field shorthand (document field).
 		if strings.HasPrefix(val, "$.") {
 			return p.callFactory("@get", val[2:])
 		}
-		// Check for $$.field shorthand (subject field).
-		if strings.HasPrefix(val, "$$.") {
-			return p.callFactory("@getsub", val[3:])
+		// Check for $["field"] JSONPath shorthand (document field).
+		if strings.HasPrefix(val, "$") && strings.HasPrefix(val, "$[") {
+			return p.callFactory("@get", val)
 		}
 		return p.callFactory("@string", val)
 
@@ -113,7 +121,7 @@ func (p *Parser) parseOperator(name string, rawArgs any) (Expression, error) {
 		return nil, fmt.Errorf("unknown operator: %s", name)
 	}
 
-	args, err := p.prepareArgs(rawArgs)
+	args, err := p.prepareArgs(name, rawArgs)
 	if err != nil {
 		return nil, fmt.Errorf("operator %s: %w", name, err)
 	}
@@ -123,7 +131,7 @@ func (p *Parser) parseOperator(name string, rawArgs any) (Expression, error) {
 
 // prepareArgs converts raw JSON args into the appropriate form for the factory:
 // nil, raw value (bool/int64/float64/string), Expression, []Expression, or map[string]Expression.
-func (p *Parser) prepareArgs(rawArgs any) (any, error) {
+func (p *Parser) prepareArgs(opName string, rawArgs any) (any, error) {
 	if rawArgs == nil {
 		return nil, nil
 	}
@@ -166,8 +174,31 @@ func (p *Parser) prepareArgs(rawArgs any) (any, error) {
 		return entries, nil
 
 	default:
-		// Literal value (bool, float64, string from JSON).
+		// Scalar literal value (bool, float64, string from JSON).
+		// For most operators, scalar JSONPath-like strings should be treated as
+		// shorthand expressions (for example "$.a" -> @get("a"), "$$.x" ->
+		// @getsub("x")). Keep explicit string-path operators literal.
+		if s, ok := args.(string); ok && shouldParseScalarStringArg(opName, s) {
+			expr, err := p.parseValue(s)
+			if err != nil {
+				return nil, err
+			}
+			return expr, nil
+		}
 		return args, nil
+	}
+}
+
+func shouldParseScalarStringArg(opName, arg string) bool {
+	if !strings.HasPrefix(arg, "$") {
+		return false
+	}
+
+	switch opName {
+	case "@string", "@get", "@getsub", "@exists":
+		return false
+	default:
+		return true
 	}
 }
 

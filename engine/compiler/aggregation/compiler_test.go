@@ -184,6 +184,78 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(outs[outID].Size()).To(Equal(5))
 	})
 
+	It("evaluates double unwind followed by groupBy and project aggregation", func() {
+		exec, outID := makeExec([]string{"Service"}, `[
+			{"@unwind":"$.spec.ports"},
+			{"@project":{
+				"metadata":{
+					"name":"$.metadata.name",
+					"namespace":"$.metadata.namespace"
+				},
+				"id":{
+					"service":"$.metadata.name",
+					"namespace":"$.metadata.namespace",
+					"port":"$.spec.ports.port",
+					"protocol":"$.spec.ports.protocol"
+				},
+				"endpoints":"$.spec.endpoints"
+			}},
+			{"@unwind":"$.endpoints"},
+			{"@unwind":"$.endpoints.addresses"},
+			{"@groupBy":["$.id","$.endpoints.addresses"]},
+			{"@project":{
+				"metadata":{"name":"$.key.service","namespace":"$.key.namespace"},
+				"spec":{"port":"$.key.port","protocol":"$.key.protocol","addresses":"$.values"}
+			}}
+		]`)
+
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{
+			"metadata": map[string]any{"name": "svc-1", "namespace": "default"},
+			"spec": map[string]any{
+				"ports": []any{
+					map[string]any{"port": int64(80), "protocol": "TCP"},
+					map[string]any{"port": int64(443), "protocol": "TCP"},
+				},
+				"endpoints": []any{
+					map[string]any{"addresses": []any{"192.0.2.1", "192.0.2.2"}},
+					map[string]any{"addresses": []any{"192.0.2.3"}},
+				},
+			},
+		}, nil), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_Service": in})
+		Expect(err).NotTo(HaveOccurred())
+
+		docs := collectDocs(outs[outID])
+		Expect(docs).To(HaveLen(2))
+
+		addressesByPort := map[int64][]string{}
+		for _, d := range docs {
+			portAny, err := d.GetField("spec.port")
+			Expect(err).NotTo(HaveOccurred())
+			protocolAny, err := d.GetField("spec.protocol")
+			Expect(err).NotTo(HaveOccurred())
+			addressesAny, err := d.GetField("spec.addresses")
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(protocolAny).To(Equal("TCP"))
+
+			addrList := addressesAny.([]any)
+			addrStrings := make([]string, 0, len(addrList))
+			for _, a := range addrList {
+				addrStrings = append(addrStrings, a.(string))
+			}
+			sort.Strings(addrStrings)
+			addressesByPort[portAny.(int64)] = addrStrings
+		}
+
+		Expect(addressesByPort).To(HaveKey(int64(80)))
+		Expect(addressesByPort).To(HaveKey(int64(443)))
+		Expect(addressesByPort[int64(80)]).To(Equal([]string{"192.0.2.1", "192.0.2.2", "192.0.2.3"}))
+		Expect(addressesByPort[int64(443)]).To(Equal([]string{"192.0.2.1", "192.0.2.2", "192.0.2.3"}))
+	})
+
 	It("evaluates two-source join with predicate", func() {
 		exec, outID := makeExec([]string{"pod", "dep"}, `[
 			{"@join":{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]}},
@@ -223,17 +295,52 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(outs[outID].Size()).To(Equal(1))
 	})
 
-	It("errors for gather alias and accepts aggregate form", func() {
-		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
-		_, err := c.CompileString(`[{"@gather":["$.metadata.namespace","$.spec.a"]}]`)
-		Expect(err).To(HaveOccurred())
+	It("evaluates join predicate with bracketed JSONPath", func() {
+		exec, outID := makeExec([]string{"ServiceView", "EndpointSlice"}, `[
+			{"@join":{"@and":[{"@eq":["$.ServiceView.spec.serviceName","$[\"EndpointSlice\"][\"metadata\"][\"labels\"][\"kubernetes.io/service-name\"]"]},{"@eq":["$.ServiceView.metadata.namespace","$.EndpointSlice.metadata.namespace"]}]}},
+			{"@project":{"metadata":{"name":"result","namespace":"$.ServiceView.metadata.namespace"},"spec":{"serviceName":"$.ServiceView.spec.serviceName"}}}
+		]`)
 
-		_, err = c.CompileString(`[{"@aggregate":["$.metadata.namespace","$.spec.a"]}]`)
+		serviceViews := zset.New()
+		endpointSlices := zset.New()
+
+		serviceViews.Insert(unstructured.New(map[string]any{
+			"metadata": map[string]any{"name": "test-service", "namespace": "testnamespace"},
+			"spec":     map[string]any{"serviceName": "test-service"},
+		}, nil), 1)
+
+		endpointSlices.Insert(unstructured.New(map[string]any{
+			"metadata": map[string]any{
+				"name":      "es-1",
+				"namespace": "testnamespace",
+				"labels": map[string]any{
+					"kubernetes.io/service-name": "test-service",
+				},
+			},
+		}, nil), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{
+			"input_ServiceView":   serviceViews,
+			"input_EndpointSlice": endpointSlices,
+		})
 		Expect(err).NotTo(HaveOccurred())
+
+		docs := collectDocs(outs[outID])
+		Expect(docs).To(HaveLen(1))
+		svcName, err := docs[0].GetField("spec.serviceName")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(svcName).To(Equal("test-service"))
 	})
 
-	It("aggregates values by key using 2-arg gather-compatible form", func() {
-		exec, outID := makeExec([]string{"pod"}, `[{"@aggregate":["$.metadata.namespace","$.spec.a"]}]`)
+	It("rejects legacy gather alias", func() {
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
+
+		_, err := c.CompileString(`[{"@gather":["$.metadata.namespace","$.spec.a"]}]`)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("supports @groupBy bag semantics", func() {
+		exec, outID := makeExec([]string{"pod"}, `[{"@groupBy":["$.metadata.namespace","$.spec.a"]}]`)
 		pkByName := func(doc datamodel.Document) (string, error) {
 			v, err := doc.GetField("metadata.name")
 			if err != nil {
@@ -245,8 +352,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		in := zset.New()
 		in.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{"name": "name", "namespace": "default"},
-			"spec":     map[string]any{"a": int64(1), "b": map[string]any{"c": int64(2)}},
-			"c":        "c",
+			"spec":     map[string]any{"a": int64(1)},
 		}, pkByName), 1)
 		in.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{"name": "name2", "namespace": "default"},
@@ -256,24 +362,24 @@ var _ = Describe("Aggregation compiler parity", func() {
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": in})
 		Expect(err).NotTo(HaveOccurred())
 		docs := collectDocs(outs[outID])
-		Expect(docs).To(HaveLen(2))
-		all := make([]int64, 0, 2)
-		for _, d := range docs {
-			values, err := d.GetField("spec.a")
-			Expect(err).NotTo(HaveOccurred())
-			list := values.([]any)
-			Expect(list).To(HaveLen(1))
-			all = append(all, list[0].(int64))
-		}
-		sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
-		Expect(all).To(Equal([]int64{1, 2}))
+		Expect(docs).To(HaveLen(1))
+
+		k, err := docs[0].GetField("key")
+		Expect(err).NotTo(HaveOccurred())
+		valsAny, err := docs[0].GetField("values")
+		Expect(err).NotTo(HaveOccurred())
+		docsAny, err := docs[0].GetField("documents")
+		Expect(err).NotTo(HaveOccurred())
+
+		vals := valsAny.([]any)
+		sort.Slice(vals, func(i, j int) bool { return vals[i].(int64) < vals[j].(int64) })
+		Expect(k).To(Equal("default"))
+		Expect(vals).To(Equal([]any{int64(1), int64(2)}))
+		Expect(docsAny.([]any)).To(HaveLen(2))
 	})
 
-	It("aggregates then projects stable object name", func() {
-		exec, outID := makeExec([]string{"pod"}, `[
-			{"@aggregate":["$.metadata.namespace","$.spec.a"]},
-			{"@project":[{"$.":"$."},{"$.metadata.name":"stable-name"}]}
-		]`)
+	It("supports @groupBy distinct option", func() {
+		exec, outID := makeExec([]string{"pod"}, `[{"@groupBy":["$.metadata.namespace","$.spec.a",{"distinct":true}]}]`)
 		pkByName := func(doc datamodel.Document) (string, error) {
 			v, err := doc.GetField("metadata.name")
 			if err != nil {
@@ -281,6 +387,35 @@ var _ = Describe("Aggregation compiler parity", func() {
 			}
 			return v.(string), nil
 		}
+
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "a", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}, pkByName), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "b", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}, pkByName), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": in})
+		Expect(err).NotTo(HaveOccurred())
+		docs := collectDocs(outs[outID])
+		Expect(docs).To(HaveLen(1))
+
+		vals, err := docs[0].GetField("values")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vals.([]any)).To(Equal([]any{int64(1)}))
+	})
+
+	It("matches gather via @groupBy + @project", func() {
+		exec, outID := makeExec([]string{"pod"}, `[
+			{"@groupBy":["$.metadata.namespace","$.spec.a"]},
+			{"@project":{"key":"$.key","items":"$.values"}}
+		]`)
+
+		pkByName := func(doc datamodel.Document) (string, error) {
+			v, err := doc.GetField("metadata.name")
+			if err != nil {
+				return "", err
+			}
+			return v.(string), nil
+		}
+
 		in := zset.New()
 		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "a", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}, pkByName), 1)
 		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "b", "namespace": "default"}, "spec": map[string]any{"a": int64(2)}}, pkByName), 1)
@@ -288,38 +423,16 @@ var _ = Describe("Aggregation compiler parity", func() {
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": in})
 		Expect(err).NotTo(HaveOccurred())
 		docs := collectDocs(outs[outID])
-		Expect(docs).To(HaveLen(2))
-		for _, d := range docs {
-			name, err := d.GetField("metadata.name")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(name).To(Equal("stable-name"))
-		}
-	})
-
-	It("keeps @aggregate explicit reduce/outField form", func() {
-		exec, outID := makeExec([]string{"grade"}, `[
-			{"@aggregate":["$.class","$.grade","$$.","grades"]}
-		]`)
-		pkByClass := func(doc datamodel.Document) (string, error) {
-			v, err := doc.GetField("class")
-			if err != nil {
-				return "", err
-			}
-			return v.(string), nil
-		}
-		in := zset.New()
-		in.Insert(unstructured.New(map[string]any{"class": "Algebra", "grade": int64(90)}, pkByClass), 1)
-		in.Insert(unstructured.New(map[string]any{"class": "Algebra", "grade": int64(80)}, pkByClass), 1)
-
-		outs, err := exec.Execute(map[string]zset.ZSet{"input_grade": in})
-		Expect(err).NotTo(HaveOccurred())
-		docs := collectDocs(outs[outID])
 		Expect(docs).To(HaveLen(1))
-		v, err := docs[0].GetField("grades")
+
+		key, err := docs[0].GetField("key")
 		Expect(err).NotTo(HaveOccurred())
-		vals := v.([]any)
-		sort.Slice(vals, func(i, j int) bool { return vals[i].(int64) < vals[j].(int64) })
-		Expect(vals).To(Equal([]any{int64(80), int64(90)}))
+		itemsAny, err := docs[0].GetField("items")
+		Expect(err).NotTo(HaveOccurred())
+		items := itemsAny.([]any)
+		sort.Slice(items, func(i, j int) bool { return items[i].(int64) < items[j].(int64) })
+		Expect(key).To(Equal("default"))
+		Expect(items).To(Equal([]any{int64(1), int64(2)}))
 	})
 
 	It("exposes unwind nameAppend flag in compiled operator", func() {

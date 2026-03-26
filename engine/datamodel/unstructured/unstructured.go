@@ -2,6 +2,7 @@ package unstructured
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -120,24 +121,21 @@ func (u *Unstructured) Fields() map[string]any {
 // It returns datamodel.ErrFieldNotFound when the field does not exist.
 func (u *Unstructured) GetField(key string) (any, error) {
 	if strings.HasPrefix(key, "$") {
-		expr, err := jp.ParseString(key)
-		if err != nil {
-			return nil, fmt.Errorf("invalid JSONPath %q: %w", key, err)
-		}
-		results := expr.Get(u.fields)
-		if len(results) == 0 {
-			return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
-		}
-		if len(results) == 1 {
-			return results[0], nil
-		}
-		return results, nil
+		return u.getJSONPath(key)
+	}
+
+	if v, ok := u.fields[key]; ok {
+		return v, nil
 	}
 
 	parts := strings.SplitN(key, ".", 2)
 	v, ok := u.fields[parts[0]]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
+		err := fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
+		if val, fbErr, used := u.tryRelativeJSONPath(key, err); used {
+			return val, fbErr
+		}
+		return nil, err
 	}
 	if len(parts) == 1 {
 		return v, nil
@@ -145,10 +143,54 @@ func (u *Unstructured) GetField(key string) (any, error) {
 	// Traverse into a nested map.
 	nested, ok := v.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
+		err := fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
+		if val, fbErr, used := u.tryRelativeJSONPath(key, err); used {
+			return val, fbErr
+		}
+		return nil, err
 	}
 	sub := &Unstructured{fields: nested}
-	return sub.GetField(parts[1])
+	value, err := sub.GetField(parts[1])
+	if err == nil {
+		return value, nil
+	}
+	if val, fbErr, used := u.tryRelativeJSONPath(key, err); used {
+		return val, fbErr
+	}
+	return nil, err
+}
+
+func (u *Unstructured) getJSONPath(key string) (any, error) {
+	expr, err := jp.ParseString(key)
+	if err != nil {
+		return nil, fmt.Errorf("invalid JSONPath %q: %w", key, err)
+	}
+	results := expr.Get(u.fields)
+	if len(results) == 0 {
+		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
+	}
+	if len(results) == 1 {
+		return results[0], nil
+	}
+	return results, nil
+}
+
+func (u *Unstructured) tryRelativeJSONPath(key string, originalErr error) (any, error, bool) {
+	if !errors.Is(originalErr, datamodel.ErrFieldNotFound) {
+		return nil, nil, false
+	}
+	if !strings.Contains(key, "[") {
+		return nil, nil, false
+	}
+
+	value, err := u.getJSONPath("$." + key)
+	if err != nil {
+		if errors.Is(err, datamodel.ErrFieldNotFound) {
+			return nil, nil, false
+		}
+		return nil, originalErr, false
+	}
+	return value, nil, true
 }
 
 // SetField sets the value for a top-level field name, dotted path, or JSONPath.

@@ -65,6 +65,13 @@ func (a *Adaptor) SetField(key string, value any) error {
 	return a.base.SetField(key, value)
 }
 
+func (a *Adaptor) Fields() map[string]any {
+	if a == nil || a.base == nil {
+		return nil
+	}
+	return a.base.Fields()
+}
+
 func (a *Adaptor) MarshalJSON() ([]byte, error) { return a.base.MarshalJSON() }
 
 func (a *Adaptor) UnmarshalJSON(data []byte) error {

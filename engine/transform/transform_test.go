@@ -115,7 +115,7 @@ var _ = Describe("Incrementalize", func() {
 			Expect(outEdges[0].From).To(Equal("dist^Δ_diff"))
 		})
 
-		It("uses self-contained aggregate for distinct_pi", func() {
+		It("uses self-contained operator for distinct_pi", func() {
 			// in -> distinct_pi -> out.
 			c := circuit.New("distinct-pi-test")
 			c.AddNode(circuit.Input("in"))
@@ -133,16 +133,16 @@ var _ = Describe("Incrementalize", func() {
 			Expect(incr.Node("dpi^Δ_op")).To(BeNil())
 			Expect(incr.Node("dpi^Δ_diff")).To(BeNil())
 
-			// Should have a single Aggregate operator node.
-			Expect(incr.Node("dpi^Δ").Kind()).To(Equal(operator.KindAggregate))
+			// Should have a single distinct_pi operator node.
+			Expect(incr.Node("dpi^Δ").Kind()).To(Equal(operator.KindDistinctPi))
 
-			// aggregate receives one input: delta (port 0).
+			// distinct_pi receives one input: delta (port 0).
 			aEdges := incr.EdgesTo("dpi^Δ")
 			Expect(aEdges).To(HaveLen(1))
 			Expect(aEdges[0].From).To(Equal("in"))
 			Expect(aEdges[0].Port).To(Equal(0))
 
-			// Output connects from aggregate.
+			// Output connects from distinct_pi.
 			outEdges := incr.EdgesTo("out")
 			Expect(outEdges).To(HaveLen(1))
 			Expect(outEdges[0].From).To(Equal("dpi^Δ"))

@@ -35,6 +35,7 @@ type Circuit struct {
 
 	topicToInput  map[string]string
 	docsFormatter func(Event) []string
+	observer      executor.ObserverFunc
 
 	logger logr.Logger
 }
@@ -91,6 +92,11 @@ func (c *Circuit) SetDocsFormatter(f func(Event) []string) {
 	c.docsFormatter = f
 }
 
+// SetObserver installs an optional executor observer callback.
+func (c *Circuit) SetObserver(observer executor.ObserverFunc) {
+	c.observer = observer
+}
+
 // Start subscribes to all query inputs and forwards outputs via Publisher.
 // Execute and publish errors are non-critical: they are reported via the
 // runtime error channel and the circuit continues processing subsequent events.
@@ -137,7 +143,7 @@ func (c *Circuit) Start(ctx context.Context) error {
 
 // Execute applies one runtime event to the compiled circuit.
 func (c *Circuit) Execute(in Event) ([]Event, error) {
-	result, err := c.exec.Execute(c.buildStepInputs(in))
+	result, err := c.exec.ExecuteWithObserver(c.buildStepInputs(in), c.observer)
 	if err != nil {
 		return nil, fmt.Errorf("runtime step: %w", err)
 	}

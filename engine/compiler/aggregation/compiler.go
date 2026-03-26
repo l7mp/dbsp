@@ -349,15 +349,15 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 			if err := compiled.AddNode(circuit.Op(id, op)); err != nil {
 				return "", err
 			}
-		case "@aggregate":
-			if stage.Aggregate == nil {
-				return "", wrapStageErr(stage.Index, stage.Op, "arguments", stage.RawArgs, fmt.Errorf("missing parsed aggregate op"))
+		case "@groupBy":
+			if stage.GroupBy == nil {
+				return "", wrapStageErr(stage.Index, stage.Op, "arguments", stage.RawArgs, fmt.Errorf("missing parsed groupBy op"))
 			}
-			if err := compiled.AddNode(circuit.Op(id, stage.Aggregate)); err != nil {
+			if err := compiled.AddNode(circuit.Op(id, stage.GroupBy)); err != nil {
 				return "", err
 			}
-		case "@gather", "@mux":
-			return "", wrapStageErr(stage.Index, stage.Op, "stage", stage.RawArgs, fmt.Errorf("@gather is not supported; use @aggregate"))
+		case "@aggregate", "@gather", "@mux":
+			return "", wrapStageErr(stage.Index, stage.Op, "stage", stage.RawArgs, fmt.Errorf("%s is not supported; use @groupBy and @project", stage.Op))
 		default:
 			return "", wrapStageErr(stage.Index, stage.Op, "stage", stage.RawArgs, fmt.Errorf("unsupported pipeline operation: %s", stage.Op))
 		}
@@ -477,13 +477,25 @@ func normalizeProjectStages(args json.RawMessage, stageIndex int, stageOp string
 	return []map[string]json.RawMessage{one}, nil
 }
 
-func compileAggregateOp(args json.RawMessage, stageIndex int, stageOp string) (operator.Operator, error) {
+// compileGroupByOp compiles @groupBy arguments into an engine/operator GroupBy.
+//
+// Argument forms:
+//   - [keyExpr, valueExpr]
+//     Produces rows of the form
+//     {"key": <group-key>, "values": [...], "documents": [...]}.
+//   - [keyExpr, valueExpr, options]
+//     options is an object. Currently supported key: "distinct" (bool).
+//
+// Running-text examples:
+//   - {"@groupBy":["$.metadata.namespace","$.spec.a"]} groups values and
+//     emits key/values/documents lists.
+func compileGroupByOp(args json.RawMessage, stageIndex int, stageOp string) (operator.Operator, error) {
 	var list []json.RawMessage
 	if err := json.Unmarshal(args, &list); err != nil {
-		return nil, wrapStageErr(stageIndex, stageOp, "arguments", args, fmt.Errorf("argument must be [keyExpr, valueExpr] or [keyExpr, valueExpr, reduceExpr, optional setExpr|outField]"))
+		return nil, wrapStageErr(stageIndex, stageOp, "arguments", args, fmt.Errorf("argument must be [keyExpr, valueExpr] or [keyExpr, valueExpr, options]"))
 	}
-	if len(list) < 2 || len(list) > 4 {
-		return nil, wrapStageErr(stageIndex, stageOp, "arguments", args, fmt.Errorf("expected 2, 3 or 4 arguments"))
+	if len(list) < 2 || len(list) > 3 {
+		return nil, wrapStageErr(stageIndex, stageOp, "arguments", args, fmt.Errorf("expected 2 or 3 arguments"))
 	}
 
 	parseExpr := func(raw json.RawMessage) (expression.Expression, error) {
@@ -502,33 +514,18 @@ func compileAggregateOp(args json.RawMessage, stageIndex int, stageOp string) (o
 		return nil, wrapStageErr(stageIndex, stageOp, "valueExpr", list[1], err)
 	}
 
-	if len(list) == 2 {
-		var valuePath string
-		if err := json.Unmarshal(list[1], &valuePath); err != nil {
-			return nil, wrapStageErr(stageIndex, stageOp, "valueExpr", list[1], fmt.Errorf("2-arg form requires string JSONPath as second argument"))
+	op := operator.NewGroupBy(keyExpr, valueExpr)
+	if len(list) == 3 {
+		opts := struct {
+			Distinct bool `json:"distinct"`
+		}{}
+		if err := json.Unmarshal(list[2], &opts); err != nil {
+			return nil, wrapStageErr(stageIndex, stageOp, "options", list[2], fmt.Errorf("options must be an object"))
 		}
-		setExpr := exprdbsp.NewSet(exprdbsp.NewString(valuePath), exprdbsp.NewSubject())
-		return operator.NewAggregateWithSet(keyExpr, valueExpr, exprdbsp.NewSubject(), setExpr), nil
+		op.WithDistinct(opts.Distinct)
 	}
 
-	reduceExpr, err := parseExpr(list[2])
-	if err != nil {
-		return nil, wrapStageErr(stageIndex, stageOp, "reduceExpr", list[2], err)
-	}
-
-	if len(list) == 4 {
-		var outField string
-		if err := json.Unmarshal(list[3], &outField); err == nil {
-			return operator.NewAggregate(keyExpr, valueExpr, reduceExpr, outField), nil
-		}
-		setExpr, err := parseExpr(list[3])
-		if err != nil {
-			return nil, wrapStageErr(stageIndex, stageOp, "setExpr", list[3], err)
-		}
-		return operator.NewAggregateWithSet(keyExpr, valueExpr, reduceExpr, setExpr), nil
-	}
-
-	return operator.NewAggregate(keyExpr, valueExpr, reduceExpr, "value"), nil
+	return op, nil
 }
 
 func setNestedMap(m map[string]any, path string, value any) {

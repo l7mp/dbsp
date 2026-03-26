@@ -40,7 +40,7 @@ func (b badDoc) MarshalJSON() ([]byte, error) {
 func (b badDoc) UnmarshalJSON([]byte) error {
 	return nil
 }
-func (b badDoc) Fields() []string { return nil }
+func (b badDoc) Fields() map[string]any { return nil }
 
 var _ = Describe("Table/ZSet conversion", func() {
 	It("round-trips Table -> ZSet -> Table", func() {

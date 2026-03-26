@@ -22,9 +22,7 @@ type jsonOp struct {
 	SumField   string          `json:"sumField,omitempty"`
 	KeyExpr    json.RawMessage `json:"keyExpr,omitempty"`
 	ValueExpr  json.RawMessage `json:"valueExpr,omitempty"`
-	ReduceExpr json.RawMessage `json:"reduceExpr,omitempty"`
-	SetExpr    json.RawMessage `json:"setExpr,omitempty"`
-	OutField   string          `json:"outField,omitempty"`
+	Distinct   bool            `json:"distinct,omitempty"`
 }
 
 // MarshalJSON implements json.Marshaler. Uses a local type alias to avoid
@@ -165,30 +163,19 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		return NewDistinct(), nil
 	case "distinct_pi", "hkeyed":
 		return NewDistinctPi(), nil
-	case "aggregate_keyed":
-		if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 || len(p.ReduceExpr) == 0 {
-			return nil, fmt.Errorf("aggregate_keyed operator: keyExpr, valueExpr, and reduceExpr are required")
+	case "group_by":
+		if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 {
+			return nil, fmt.Errorf("group_by operator: keyExpr and valueExpr are required")
 		}
 		keyExpr, err := exprdbsp.Compile(p.KeyExpr)
 		if err != nil {
-			return nil, fmt.Errorf("aggregate_keyed operator: compile keyExpr: %w", err)
+			return nil, fmt.Errorf("group_by operator: compile keyExpr: %w", err)
 		}
 		valueExpr, err := exprdbsp.Compile(p.ValueExpr)
 		if err != nil {
-			return nil, fmt.Errorf("aggregate_keyed operator: compile valueExpr: %w", err)
+			return nil, fmt.Errorf("group_by operator: compile valueExpr: %w", err)
 		}
-		reduceExpr, err := exprdbsp.Compile(p.ReduceExpr)
-		if err != nil {
-			return nil, fmt.Errorf("aggregate_keyed operator: compile reduceExpr: %w", err)
-		}
-		if len(p.SetExpr) != 0 {
-			setExpr, err := exprdbsp.Compile(p.SetExpr)
-			if err != nil {
-				return nil, fmt.Errorf("aggregate_keyed operator: compile setExpr: %w", err)
-			}
-			return NewAggregateWithSet(keyExpr, valueExpr, reduceExpr, setExpr), nil
-		}
-		return NewAggregate(keyExpr, valueExpr, reduceExpr, p.OutField), nil
+		return NewGroupBy(keyExpr, valueExpr).WithDistinct(p.Distinct), nil
 	case "select":
 		if len(p.Predicate) == 0 {
 			return nil, fmt.Errorf("select operator: predicate required")
@@ -220,70 +207,52 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 }
 
 // MarshalJSON implements json.Marshaler.
-func (o *Aggregate) MarshalJSON() ([]byte, error) {
+func (o *GroupBy) MarshalJSON() ([]byte, error) {
 	keyJSON, err := json.Marshal(o.keyExpr)
 	if err != nil {
-		return nil, fmt.Errorf("marshal aggregate_keyed keyExpr: %w", err)
+		return nil, fmt.Errorf("marshal group_by keyExpr: %w", err)
 	}
 	valueJSON, err := json.Marshal(o.valueExpr)
 	if err != nil {
-		return nil, fmt.Errorf("marshal aggregate_keyed valueExpr: %w", err)
+		return nil, fmt.Errorf("marshal group_by valueExpr: %w", err)
 	}
-	reduceJSON, err := json.Marshal(o.reduceExpr)
-	if err != nil {
-		return nil, fmt.Errorf("marshal aggregate_keyed reduceExpr: %w", err)
-	}
-	wire := jsonOp{Type: "aggregate_keyed", KeyExpr: keyJSON, ValueExpr: valueJSON, ReduceExpr: reduceJSON, OutField: o.outField}
-	if o.setExpr != nil {
-		setJSON, err := json.Marshal(o.setExpr)
-		if err != nil {
-			return nil, fmt.Errorf("marshal aggregate_keyed setExpr: %w", err)
-		}
-		wire.SetExpr = setJSON
-	}
+	wire := jsonOp{Type: "group_by", KeyExpr: keyJSON, ValueExpr: valueJSON, Distinct: o.distinct}
 	return json.Marshal(wire)
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (o *Aggregate) UnmarshalJSON(data []byte) error {
+func (o *GroupBy) UnmarshalJSON(data []byte) error {
 	var p jsonOp
 	if err := json.Unmarshal(data, &p); err != nil {
 		return err
 	}
-	if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 || len(p.ReduceExpr) == 0 {
-		return fmt.Errorf("aggregate_keyed: keyExpr, valueExpr, and reduceExpr are required")
+	if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 {
+		return fmt.Errorf("group_by: keyExpr and valueExpr are required")
 	}
 	var keyExpr expression.Expression
 	if string(p.KeyExpr) != "null" {
 		k, err := exprdbsp.Compile(p.KeyExpr)
 		if err != nil {
-			return fmt.Errorf("aggregate_keyed: compile keyExpr: %w", err)
+			return fmt.Errorf("group_by: compile keyExpr: %w", err)
 		}
 		keyExpr = k
 	}
 	valueExpr, err := exprdbsp.Compile(p.ValueExpr)
 	if err != nil {
-		return fmt.Errorf("aggregate_keyed: compile valueExpr: %w", err)
-	}
-	reduceExpr, err := exprdbsp.Compile(p.ReduceExpr)
-	if err != nil {
-		return fmt.Errorf("aggregate_keyed: compile reduceExpr: %w", err)
-	}
-	var setExpr expression.Expression
-	if len(p.SetExpr) != 0 {
-		s, err := exprdbsp.Compile(p.SetExpr)
-		if err != nil {
-			return fmt.Errorf("aggregate_keyed: compile setExpr: %w", err)
-		}
-		setExpr = s
+		return fmt.Errorf("group_by: compile valueExpr: %w", err)
 	}
 	o.keyExpr = keyExpr
 	o.valueExpr = valueExpr
-	o.reduceExpr = reduceExpr
-	o.setExpr = setExpr
-	o.outField = p.OutField
-	if o.outField == "" {
-		o.outField = "value"
-	}
+	o.distinct = p.Distinct
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler.
+func (o *DistinctPi) MarshalJSON() ([]byte, error) {
+	return json.Marshal(jsonOp{Type: "distinct_pi"})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (o *DistinctPi) UnmarshalJSON(_ []byte) error {
 	return nil
 }

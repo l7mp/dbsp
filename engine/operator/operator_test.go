@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -9,8 +10,8 @@ import (
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/expression"
 	exprdbsp "github.com/l7mp/dbsp/engine/expression/dbsp"
-	"github.com/l7mp/dbsp/engine/zset"
 	"github.com/l7mp/dbsp/engine/internal/testutils"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
 func TestOperator(t *testing.T) {
@@ -275,8 +276,8 @@ var _ = Describe("Operators", func() {
 		})
 	})
 
-	Describe("Aggregate", func() {
-		It("supports distinct-pi semantics via lexmin reducer", func() {
+	Describe("GroupBy", func() {
+		It("supports distinct-pi semantics via lexmin representative", func() {
 			op := NewDistinctPi()
 
 			r1 := testutils.Record{ID: "a", Value: 1}
@@ -298,14 +299,185 @@ var _ = Describe("Operators", func() {
 				return false
 			})
 
-			v, _ := row.GetField("value")
+			v, err := row.GetField("value")
+			Expect(err).NotTo(HaveOccurred())
 			selected, ok := v.(datamodel.Document)
 			Expect(ok).To(BeTrue())
 			Expect(selected.Hash()).To(Equal(r1.Hash()))
 		})
 
-		It("supports gather-style list aggregation", func() {
-			op := NewAggregate(nil, exprdbsp.NewGet("value"), exprdbsp.NewSubject(), "items")
+		It("replaces representative when current lexmin is removed", func() {
+			op := NewDistinctPi()
+
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
+
+			initial := zset.New()
+			initial.Insert(r1, 1)
+			initial.Insert(r2, 1)
+
+			_, err := op.Apply(initial)
+			Expect(err).NotTo(HaveOccurred())
+
+			delta := zset.New()
+			delta.Insert(r1, -1)
+
+			result, err := op.Apply(delta)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Size()).To(Equal(2))
+
+			weightsByRep := map[string]zset.Weight{}
+			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+				v, err := elem.GetField("value")
+				Expect(err).NotTo(HaveOccurred())
+				rep, ok := v.(datamodel.Document)
+				Expect(ok).To(BeTrue())
+				weightsByRep[rep.Hash()] += weight
+				return true
+			})
+
+			Expect(weightsByRep[r1.Hash()]).To(Equal(zset.Weight(-1)))
+			Expect(weightsByRep[r2.Hash()]).To(Equal(zset.Weight(1)))
+		})
+
+		It("emits no delta when only non-representatives change", func() {
+			op := NewDistinctPi()
+
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			r3 := testutils.Record{ID: "a", Value: 9}
+			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
+			Expect(r1.Hash() < r3.Hash()).To(BeTrue())
+
+			initial := zset.New()
+			initial.Insert(r1, 1)
+			initial.Insert(r2, 1)
+
+			_, err := op.Apply(initial)
+			Expect(err).NotTo(HaveOccurred())
+
+			delta := zset.New()
+			delta.Insert(r2, -1)
+			delta.Insert(r3, 1)
+
+			result, err := op.Apply(delta)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.IsZero()).To(BeTrue())
+		})
+
+		It("emits no delta when representative multiplicity changes but stays positive", func() {
+			op := NewDistinctPi()
+
+			r1 := testutils.Record{ID: "a", Value: 1}
+			r2 := testutils.Record{ID: "a", Value: 2}
+			Expect(r1.Hash() < r2.Hash()).To(BeTrue())
+
+			initial := zset.New()
+			initial.Insert(r1, 1)
+			initial.Insert(r2, 1)
+
+			_, err := op.Apply(initial)
+			Expect(err).NotTo(HaveOccurred())
+
+			inc := zset.New()
+			inc.Insert(r1, 1)
+
+			result, err := op.Apply(inc)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.IsZero()).To(BeTrue())
+
+			dec := zset.New()
+			dec.Insert(r1, -1)
+
+			result, err = op.Apply(dec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.IsZero()).To(BeTrue())
+		})
+
+		It("emits tombstone when the last positive element of a key is removed", func() {
+			op := NewDistinctPi()
+
+			r1 := testutils.Record{ID: "a", Value: 1}
+
+			initial := zset.New()
+			initial.Insert(r1, 1)
+
+			_, err := op.Apply(initial)
+			Expect(err).NotTo(HaveOccurred())
+
+			delta := zset.New()
+			delta.Insert(r1, -1)
+
+			result, err := op.Apply(delta)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Size()).To(Equal(1))
+
+			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+				Expect(weight).To(Equal(zset.Weight(-1)))
+				v, err := elem.GetField("value")
+				Expect(err).NotTo(HaveOccurred())
+				rep, ok := v.(datamodel.Document)
+				Expect(ok).To(BeTrue())
+				Expect(rep.Hash()).To(Equal(r1.Hash()))
+				return false
+			})
+		})
+
+		It("selects the same representative regardless of insertion order", func() {
+			base := []testutils.Record{
+				{ID: "a", Value: 1},
+				{ID: "a", Value: 2},
+				{ID: "a", Value: 9},
+			}
+			Expect(base[0].Hash() < base[1].Hash()).To(BeTrue())
+			Expect(base[1].Hash() < base[2].Hash()).To(BeTrue())
+
+			applyInsertSequence := func(op *DistinctPi, seq []testutils.Record) {
+				for _, r := range seq {
+					delta := zset.New()
+					delta.Insert(r, 1)
+					_, err := op.Apply(delta)
+					Expect(err).NotTo(HaveOccurred())
+				}
+			}
+
+			triggerAndCollect := func(op *DistinctPi) map[string]zset.Weight {
+				delta := zset.New()
+				delta.Insert(base[0], -1)
+				result, err := op.Apply(delta)
+				Expect(err).NotTo(HaveOccurred())
+
+				weights := map[string]zset.Weight{}
+				result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
+					v, err := elem.GetField("value")
+					Expect(err).NotTo(HaveOccurred())
+					rep, ok := v.(datamodel.Document)
+					Expect(ok).To(BeTrue())
+					weights[rep.Hash()] += weight
+					return true
+				})
+				return weights
+			}
+
+			rng := rand.New(rand.NewSource(42))
+			for i := 0; i < 10; i++ {
+				op := NewDistinctPi()
+				perm := append([]testutils.Record(nil), base...)
+				rng.Shuffle(len(perm), func(a, b int) {
+					perm[a], perm[b] = perm[b], perm[a]
+				})
+
+				applyInsertSequence(op, perm)
+				weights := triggerAndCollect(op)
+
+				Expect(weights[base[0].Hash()]).To(Equal(zset.Weight(-1)))
+				Expect(weights[base[1].Hash()]).To(Equal(zset.Weight(1)))
+			}
+		})
+
+		It("supports list grouping with values and documents output", func() {
+			op := NewGroupBy(nil, exprdbsp.NewGet("value"))
 
 			r1 := testutils.Record{ID: "ns-a", Value: 1}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}
@@ -325,48 +497,17 @@ var _ = Describe("Operators", func() {
 			})
 
 			k, _ := row.GetField("key")
-			items, _ := row.GetField("items")
+			vals, _ := row.GetField("values")
+			docs, _ := row.GetField("documents")
 			Expect(k).To(Equal("ns-a"))
-			Expect(items.([]any)).To(ConsistOf(1, 2))
+			Expect(vals.([]any)).To(ConsistOf(1, 2))
+			Expect(docs.([]any)).To(HaveLen(2))
 		})
 
-		It("supports set-expr output on representative document", func() {
-			op := NewAggregateWithSet(
-				nil,
-				expression.Func(func(ctx *expression.EvalContext) (any, error) {
-					return ctx.Subject(), nil
-				}),
-				exprdbsp.NewLen(expression.Func(func(ctx *expression.EvalContext) (any, error) { return ctx.Subject(), nil })),
-				exprdbsp.NewSet(exprdbsp.NewString("Value"), expression.Func(func(ctx *expression.EvalContext) (any, error) { return ctx.Subject(), nil })),
-			)
+		It("supports distinct mode", func() {
+			op := NewGroupBy(nil, exprdbsp.NewGet("value")).WithDistinct(true)
 
-			r1 := &testutils.MutableRecord{FieldMap: map[string]any{"id": "ns-a", "value": int64(2)}}
-
-			delta := zset.New()
-			delta.Insert(r1, 1)
-
-			result, err := op.Apply(delta)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(1))
-
-			var out datamodel.Document
-			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				Expect(weight).To(Equal(zset.Weight(1)))
-				out = elem
-				return false
-			})
-
-			total, err := out.GetField("Value")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(total).To(Equal(int64(1)))
-		})
-
-		It("supports count via @len($. )", func() {
-			op := NewAggregate(nil, nil, exprdbsp.NewLen(expression.Func(func(ctx *expression.EvalContext) (any, error) {
-				return ctx.Subject(), nil
-			})), "value")
-
-			r1 := testutils.Record{ID: "ns-a", Value: 1}
+			r1 := testutils.Record{ID: "ns-a", Value: 2}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}
 			delta := zset.New()
 			delta.Insert(r1, 1)
@@ -382,12 +523,11 @@ var _ = Describe("Operators", func() {
 				out = elem
 				return false
 			})
-			k, _ := out.GetField("key")
-			v, _ := out.GetField("value")
-			Expect(k).To(Equal("ns-a"))
-			Expect(v).To(Equal(int64(2)))
-		})
 
+			v, err := out.GetField("values")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(v.([]any)).To(Equal([]any{2}))
+		})
 	})
 
 	Describe("Distinct", func() {

@@ -35,7 +35,7 @@ type stageSpec struct {
 	Predicate  expression.Expression
 	Projection expression.Expression
 	UnwindPath string
-	Aggregate  operator.Operator
+	GroupBy    operator.Operator
 }
 
 func parseProgram(source []byte, sources, outputs []string) (*program, error) {
@@ -194,14 +194,14 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 			return s, wrapStageErr(i, stage.Op, "path", stage.Args, fmt.Errorf("argument must start with '$.': %q", path))
 		}
 		s.UnwindPath = path
-	case "@aggregate":
-		op, err := compileAggregateOp(stage.Args, i, stage.Op)
+	case "@groupBy":
+		op, err := compileGroupByOp(stage.Args, i, stage.Op)
 		if err != nil {
 			return s, err
 		}
-		s.Aggregate = op
-	case "@gather", "@mux":
-		return s, wrapStageErr(i, stage.Op, "stage", stage.Args, fmt.Errorf("@gather is not supported; use @aggregate"))
+		s.GroupBy = op
+	case "@aggregate", "@gather", "@mux":
+		return s, wrapStageErr(i, stage.Op, "stage", stage.Args, fmt.Errorf("%s is not supported; use @groupBy and @project", stage.Op))
 	default:
 		return s, wrapStageErr(i, stage.Op, "stage", stage.Args, fmt.Errorf("unsupported pipeline operation: %s", stage.Op))
 	}
