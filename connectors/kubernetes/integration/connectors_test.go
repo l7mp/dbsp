@@ -40,6 +40,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 		sub.Subscribe("in")
 
 		p, err := producer.NewWatcher(producer.Config{
+			Name:      "watcher-test",
 			Client:    suite.WatchClient,
 			SourceGVK: schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
 			InputName: "in",

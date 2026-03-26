@@ -42,16 +42,16 @@ type Config struct {
 
 // Watcher watches Kubernetes objects and emits DBSP runtime inputs.
 type Watcher struct {
+	*dbspruntime.BaseProducer
+
 	client    client.WithWatch
 	list      client.ObjectList
-	name      string
 	inputName string
 
 	listOpts   []client.ListOption
 	predicates []crpredicate.TypedPredicate[client.Object]
 
-	rt  *dbspruntime.Runtime
-	pub dbspruntime.Publisher
+	rt *dbspruntime.Runtime
 
 	sourceCache map[schema.GroupVersionKind]*store.Store
 
@@ -61,36 +61,49 @@ type Watcher struct {
 var _ dbspruntime.Producer = (*Watcher)(nil)
 
 // Name returns the watcher's unique component name.
-func (w *Watcher) Name() string { return w.name }
+func (w *Watcher) Name() string { return w.BaseProducer.Name() }
 
 // String implements fmt.Stringer.
 func (w *Watcher) String() string {
-	return fmt.Sprintf("producer<k8s>{name=%q, topic=%q}", w.name, w.inputName)
+	return fmt.Sprintf("producer<k8s>{name=%q, topic=%q}", w.Name(), w.inputName)
 }
 
 // NewWatcher creates a Kubernetes producer. Name uniqueness is enforced when
 // the watcher is passed to Runtime.Add.
 func NewWatcher(cfg Config) (*Watcher, error) {
+	if cfg.Runtime == nil {
+		return nil, fmt.Errorf("producer: runtime is required")
+	}
+
 	log := cfg.Logger
 	if log.GetSink() == nil {
 		log = logr.Discard()
 	}
 
 	inputName := cfg.InputName
+	base, err := dbspruntime.NewBaseProducer(dbspruntime.BaseProducerConfig{
+		Name:          cfg.Name,
+		Publisher:     cfg.Runtime.NewPublisher(),
+		ErrorReporter: cfg.Runtime,
+		Logger:        log.WithName("kubernetes-producer").WithValues("topic", inputName),
+		Topics:        []string{inputName},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(cfg.SourceGVK)
 
 	p := &Watcher{
-		client:      cfg.Client,
-		list:        list,
-		name:        cfg.Name,
-		inputName:   inputName,
-		rt:          cfg.Runtime,
-		sourceCache: map[schema.GroupVersionKind]*store.Store{},
-		log:         log.WithName("kubernetes-producer").WithValues("topic", inputName),
+		BaseProducer: base,
+		client:       cfg.Client,
+		list:         list,
+		inputName:    inputName,
+		rt:           cfg.Runtime,
+		sourceCache:  map[schema.GroupVersionKind]*store.Store{},
+		log:          log.WithName("kubernetes-producer").WithValues("topic", inputName),
 	}
-
-	p.pub = cfg.Runtime.NewPublisher()
 
 	if cfg.Namespace != "" {
 		p.listOpts = append(p.listOpts, client.InNamespace(cfg.Namespace))
@@ -125,7 +138,7 @@ func NewWatcher(cfg Config) (*Watcher, error) {
 }
 
 func (p *Watcher) Publish(event dbspruntime.Event) error {
-	return p.pub.Publish(event)
+	return p.BaseProducer.Publish(event)
 }
 
 // Start starts the watch loop.
@@ -148,7 +161,7 @@ func (p *Watcher) Start(ctx context.Context) error {
 			}
 
 			if err := p.handleEvent(ctx, evt); err != nil {
-				p.rt.ReportError(p.name, err)
+				p.HandleError(err)
 			}
 		}
 	}
@@ -188,7 +201,7 @@ func (p *Watcher) handleEvent(ctx context.Context, evt watch.Event) error {
 	}
 	dbspruntime.LogFlowEvent(p.log, "producer.emit", "producer", p.String(), "output", p.inputName, "", zs, docs, "watch_event", string(evt.Type))
 
-	return p.pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
+	return p.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }
 
 func watchEventToDelta(t watch.EventType, obj *unstructured.Unstructured) kobject.Delta {

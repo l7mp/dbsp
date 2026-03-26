@@ -3,7 +3,6 @@ package misc
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -69,17 +68,15 @@ type PeriodicProducer struct {
 }
 
 type baseProducer struct {
-	name        string // component name (for error reporting)
+	*dbspruntime.BaseProducer
+
 	inputName   string
 	sourceType  string
 	triggerKind string
 	namespace   string
 	triggerName string
 
-	mu        sync.RWMutex
-	rt        *dbspruntime.Runtime
-	publisher dbspruntime.Publisher
-	log       logr.Logger
+	log logr.Logger
 }
 
 var _ dbspruntime.Producer = (*OneShotProducer)(nil)
@@ -127,14 +124,14 @@ func NewPeriodicProducer(cfg PeriodicConfig) (*PeriodicProducer, error) {
 }
 
 // Name returns the producer's unique component name.
-func (p *baseProducer) Name() string { return p.name }
+func (p *baseProducer) Name() string { return p.BaseProducer.Name() }
 
 // String implements fmt.Stringer.
 func (p *baseProducer) String() string {
 	if p == nil {
 		return "producer<misc>{<nil>}"
 	}
-	return fmt.Sprintf("producer<misc>{name=%q, topic=%q, type=%q}", p.name, p.inputName, p.sourceType)
+	return fmt.Sprintf("producer<misc>{name=%q, topic=%q, type=%q}", p.Name(), p.inputName, p.sourceType)
 }
 
 // newBase constructs the shared producer state. Name uniqueness is enforced
@@ -158,36 +155,56 @@ func newBase(rt *dbspruntime.Runtime, name, input, sourceType, triggerKind, name
 	if logger.GetSink() == nil {
 		logger = logr.Discard()
 	}
-	b := &baseProducer{
-		name:        name,
-		inputName:   input,
-		sourceType:  sourceType,
-		triggerKind: triggerKind,
-		namespace:   namespace,
-		triggerName: triggerName,
-		rt:          rt,
-		log:         logger.WithName(loggerName).WithValues("topic", input),
+
+	if name == "" {
+		name = fmt.Sprintf("%s.%s", loggerName, input)
 	}
+
+	var publisher dbspruntime.Publisher = dbspruntime.PublishFunc(func(dbspruntime.Event) error { return nil })
+	var reporter dbspruntime.ErrorReporter = dbspruntime.ErrorReporterFunc(func(_ string, err error) {
+		if err == nil {
+			return
+		}
+		logger.Error(err, "producer error")
+	})
 	if rt != nil {
-		b.publisher = rt.NewPublisher()
+		publisher = rt.NewPublisher()
+		reporter = rt
 	}
+
+	base, err := dbspruntime.NewBaseProducer(dbspruntime.BaseProducerConfig{
+		Name:          name,
+		Publisher:     publisher,
+		ErrorReporter: reporter,
+		Logger:        logger.WithName(loggerName).WithValues("topic", input),
+		Topics:        []string{input},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	b := &baseProducer{
+		BaseProducer: base,
+		inputName:    input,
+		sourceType:   sourceType,
+		triggerKind:  triggerKind,
+		namespace:    namespace,
+		triggerName:  triggerName,
+		log:          logger.WithName(loggerName).WithValues("topic", input),
+	}
+
 	return b, nil
 }
 
 func (p *baseProducer) SetPublisher(pub dbspruntime.Publisher) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.publisher = pub
+	if pub == nil {
+		pub = dbspruntime.PublishFunc(func(dbspruntime.Event) error { return nil })
+	}
+	p.Publisher = pub
 }
 
 func (p *baseProducer) Publish(event dbspruntime.Event) error {
-	p.mu.RLock()
-	pub := p.publisher
-	p.mu.RUnlock()
-	if pub == nil {
-		return nil
-	}
-	return pub.Publish(event)
+	return p.BaseProducer.Publish(event)
 }
 
 func (p *OneShotProducer) Start(ctx context.Context) error {
@@ -218,16 +235,9 @@ func (p *baseProducer) emit() error {
 	zs := zset.New()
 	zs.Insert(p.triggerDocument(), 1)
 
-	p.mu.RLock()
-	pub := p.publisher
-	p.mu.RUnlock()
-	if pub == nil {
-		return nil
-	}
-
 	dbspruntime.LogFlowEvent(p.log, "producer.emit", "producer", p.String(), "output", p.inputName, "", zs, nil)
 
-	return pub.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
+	return p.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }
 
 func (p *baseProducer) triggerDocument() *dbunstructured.Unstructured {
@@ -247,11 +257,7 @@ func (p *baseProducer) reportError(err error) {
 	if err == nil {
 		return
 	}
-	if p.rt != nil {
-		p.rt.ReportError(p.name, err)
-		return
-	}
-	p.log.Error(err, "producer error")
+	p.HandleError(err)
 }
 
 const (
