@@ -5,37 +5,39 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
+	"sync"
 
 	"github.com/go-logr/logr"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	opv1a1 "github.com/l7mp/dbsp/dcontroller/pkg/api/operator/v1alpha1"
-	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
-	"github.com/l7mp/dbsp/connectors/kubernetes/manager"
+	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
+	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	dobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
-	doperator "github.com/l7mp/dbsp/dcontroller/pkg/operator"
-	dreconciler "github.com/l7mp/dbsp/connectors/kubernetes/reconciler"
+	doperator "github.com/l7mp/dbsp/dcontroller/operator"
+	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	"github.com/l7mp/dbsp/engine/executor"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
 )
-
-type NativeController controller.TypedController[dreconciler.Request]
 
 const (
 	OperatorName                    = "test-ep-operator"
 	OperatorSpec                    = "examples/endpointslice-controller/endpointslice-controller-spec.yaml"
-	OperatorGatherSpec              = "examples/endpointslice-controller/endpointslice-controller-gather-spec.yaml"
+	OperatorGroupedSpec             = "examples/endpointslice-controller/endpointslice-controller-gather-spec.yaml"
 	EndpointSliceCtrlAnnotationName = "dcontroller.io/endpointslice-controller-enabled"
+	endpointViewTopic               = "endpointslice-controller/endpointview/output"
 )
 
 var (
@@ -65,152 +67,300 @@ func main() {
 	ctrl.SetLogger(log)
 
 	// Define the controller pipeline
-	specFile := OperatorGatherSpec
+	specFile := OperatorGroupedSpec
 	if *disableEndpointPooling {
 		specFile = OperatorSpec
 	}
 
-	// Create an api
-	config := ctrl.GetConfigOrDie()
-	api, err := cache.NewAPI(config, cache.APIOptions{
-		CacheOptions: cache.CacheOptions{Logger: logger},
-	})
+	runner, err := StartEndpointSliceOperator(ctrl.GetConfigOrDie(), specFile, true, nil, logger)
 	if err != nil {
-		log.Error(err, "unable to set up manager")
+		log.Error(err, "unable to set up endpoint slice operator")
 		os.Exit(1)
 	}
-
-	// Load the operator from file
-	errorChan := make(chan error, 16)
-	opts := doperator.Options{
-		Cache:        api.GetCache(),
-		ErrorChannel: errorChan,
-		Logger:       logger,
-	}
-
-	// Load the operator from file. Do not call NewFromFile as that would commit the operator.
-	op, err := doperator.NewFromFile(OperatorName, config, specFile, opts)
-	if err != nil {
-		log.Error(err, "unable to set up operator")
-		os.Exit(1)
-	}
-
-	// Create the endpointslice controller
-	r, err := NewEndpointSliceController(op.GetManager(), logger)
-	if err != nil {
-		log.Error(err, "failed to create endpointslice controller")
-		os.Exit(1)
-	}
-
-	log.Info("created endpointslice controller")
-
-	if err := op.AddNativeController("endpointslice-ctrl", r.GetController(), []schema.GroupVersionKind{}); err != nil {
-		log.Error(err, "failed to add endpointslice controller to the operator")
-		os.Exit(1)
-	}
-
-	if err := op.RegisterGVKs(); err != nil {
-		log.Error(err, "failed to register GVKs")
-		os.Exit(1)
-	}
-
-	// Create an error reporter thread
 	ctx := ctrl.SetupSignalHandler()
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				os.Exit(1)
-			case err := <-errorChan:
-				log.Error(err, "operator error")
-			}
-		}
-	}()
-
-	if err := op.Start(ctx); err != nil {
+	if err := runner.Start(ctx); err != nil {
 		log.Error(err, "problem running operator")
 		os.Exit(1)
 	}
 }
 
-// endpointSliceController implements the endpointSlice controller
-type endpointSliceController struct {
-	client.Client
-	ctrl controller.TypedController[dreconciler.Request]
-	log  logr.Logger
+// EndpointViewEvent is emitted by epConsumer for each EndpointView delta.
+type EndpointViewEvent struct {
+	Namespace string
+	Name      string
+	EventType dobject.DeltaType
+	GVK       schema.GroupVersionKind
+	Object    dobject.Object
 }
 
-func NewEndpointSliceController(mgr manager.Manager, log logr.Logger) (*endpointSliceController, error) {
-	r := &endpointSliceController{
-		Client: mgr.GetClient(),
-		log:    log.WithName("endpointslice-ctrl"),
+func (e EndpointViewEvent) GetNamespace() string            { return e.Namespace }
+func (e EndpointViewEvent) GetName() string                 { return e.Name }
+func (e EndpointViewEvent) GetEventType() dobject.DeltaType { return e.EventType }
+func (e EndpointViewEvent) GetGVK() schema.GroupVersionKind { return e.GVK }
+func (e EndpointViewEvent) GetObject() dobject.Object       { return e.Object }
+
+type EndpointSliceRunner struct {
+	k8sRuntime *k8sruntime.Runtime
+	op         *doperator.Operator
+	consumer   *epConsumer
+}
+
+func StartEndpointSliceOperator(cfg *rest.Config, specFile string, withAPIServer bool, sink chan<- EndpointViewEvent, log logr.Logger) (*EndpointSliceRunner, error) {
+	k8sCfg := k8sruntime.Config{RESTConfig: cfg, Logger: log}
+	if withAPIServer {
+		apiServerCfg, err := k8sruntime.NewDefaultAPIServerConfig("", 0, true, false, log)
+		if err != nil {
+			return nil, fmt.Errorf("configure API server: %w", err)
+		}
+		apiServerCfg.EnableOpenAPI = false
+		k8sCfg.APIServer = &apiServerCfg
 	}
 
-	on := true
-	c, err := controller.NewTyped("endpointslice-controller", mgr, controller.TypedOptions[dreconciler.Request]{
-		SkipNameValidation: &on,
-		Reconciler:         r,
+	k8sRuntime, err := k8sruntime.New(k8sCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create kubernetes runtime: %w", err)
+	}
+
+	op, err := doperator.NewFromFile(OperatorName, specFile, k8sRuntime, log)
+	if err != nil {
+		return nil, fmt.Errorf("load operator from file: %w", err)
+	}
+
+	consumer, err := NewEPConsumer(op.GetRuntime(), endpointViewTopic,
+		viewv1a1.GroupVersionKind(OperatorName, "EndpointView"), sink, log)
+	if err != nil {
+		return nil, fmt.Errorf("create endpoint view consumer: %w", err)
+	}
+
+	if err := op.GetRuntime().Add(consumer); err != nil {
+		return nil, fmt.Errorf("register endpoint view consumer: %w", err)
+	}
+
+	return &EndpointSliceRunner{k8sRuntime: k8sRuntime, op: op, consumer: consumer}, nil
+}
+
+func (r *EndpointSliceRunner) Start(ctx context.Context) error {
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return r.k8sRuntime.Start(gctx) })
+	g.Go(func() error { return r.op.Start(gctx) })
+	return g.Wait()
+}
+
+func (r *EndpointSliceRunner) APIServer() *k8sruntime.Runtime {
+	return r.k8sRuntime
+}
+
+// SetControllerObserver attaches an execution observer to a named controller circuit.
+// Returns true if a matching controller exists.
+func (r *EndpointSliceRunner) SetControllerObserver(controllerName string, observer executor.ObserverFunc) bool {
+	if r == nil || r.op == nil {
+		return false
+	}
+
+	return r.op.SetControllerObserver(controllerName, observer)
+}
+
+type epConsumer struct {
+	*dbspruntime.BaseConsumer
+
+	topic  string
+	gvk    schema.GroupVersionKind
+	log    logr.Logger
+	sink   chan<- EndpointViewEvent
+	known  map[client.ObjectKey]struct{}
+	knownM sync.Mutex
+}
+
+type classifiedEndpointDelta struct {
+	eventType dobject.DeltaType
+	key       client.ObjectKey
+	obj       dobject.Object
+}
+
+type endpointCandidate struct {
+	obj dobject.Object
+}
+
+type endpointGroupedDelta struct {
+	key    client.ObjectKey
+	pos    *endpointCandidate
+	neg    *endpointCandidate
+	hasPos bool
+	hasNeg bool
+}
+
+var _ dbspruntime.Consumer = (*epConsumer)(nil)
+
+func NewEPConsumer(rt *dbspruntime.Runtime, topic string, gvk schema.GroupVersionKind, sink chan<- EndpointViewEvent, log logr.Logger) (*epConsumer, error) {
+	if rt == nil {
+		return nil, fmt.Errorf("runtime is required")
+	}
+	if topic == "" {
+		topic = endpointViewTopic
+	}
+
+	if log.GetSink() == nil {
+		log = logr.Discard()
+	}
+	log = log.WithName("endpointslice-ctrl")
+
+	base, err := dbspruntime.NewBaseConsumer(dbspruntime.BaseConsumerConfig{
+		Name:          "endpoint-view-consumer",
+		Subscriber:    rt.NewSubscriber(),
+		ErrorReporter: rt,
+		Logger:        log,
+		Topics:        []string{topic},
 	})
 	if err != nil {
 		return nil, err
 	}
-	r.ctrl = c
 
-	src, err := dreconciler.NewSource(mgr, OperatorName, opv1a1.Source{
-		Resource: opv1a1.Resource{
-			Kind: "EndpointView",
-		},
-	}).GetSource()
+	return &epConsumer{
+		BaseConsumer: base,
+		topic:        topic,
+		gvk:          gvk,
+		log:          log,
+		sink:         sink,
+		known:        map[client.ObjectKey]struct{}{},
+	}, nil
+}
+
+func (c *epConsumer) Start(ctx context.Context) error {
+	return c.Run(ctx, c)
+}
+
+func (c *epConsumer) Consume(ctx context.Context, event dbspruntime.Event) error {
+	if event.Name != c.topic {
+		return nil
+	}
+
+	deltas, err := c.classifyDeltas(event.Data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create source: %w", err)
+		return err
 	}
 
-	if err := c.Watch(src); err != nil {
-		return nil, fmt.Errorf("failed to create watch: %w", err)
-	}
-	r.log.Info("created endpointslice controller")
+	for _, d := range deltas {
+		eventType := d.eventType
+		obj := d.obj
 
-	return r, nil
-}
-
-func (r *endpointSliceController) GetController() controller.TypedController[dreconciler.Request] {
-	return r.ctrl
-}
-
-func (r *endpointSliceController) Reconcile(ctx context.Context, req dreconciler.Request) (reconcile.Result, error) {
-	r.log.Info("Reconciling", "request", req.String())
-
-	switch req.EventType {
-	case dobject.Added, dobject.Updated, dobject.Upserted:
-		obj := dobject.NewViewObject(OperatorName, req.GVK.Kind)
-		if err := r.Get(ctx, types.NamespacedName{Name: req.Name, Namespace: req.Namespace}, obj); err != nil {
-			r.log.Error(err, "failed to get added/updated object", "delta-type", req.EventType)
-			return reconcile.Result{}, err
+		ev := EndpointViewEvent{
+			Namespace: obj.GetNamespace(),
+			Name:      obj.GetName(),
+			EventType: eventType,
+			GVK:       obj.GetObjectKind().GroupVersionKind(),
+			Object:    obj,
 		}
 
-		spec, ok, err := unstructured.NestedMap(obj.Object, "spec")
-		if err != nil || !ok {
-			return reconcile.Result{},
-				fmt.Errorf("failed to look up added/updated object spec: %q", dobject.Dump(obj))
+		switch eventType {
+		case dobject.Added, dobject.Updated, dobject.Upserted:
+			spec, _, _ := unstructured.NestedMap(obj.Object, "spec")
+			c.log.Info("Add/update EndpointView object", "name", ev.Name, "namespace", ev.Namespace, "spec", fmt.Sprintf("%#v", spec))
+		case dobject.Deleted:
+			c.log.Info("Delete EndpointView object", "name", ev.Name, "namespace", ev.Namespace)
+		default:
+			c.log.Info("Unhandled event", "name", ev.Name, "namespace", ev.Namespace, "type", ev.EventType)
 		}
 
-		name := obj.GetName()
-		namespace := obj.GetNamespace()
-
-		r.log.Info("Add/update EndpointView object", "name", name, "namespace", namespace, "spec", fmt.Sprintf("%#v", spec))
-
-		// handle upsert event
-
-	case dobject.Deleted:
-		r.log.Info("Delete EndpointView object", "name", req.Name, "namespace", req.Namespace)
-
-		// handle delete event
-
-	default:
-		r.log.Info("Unhandled event", "name", req.Name, "namespace", req.Namespace, "type", req.EventType)
+		if c.sink != nil {
+			select {
+			case c.sink <- ev:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 	}
 
-	r.log.Info("Reconciliation done")
+	return nil
+}
 
-	return reconcile.Result{}, nil
+func (c *epConsumer) classifyDeltas(data zset.ZSet) ([]classifiedEndpointDelta, error) {
+	groups := map[string]*endpointGroupedDelta{}
+
+	for _, entry := range data.Entries() {
+		obj, err := endpointObjectFromDocument(entry.Document, c.gvk)
+		if err != nil {
+			return nil, fmt.Errorf("decode endpoint view event: %w", err)
+		}
+
+		weight := entry.Weight
+		if weight == 0 {
+			continue
+		}
+
+		key := client.ObjectKeyFromObject(obj)
+		g, ok := groups[key.String()]
+		if !ok {
+			g = &endpointGroupedDelta{key: key}
+			groups[key.String()] = g
+		}
+
+		if weight < 0 {
+			g.neg = &endpointCandidate{obj: obj}
+			g.hasNeg = true
+			continue
+		}
+
+		g.pos = &endpointCandidate{obj: obj}
+		g.hasPos = true
+	}
+
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([]classifiedEndpointDelta, 0, len(keys))
+
+	c.knownM.Lock()
+	defer c.knownM.Unlock()
+
+	for _, key := range keys {
+		g := groups[key]
+		hasPos := g.hasPos && g.pos != nil && g.pos.obj != nil
+		hasNeg := g.hasNeg && g.neg != nil && g.neg.obj != nil
+		if !hasPos && !hasNeg {
+			continue
+		}
+
+		if hasPos && hasNeg {
+			c.known[g.key] = struct{}{}
+			out = append(out, classifiedEndpointDelta{eventType: dobject.Updated, key: g.key, obj: g.pos.obj})
+			continue
+		}
+
+		if hasPos {
+			eventType := dobject.Added
+			if _, exists := c.known[g.key]; exists {
+				eventType = dobject.Updated
+			}
+			c.known[g.key] = struct{}{}
+			out = append(out, classifiedEndpointDelta{eventType: eventType, key: g.key, obj: g.pos.obj})
+			continue
+		}
+
+		delete(c.known, g.key)
+		out = append(out, classifiedEndpointDelta{eventType: dobject.Deleted, key: g.key, obj: g.neg.obj})
+	}
+
+	return out, nil
+}
+
+func endpointObjectFromDocument(doc any, fallbackGVK schema.GroupVersionKind) (dobject.Object, error) {
+	udoc, ok := doc.(*dbunstructured.Unstructured)
+	if !ok {
+		return nil, fmt.Errorf("unsupported document type %T", doc)
+	}
+
+	obj := dobject.New()
+	obj.SetUnstructuredContent(udoc.Fields())
+	if obj.GetObjectKind().GroupVersionKind().Kind == "" {
+		obj.SetGroupVersionKind(fallbackGVK)
+	}
+
+	if obj.GetName() == "" {
+		return nil, fmt.Errorf("event object is missing metadata.name")
+	}
+
+	return obj, nil
 }

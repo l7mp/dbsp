@@ -89,7 +89,7 @@ make chart
 
 **Pipeline**: The declarative transformation logic that processes source data into target data. Pipelines consist of:
 - Optional `@join` operation to combine multiple sources
-- Required `@aggregate` operation with stages like `@select`, `@project`, `@unwind`, `@gather`
+- A stage sequence using operators such as `@select`, `@project`, `@unwind`, and `@groupBy`
 
 **DBSP Engine**: The incremental computation engine based on Database Stream Processing theory. It processes only deltas (changes) rather than full state reconciliation, using Z-sets (multisets with integer multiplicities) to represent data.
 
@@ -117,7 +117,7 @@ pkg/
 
 1. **Source Events**: Controller watches Kubernetes resources or views for changes (add/update/delete)
 2. **Join Stage**: If multiple sources, combine objects based on join expression
-3. **Aggregation Pipeline**: Process data through sequential stages (@select, @project, @unwind, @gather)
+3. **Aggregation Pipeline**: Process data through sequential stages (@select, @project, @unwind, @groupBy)
 4. **DBSP Processing**: Each stage is compiled into DBSP operators that process deltas incrementally
 5. **Target Reconciliation**: Apply results to target (Patcher or Updater mode)
 
@@ -129,7 +129,7 @@ pkg/
 
 **Controller** (`pkg/controller/`): Implements a single declarative controller. Sets up watches on sources, compiles pipelines into DBSP chains, and reconciles targets.
 
-**Pipeline** (`pkg/pipeline/`): Compiles declarative pipeline specs into DBSP operator chains. Handles join expressions and aggregation stages.
+**Pipeline** (`pkg/pipeline/`): Compiles declarative pipeline specs into DBSP operator chains. Handles join expressions and stage pipelines.
 
 **DBSP Package** (`pkg/dbsp/`):
 - `DocumentZSet`: Core Z-set implementation with document collections and multiplicities
@@ -164,7 +164,7 @@ The declarative pipeline uses a JSON/YAML-based expression language:
 
 ## Development Workflow
 
-When modifying CRD types in `pkg/api/`:
+When modifying CRD types in `api/`:
 ```bash
 make generate  # Generate deepcopy methods
 make manifests # Generate CRD YAML files

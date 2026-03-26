@@ -12,7 +12,7 @@ This example demonstrates the use of Δ-controller in such a use case. The examp
 
 The declarative controller pipeline spec is read from a YAML manifest. There are two versions:
 - `endpointslice-controller-spec.yaml`: this is the default spec, which will generate a separate view object per each (service, service-port, endpoint-address) combination. This is the one we discuss below.
-- `endpointslice-controller-gather-spec.yaml`: the alternative spec gathers all endpoint addresses into a single view object per (service, service-port) combination. This pipeline is mostly the same as the default spec but it contains a final "gather" stage that will collapse the endpoint addresses into a list. See the YAML for the details.
+- `endpointslice-controller-gather-spec.yaml`: the alternative spec groups all endpoint addresses into a single view object per (service, service-port) combination. This pipeline is mostly the same as the default spec but it contains a final `@groupBy` + `@project` pair that collapses endpoint addresses into a list. See the YAML for the details.
 
 The default declarative pipeline defines to controllers:
 - the `service-controller` will watch the Kubernetes core.v1 Service API, generate a separate object per each service-port, and load the resultant objects into an internal view called ServiceView.
@@ -328,4 +328,3 @@ kubectl delete deployments testdep
 Copyright 2025 by its authors. Some rights reserved. See [AUTHORS](AUTHORS).
 
 Apache License - see [LICENSE](LICENSE) for full text.
-

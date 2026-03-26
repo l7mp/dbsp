@@ -64,17 +64,16 @@ Note that the form `$.<query>` can be used to query internal fields of a resourc
 In the next step the pipeline collapses all the per-pod statuses into a single HealthView resource that contains the per-pod statuses as a single list.
 
 ```yaml
-"@gather":
-  # Key: group by service (name + namespace)
-  - "@concat":
-      - "$.metadata.name"
-      - "--"
-      - "$.metadata.namespace"
-  # Value: collapse the pods fields into a list (contains ready status)
+"@groupBy":
+  - "$.metadata"
   - "$.pods"
+"@project":
+  metadata: "$.key"
+  pods: "$.values"
 ```
 
-Here, the `@concat` op will concatenate the subsequent list of strings.
+Here, `@groupBy` groups rows by metadata and collects pod entries into the
+`values` list, then `@project` renames it to `pods` for downstream stages.
 
 Finally, the controller writes the results into a so called **view**.
 

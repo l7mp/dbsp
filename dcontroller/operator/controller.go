@@ -183,7 +183,7 @@ func newOperatorProcessor(cfg processorConfig) (*operatorProcessor, error) {
 		Publisher:     cfg.Runtime.NewPublisher(),
 		Subscriber:    sub,
 		ErrorReporter: cfg.Runtime,
-		Logger:        log.WithName("processor").WithValues("name", cfg.Name),
+		Logger:        log.WithName("processor"),
 		Topics:        []string{cfg.InputTopic},
 	})
 	if err != nil {
@@ -195,7 +195,7 @@ func newOperatorProcessor(cfg processorConfig) (*operatorProcessor, error) {
 		outputTopic:   cfg.OutputTopic,
 		k8srt:         cfg.K8sRuntime,
 		operators:     map[types.NamespacedName]*managedOperator{},
-		log:           log.WithName("processor").WithValues("name", cfg.Name),
+		log:           log.WithName("processor"),
 	}, nil
 }
 

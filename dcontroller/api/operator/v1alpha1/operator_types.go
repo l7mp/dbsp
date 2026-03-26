@@ -50,25 +50,9 @@ type OperatorList struct {
 
 // OperatorStatus specifies the status of an operator.
 type OperatorStatus struct {
-	Controllers []ControllerStatus `json:"controllers,omitempty"`
-	Conditions  []metav1.Condition `json:"conditions,omitempty"`
-	LastErrors  []string           `json:"lastErrors,omitempty"`
-}
-
-// ControllerStatus specifies the status of a controller.
-type ControllerStatus struct {
-	Name       string             `json:"name"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	LastErrors []string           `json:"lastErrors,omitempty"`
 }
-
-// ControllerConditionType is a type of condition associated with a Controller. This type should be
-// used with the ControllerStatus.Conditions field.
-type ControllerConditionType string
-
-// ControllerConditionReason defines the set of reasons that explain why a particular Controller
-// condition type has been raised.
-type ControllerConditionReason string
 
 // OperatorConditionType is a type of condition associated with an Operator. This type should be
 // used with the OperatorStatus.Conditions field.
@@ -106,18 +90,4 @@ const (
 	// OperatorReasonNotReady is used with the "Ready" condition when the operator is not ready
 	// for processing events.
 	OperatorReasonNotReady OperatorConditionReason = "NotReady"
-
-	// ControllerConditionReady represents the Ready condition.
-	ControllerConditionReady ControllerConditionType = "Ready"
-
-	// ControllerReasonReady is used with the "Ready" condition when the condition is true.
-	ControllerReasonReady ControllerConditionReason = "Ready"
-
-	// ControllerReasonReconciliationFailed is used with the "Ready" condition when
-	// reconciliation has failed for some input resources.
-	ControllerReasonReconciliationFailed ControllerConditionReason = "ReconciliationFailed"
-
-	// ControllerReasonNotReady is used with the "Ready" condition when the controller is not
-	// ready for processing events.
-	ControllerReasonNotReady ControllerConditionReason = "NotReady"
 )

@@ -42,11 +42,13 @@ func resolveGVK(operatorName string, r opv1a1.Resource, mapper meta.RESTMapper) 
 	if r.Version == nil {
 		// Standard Kubernetes resource: resolve the version via the REST mapper.
 		if mapper == nil {
-			return schema.GroupVersionKind{}, fmt.Errorf("REST mapper required to resolve GVK for group %q kind %q", *r.Group, r.Kind)
+			return schema.GroupVersionKind{},
+				fmt.Errorf("REST mapper required to resolve GVK for group %q kind %q", *r.Group, r.Kind)
 		}
 		gvk, err := mapper.KindFor(schema.GroupVersionResource{Group: *r.Group, Resource: r.Kind})
 		if err != nil {
-			return schema.GroupVersionKind{}, fmt.Errorf("cannot find GVK for %s/%s: %w", *r.Group, r.Kind, err)
+			return schema.GroupVersionKind{},
+				fmt.Errorf("cannot find GVK for %s/%s: %w", *r.Group, r.Kind, err)
 		}
 		return gvk, nil
 	}
