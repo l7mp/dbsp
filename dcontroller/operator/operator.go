@@ -124,15 +124,7 @@ func (op *Operator) GetRuntime() *dbspruntime.Runtime {
 // SetControllerObserver installs an optional executor observer for one controller circuit.
 // Returns true when a controller with the given name exists.
 func (op *Operator) SetControllerObserver(controllerName string, observer executor.ObserverFunc) bool {
-	for _, c := range op.controllers {
-		if c.GetName() != controllerName {
-			continue
-		}
-		c.GetCircuit().SetObserver(observer)
-		return true
-	}
-
-	return false
+	return op.runtime.SetCircuitObserver(controllerName, observer)
 }
 
 // Start starts the operator's manager. This blocks until the context is cancelled.

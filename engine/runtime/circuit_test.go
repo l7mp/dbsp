@@ -3,6 +3,7 @@ package runtime_test
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -227,6 +228,55 @@ var _ = Describe("Circuit", func() {
 		cons3.reset()
 		_ = pub.Publish(runtime.Event{Name: "p3", Data: oneDocZSet("none-again")})
 		Consistently(func() int { return cons1.total() + cons2.total() + cons3.total() }, 300*time.Millisecond, 20*time.Millisecond).Should(Equal(0))
+
+		cancel()
+		Eventually(errCh, time.Second).Should(Receive(BeNil()))
+	})
+
+	It("sets circuit observers through runtime", func() {
+		q := mustCompileCircuitQuery()
+		rt := runtime.NewRuntime(logr.Discard())
+		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+
+		consumer := rt.NewSubscriber()
+		consumer.Subscribe("output")
+		defer consumer.Unsubscribe("output")
+
+		var called atomic.Int64
+		ok := rt.SetCircuitObserver("test-circuit", func(node *circuit.Node, values map[string]zset.ZSet, schedule []string, position int) {
+			called.Add(1)
+		})
+		Expect(ok).To(BeFalse())
+
+		Expect(rt.Add(c)).To(Succeed())
+		ok = rt.SetCircuitObserver("test-circuit", func(node *circuit.Node, values map[string]zset.ZSet, schedule []string, position int) {
+			called.Add(1)
+		})
+		Expect(ok).To(BeTrue())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() { errCh <- rt.Start(ctx) }()
+
+		Eventually(func() bool {
+			delta := zset.New()
+			delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
+			if err := rt.NewPublisher().Publish(runtime.Event{Name: "Pod", Data: delta}); err != nil {
+				return false
+			}
+			select {
+			case out := <-consumer.GetChannel():
+				return out.Name == "output"
+			default:
+				return false
+			}
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Eventually(func() int64 { return called.Load() }, time.Second, 10*time.Millisecond).Should(BeNumerically(">", 0))
+
+		rt.Stop(c)
+		Expect(rt.SetCircuitObserver("test-circuit", nil)).To(BeFalse())
 
 		cancel()
 		Eventually(errCh, time.Second).Should(Receive(BeNil()))

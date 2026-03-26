@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"sync"
 
 	"github.com/go-logr/logr"
 
@@ -36,6 +37,7 @@ type Circuit struct {
 	topicToInput  map[string]string
 	docsFormatter func(Event) []string
 	observer      executor.ObserverFunc
+	observerMu    sync.RWMutex
 
 	logger logr.Logger
 }
@@ -59,7 +61,7 @@ func NewCircuit(name string, rt *Runtime, q *compiler.Query, logger logr.Logger)
 		state[name] = zset.New()
 	}
 
-	return &Circuit{
+	c := &Circuit{
 		Publisher:    rt.NewPublisher(),
 		Subscriber:   rt.NewSubscriber(),
 		name:         name,
@@ -73,7 +75,16 @@ func NewCircuit(name string, rt *Runtime, q *compiler.Query, logger logr.Logger)
 		state:        state,
 		topicToInput: map[string]string{},
 		logger:       logger,
-	}, nil
+	}
+
+	// Pre-subscribe to input topics so events published right after runtime.Add
+	// are not dropped before Start begins consuming.
+	for _, in := range c.inputNames {
+		c.Subscribe(in)
+		c.topicToInput[in] = in
+	}
+
+	return c, nil
 }
 
 // Name returns the circuit's unique component name.
@@ -94,6 +105,8 @@ func (c *Circuit) SetDocsFormatter(f func(Event) []string) {
 
 // SetObserver installs an optional executor observer callback.
 func (c *Circuit) SetObserver(observer executor.ObserverFunc) {
+	c.observerMu.Lock()
+	defer c.observerMu.Unlock()
 	c.observer = observer
 }
 
@@ -102,11 +115,11 @@ func (c *Circuit) SetObserver(observer executor.ObserverFunc) {
 // runtime error channel and the circuit continues processing subsequent events.
 // Start only returns a non-nil error on context cancellation-related issues.
 func (c *Circuit) Start(ctx context.Context) error {
-	for _, in := range c.inputNames {
-		c.Subscribe(in)
-		c.topicToInput[in] = in
-		defer c.Unsubscribe(in)
-	}
+	defer func() {
+		for _, in := range c.inputNames {
+			c.Unsubscribe(in)
+		}
+	}()
 	inCh := c.GetChannel()
 
 	for {
@@ -143,7 +156,7 @@ func (c *Circuit) Start(ctx context.Context) error {
 
 // Execute applies one runtime event to the compiled circuit.
 func (c *Circuit) Execute(in Event) ([]Event, error) {
-	result, err := c.exec.ExecuteWithObserver(c.buildStepInputs(in), c.observer)
+	result, err := c.exec.ExecuteWithObserver(c.buildStepInputs(in), c.getObserver())
 	if err != nil {
 		return nil, fmt.Errorf("runtime step: %w", err)
 	}
@@ -153,6 +166,12 @@ func (c *Circuit) Execute(in Event) ([]Event, error) {
 		outs = append(outs, Event{Name: logical, Data: result[nodeID]})
 	}
 	return outs, nil
+}
+
+func (c *Circuit) getObserver() executor.ObserverFunc {
+	c.observerMu.RLock()
+	defer c.observerMu.RUnlock()
+	return c.observer
 }
 
 // Reset clears executor and cached snapshot input state.

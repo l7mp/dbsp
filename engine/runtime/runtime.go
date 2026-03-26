@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
+	"github.com/l7mp/dbsp/engine/executor"
 )
 
 // Runtime combines a shared PubSub and a runnable Manager.
@@ -13,16 +14,24 @@ type Runtime struct {
 	errCh chan<- Error
 	log   logr.Logger
 
-	mu sync.RWMutex
+	mu        sync.RWMutex
+	runnables map[string]Runnable
+	observers map[string]observerSetter
+}
+
+type observerSetter interface {
+	SetObserver(executor.ObserverFunc)
 }
 
 // NewRuntime creates a Runtime. log is used as a fallback sink for non-critical
 // errors when no error channel has been set via SetErrorChannel.
 func NewRuntime(log logr.Logger) *Runtime {
 	return &Runtime{
-		PubSub:  NewPubSub(),
-		Manager: NewManager(),
-		log:     log,
+		PubSub:    NewPubSub(),
+		Manager:   NewManager(),
+		log:       log,
+		runnables: map[string]Runnable{},
+		observers: map[string]observerSetter{},
 	}
 }
 
@@ -31,7 +40,42 @@ func NewRuntime(log logr.Logger) *Runtime {
 // enforcement; a duplicate or empty name causes Add to return an error and the
 // component is not added.
 func (rt *Runtime) Add(r Runnable) error {
-	return rt.Manager.Add(r)
+	if err := rt.Manager.Add(r); err != nil {
+		return err
+	}
+
+	rt.mu.Lock()
+	rt.runnables[r.Name()] = r
+	if o, ok := r.(observerSetter); ok {
+		rt.observers[r.Name()] = o
+	}
+	rt.mu.Unlock()
+
+	return nil
+}
+
+// Stop unregisters and stops a previously added runnable.
+func (rt *Runtime) Stop(r Runnable) {
+	rt.mu.Lock()
+	delete(rt.runnables, r.Name())
+	delete(rt.observers, r.Name())
+	rt.mu.Unlock()
+
+	rt.Manager.Stop(r)
+}
+
+// SetCircuitObserver installs or clears an observer on a runtime circuit by name.
+// It returns true if a runnable with the given name exists and supports observers.
+func (rt *Runtime) SetCircuitObserver(name string, observer executor.ObserverFunc) bool {
+	rt.mu.RLock()
+	target, ok := rt.observers[name]
+	rt.mu.RUnlock()
+	if !ok {
+		return false
+	}
+
+	target.SetObserver(observer)
+	return true
 }
 
 // SetErrorChannel wires a channel that receives non-critical ComponentErrors
