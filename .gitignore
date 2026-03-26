@@ -9,3 +9,7 @@ connectors/kubernetes/bin/
 
 # Ignore JS scripts by default; force-add selected examples when needed.
 *.js
+
+# Keep local agent instruction docs out of git.
+AGENTS.md
+CLAUDE.md
