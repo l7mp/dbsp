@@ -1,33 +1,24 @@
 ###########
-# Build the manager binary
-FROM docker.io/golang:1.24-alpine as builder
+# Build the manager binary (monorepo-aware)
+FROM docker.io/golang:1.26-alpine AS builder
 
 WORKDIR /workspace
-# Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
+
+# Copy module manifests first to maximize build cache reuse.
+COPY dcontroller/go.mod dcontroller/go.sum /workspace/dcontroller/
+
+# Copy local replacement modules referenced by dcontroller/go.mod.
+COPY engine /workspace/engine
+COPY connectors/kubernetes /workspace/connectors/kubernetes
+COPY connectors/misc /workspace/connectors/misc
+
+WORKDIR /workspace/dcontroller
 RUN go mod download
 
-# Copy the go source
-COPY main.go main.go
-COPY internal/ internal/
-COPY pkg/ pkg/
+# Copy the dcontroller sources.
+COPY dcontroller /workspace/dcontroller
 
-# Build
-COPY .git ./
-COPY Makefile ./
-RUN apk add --no-cache git make bash
-
-RUN apkArch="$(apk --print-arch)"; \
-      case "$apkArch" in \
-        aarch64) export GOARCH='arm64' ;; \
-        *) export GOARCH='amd64' ;; \
-      esac; \
-    export CGO_ENABLED=0; \
-    export GOOS=linux; \
-    make build-bin
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /workspace/bin/dctl .
 
 ###########
 # Use distroless as minimal base image to package the manager binary
@@ -38,4 +29,4 @@ WORKDIR /
 COPY --from=builder /workspace/bin/dctl .
 USER 65532:65532
 
-ENTRYPOINT ["/dctl start"]
+ENTRYPOINT ["/dctl", "start"]

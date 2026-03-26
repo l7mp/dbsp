@@ -90,7 +90,9 @@ podman-build: test
 podman-push:
 	sudo podman push ${IMG}
 
-HELM_URL ?= "https://l7mp.github.io/dcontroller/"
+# The chart repository is published from this monorepo's gh-pages branch
+# under the dcontroller/ prefix.
+HELM_URL ?= "https://l7mp.github.io/dbsp/dcontroller/"
 
 .PHONY: chart
 chart: helm manifests kustomize
