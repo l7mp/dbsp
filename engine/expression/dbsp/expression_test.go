@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ohler55/ojg/jp"
 
@@ -12,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
+	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/expression"
 	"github.com/l7mp/dbsp/engine/expression/dbsp"
 )
@@ -503,6 +505,58 @@ var _ = Describe("Field Operators", func() {
 		v, _ := doc.GetField("newField")
 		Expect(v).To(Equal(int64(42)))
 	})
+
+	It("should evaluate @subject shorthand", func() {
+		subject := map[string]any{"name": "pod-a", "ready": true}
+		expr, err := dbsp.Compile([]byte(`"$$."`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil).WithSubject(subject))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(subject))
+	})
+
+	It("should evaluate explicit @subject", func() {
+		subject := map[string]any{"name": "pod-a", "ready": true}
+		expr, err := dbsp.Compile([]byte(`{"@subject": null}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil).WithSubject(subject))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(subject))
+	})
+
+	It("should evaluate $$.field shorthand", func() {
+		expr, err := dbsp.Compile([]byte(`"$$.name"`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil).WithSubject(map[string]any{"name": "pod-a"}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal("pod-a"))
+	})
+
+	It("should evaluate @setsub", func() {
+		subject := map[string]any{"name": "pod-a"}
+		expr, err := dbsp.Compile([]byte(`{"@setsub": ["seen", true]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil).WithSubject(subject))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(subject))
+		Expect(subject["seen"]).To(Equal(true))
+	})
+
+	It("should evaluate explicit @copy", func() {
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		expr, err := dbsp.Compile([]byte(`{"@copy": null}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		m, ok := result.(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(m).To(HaveKey("metadata"))
+	})
 })
 
 var _ = Describe("List Operators", func() {
@@ -663,6 +717,26 @@ var _ = Describe("Conditional Operators", func() {
 	})
 })
 
+var _ = Describe("Null And SQL Boolean Operators", func() {
+	It("should evaluate @isnull", func() {
+		expr, err := dbsp.Compile([]byte(`{"@isnull": null}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(true))
+	})
+
+	It("should evaluate @sqlbool with nil as false", func() {
+		expr, err := dbsp.Compile([]byte(`{"@sqlbool": null}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(false))
+	})
+})
+
 var _ = Describe("Utility Operators", func() {
 	It("should evaluate @noop", func() {
 		expr, err := dbsp.Compile([]byte(`{"@noop": null}`))
@@ -718,6 +792,39 @@ var _ = Describe("Utility Operators", func() {
 		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(true))
+	})
+
+	It("should evaluate @floor", func() {
+		expr, err := dbsp.Compile([]byte(`{"@floor": 2.9}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(int64(2)))
+	})
+
+	It("should evaluate @ceil", func() {
+		expr, err := dbsp.Compile([]byte(`{"@ceil": 2.1}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(int64(3)))
+	})
+})
+
+var _ = Describe("Time Operators", func() {
+	It("should evaluate @now as an RFC3339 timestamp", func() {
+		expr, err := dbsp.Compile([]byte(`{"@now": null}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+
+		ts, ok := result.(string)
+		Expect(ok).To(BeTrue())
+		_, err = time.Parse(time.RFC3339, ts)
+		Expect(err).NotTo(HaveOccurred())
 	})
 })
 

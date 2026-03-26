@@ -1,46 +1,41 @@
-# JavaScript runtime for DBSP
+# dbsp JavaScript runtime
 
-`dbsp` runs JavaScript DBSP scripts through an embedded JS runtime.
+`js/` contains the `dbsp` CLI, a small JavaScript scripting environment for building and testing
+DBSP circuits from the command line.
 
-Available globals:
+The maintained documentation lives under `doc/`. This README is only a short module-level guide.
 
-- `sql`, `aggregate`
-- `producer(topic[, entries])`, `consumer(topic, fn)`
-- `publish(topic, entries)`, `subscribe(topic, fn)` as shorthand helpers
-- `runtime.*` aliases for all APIs (`runtime.sql`, `runtime.aggregate`, `runtime.producer`, `runtime.consumer`, `runtime.publish`, `runtime.subscribe`)
-- `runtime.onError(fn)` for asynchronous runtime errors (`{ origin, message }`)
-- `runtime.observe(circuitName, fn)` to observe execution of a validated circuit by name
-- `circuit.observe(fn)` on compiled handles (before/after `validate()`)
-- `cancel()` to stop the current execution context (inside callbacks: stop that callback owner; at top level: stop the script)
+## Read This First
 
-## Getting started
+For the canonical documentation, start with:
 
-Build the executable.
+- [`doc/apps-dbsp-script.md`](/doc/apps-dbsp-script.md)
+- [`doc/getting-started.md`](/doc/getting-started.md)
+- `doc/concepts-programming-compilers-and-expressions.md`
 
-```bash
-go build -o dbsp .
-```
+## Build And Run
 
-Run a script.
+From this module:
 
 ```bash
-./dbsp examples/join_project.js
-./dbsp examples/observer-demo.js
+make build
 ```
 
-Use `-l, --loglevel debug|info|warn|error` (or `-v`) to configure runtime logs.
+This builds `bin/dbsp`.
 
-## Cancellation semantics
+Run one of the bundled examples:
 
-- `cancel()` is context-sensitive and always targets the current execution context.
-- In a callback (`consumer`, `subscribe`, `circuit.observe`, `runtime.observe`), `cancel()` stops that callback owner.
-- At top level (outside callbacks), `cancel()` stops the script VM.
-
-Example:
-
-```js
-consumer("obs-output", (entries) => {
-  console.log(entries);
-  cancel();
-});
+```bash
+./bin/dbsp examples/join_project.js
+./bin/dbsp -v examples/observer-demo.js
 ```
+
+## What This Module Contains
+
+- `main.go` starts the CLI and script VM.
+- `vm.go` hosts the Goja runtime and shared DBSP runtime.
+- `sql.go`, `aggregate.go`, `circuit.go`, `producer.go`, and `consumer.go` expose the scripting API.
+- `examples/` contains the scripts referenced by the docs.
+
+For the full API reference, Kubernetes connector examples, observer examples, and execution model,
+use [`doc/apps-dbsp-script.md`](/doc/apps-dbsp-script.md).

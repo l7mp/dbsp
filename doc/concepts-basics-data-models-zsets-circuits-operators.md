@@ -1,6 +1,6 @@
 # Basics: Data models, Z-sets, circuits, operators
 
-> The examples in this guide use the DBSP JavaScript scripting runtime, a lightweight environment for prototyping and testing DBSP circuits from the command line. Install it with `go install github.com/l7mp/dbsp/js@latest` and run scripts with `dbsp myscript.js`.
+> The examples in this guide use the DBSP JavaScript scripting runtime, a lightweight environment for prototyping and testing DBSP circuits from the command line. Install it with `go install github.com/l7mp/dbsp/js@latest`, run scripts with `dbsp myscript.js`, and see `apps-dbsp-script.md` for the full runtime reference.
 
 ## Documents
 

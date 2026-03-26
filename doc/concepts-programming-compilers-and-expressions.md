@@ -4,7 +4,7 @@
 
 Writing circuits by hand is possible but tedious. Compilers automate this: they take a high-level query and produce a circuit wired to the right input and output topics.
 
-The engine ships two compilers. The **SQL compiler** accepts standard SELECT statements and works with the relational data model. The **aggregation compiler** accepts JSON pipelines inspired by MongoDB and works with free-form JSON documents. Both produce the same kind of output, so the runtime treats them identically.
+The engine ships two compilers. The **SQL compiler** accepts standard SELECT statements and works with the relational data model. The **aggregation compiler** accepts JSON pipelines inspired by MongoDB and works with free-form JSON documents. The [aggregation pipeline language](reference-aggregations.md) and the [expression language](reference-expressions.md) are documented separately in detail. Both compilers produce the same kind of output, so the runtime treats them identically.
 
 ```mermaid
 graph LR
@@ -74,7 +74,7 @@ After incrementalization, the join tracks what it has seen from each side so tha
 
 ## The aggregation compiler
 
-The aggregation compiler accepts JSON pipelines where each stage is an object with a single `@`-prefixed key. Stages execute in sequence, each transforming the Z-set produced by the previous stage. This is the compiler used by the Kubernetes operator's declarative controller spec.
+The aggregation compiler accepts JSON pipelines where each stage is an object with a single `@`-prefixed key. Stages execute in sequence, each transforming the Z-set produced by the previous stage. The [`@join`](reference-aggregations.md#multi-source-pipelines-join), [`@select`](reference-aggregations.md#filtering-select), [`@project`](reference-aggregations.md#reshaping-project), [`@unwind`](reference-aggregations.md#expanding-lists-unwind), and [`@groupBy`](reference-aggregations.md#grouping-groupby) stages are covered in the aggregation reference. This is the compiler used by the Kubernetes operator's declarative controller spec.
 
 ```js
 const c = aggregate.compile([
@@ -119,7 +119,7 @@ sql.compile("SELECT name FROM users", { output: "my-output-topic" }).incremental
 
 ## Expressions
 
-Expressions are the computational core inside pipeline stages. A `@select` stage evaluates a predicate expression on each document. A `@project` stage evaluates a projection expression to produce a new document.
+Expressions are the computational core inside pipeline stages. The [`@select`](reference-aggregations.md#filtering-select) stage evaluates a predicate [expression](reference-expressions.md) on each document. The [`@project`](reference-aggregations.md#reshaping-project) stage evaluates a projection [expression](reference-expressions.md) to produce a new document.
 
 Inside aggregation pipeline stages, expressions follow three rules. A string starting with `$.` is a field reference that reads from the input document. An object with a single `@`-prefixed key is a function call. Anything else is a literal constant. When a pipeline operates on multiple inputs, field references use the logical input name as a prefix to disambiguate which source a field comes from. In SQL, this is the table alias (`u.name`, `o.total`). In aggregation pipelines, the logical name from the input binding is used.
 
@@ -135,23 +135,23 @@ Inside aggregation pipeline stages, expressions follow three rules. A string sta
 
 Available expressions in this implementation:
 
-**Field access**: `"$.path.to.field"` reads a value from the input document using JSONPath.
+**Field access**: The [field and subject operators](reference-expressions.md#field-and-subject-operators) include `"$.path.to.field"`, which reads a value from the input document using JSONPath.
 
-**Arithmetic**: `@add`, `@sub`, `@mul`, `@div`, `@mod` for numeric operations.
+**Arithmetic**: The [arithmetic operators](reference-expressions.md#arithmetic-operators) include `@add`, `@sub`, `@mul`, `@div`, and `@mod` for numeric operations.
 
-**Comparison**: `@eq`, `@neq`, `@gt`, `@gte`, `@lt`, `@lte` return booleans.
+**Comparison**: The [comparison operators](reference-expressions.md#comparison-operators) include `@eq`, `@neq`, `@gt`, `@gte`, `@lt`, and `@lte`.
 
-**Boolean**: `@and`, `@or`, `@not` combine boolean values.
+**Boolean**: The [logical and conditional operators](reference-expressions.md#logical-and-conditional-operators) include `@and`, `@or`, and `@not`.
 
-**String**: `@concat`, `@lower`, `@upper`, `@string` (type cast), `@regexp`.
+**String**: The [string operators](reference-expressions.md#string-operators) include `@concat`, `@lower`, `@upper`, `@string`, and `@regexp`.
 
-**List**: `@len` (array length), `@in` (membership test), `@map`, `@filter`, `@sortBy`, `@sum`, `@min`, `@max`.
+**List**: The [list operators](reference-expressions.md#list-operators) include `@len`, `@in`, `@map`, `@filter`, `@sortBy`, `@sum`, `@min`, and `@max`.
 
-**Conditional**: `@cond` is a ternary if-then-else: `{ "@cond": [test, ifTrue, ifFalse] }`.
+**Conditional**: The [`@cond`](reference-expressions.md#cond) operator is a ternary if-then-else: `{ "@cond": [test, ifTrue, ifFalse] }`.
 
-**Null handling**: `@isnull`, `@isnil`, `@nil`.
+**Null handling**: The [null, SQL boolean, and utility operators](reference-expressions.md#null-sql-boolean-and-utility-operators) include `@isnull`, `@isnil`, and `@nil`.
 
-**Time**: `@now` for timestamp operations.
+**Time**: The [`@now`](reference-expressions.md#now) operator produces a timestamp.
 
 ## A Kubernetes controller
 

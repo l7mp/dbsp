@@ -49,7 +49,7 @@ aggregate.compile(
         }},
     ],
     { inputs: ["orders", "products"], output: "joined-orders-agg" }
-).incrementalize().validate();
+).incrementalize();
 
 consumer("joined-orders-agg", (entries) => {
     console.log("=== aggregate join output ===");
