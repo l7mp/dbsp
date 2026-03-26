@@ -497,6 +497,90 @@ c.validate();
 		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:11"}))
 	})
 
+	It("auto-registers aggregate circuits without explicit validate", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("agg-auto-collector", vm.runtime, "agg-auto-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {
+  inputs: "agg-auto-in",
+  output: "agg-auto-out"
+});
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			_ = runScript(vm, `publish("agg-auto-in", [[{id: 111}, 1]]);`)
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(first.Name).To(Equal("agg-auto-out"))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:111"}))
+	})
+
+	It("incrementalize swaps runtime registration without validate", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("agg-inc-collector", vm.runtime, "agg-inc-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		obsCollector, err := newCollectingConsumer("agg-inc-obs-collector", vm.runtime, "agg-inc-obs")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(obsCollector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {
+  inputs: "agg-inc-in",
+  output: "agg-inc-out"
+});
+
+const ci = c.incrementalize();
+
+runtime.observe("aggregation^Δ", (e) => {
+  runtime.publish("agg-inc-obs", [[{node: e.node.id}, 1]]);
+  cancel();
+});
+
+publish("agg-inc-in", [[{id: 222}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			for _, ev := range events {
+				if got := zsetRowsByField(ev, "id"); len(got) > 0 && got[0] == "1:222" {
+					return true
+				}
+			}
+			return false
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Eventually(func() int {
+			return len(obsCollector.Snapshot())
+		}, 2*time.Second, 10*time.Millisecond).Should(BeNumerically(">", 0))
+	})
+
 	It("compiles aggregate pipelines with binding objects", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
@@ -565,6 +649,36 @@ c.validate();
 
 		Expect(first.Name).To(Equal("sql-out"))
 		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:31"}))
+	})
+
+	It("auto-registers SQL circuits without explicit validate", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("sql-auto-collector", vm.runtime, "sql-auto-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+sql.table("sql_auto_t", "id int");
+sql.compile("select id from sql_auto_t", { output: "sql-auto-out" });
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			_ = runScript(vm, `publish("sql_auto_t", [[{id: 88}, 1]]);`)
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(first.Name).To(Equal("sql-auto-out"))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:88"}))
 	})
 
 	It("requires explicit SQL output option", func() {

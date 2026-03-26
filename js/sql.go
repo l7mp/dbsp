@@ -84,6 +84,9 @@ func (v *VM) sqlCompile(call goja.FunctionCall) (goja.Value, error) {
 	compiled.OutputMap = outputMap
 	compiled.OutputLogicalMap = remapOutputLogicalMap(originalOutputMap, originalOutputLogicalMap, outputMap, binding.Name, binding.Logical)
 	h := &circuitHandle{c: compiled.Circuit, query: compiled, vm: v}
+	if err := h.register(); err != nil {
+		return nil, fmt.Errorf("sql.compile: %w", err)
+	}
 	return h.jsObject(), nil
 }
 

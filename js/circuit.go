@@ -21,24 +21,7 @@ type circuitHandle struct {
 	obsFn goja.Callable
 }
 
-func (h *circuitHandle) incrementalize() (*circuitHandle, error) {
-	inc, err := transform.Incrementalize(h.c)
-	if err != nil {
-		return nil, fmt.Errorf("incrementalize: %w", err)
-	}
-	return &circuitHandle{c: inc, query: h.query, vm: h.vm, obsFn: h.obsFn}, nil
-}
-
-func (h *circuitHandle) validate() error {
-	errs := h.c.Validate()
-	if len(errs) > 0 {
-		messages := make([]string, 0, len(errs))
-		for _, err := range errs {
-			messages = append(messages, err.Error())
-		}
-		return fmt.Errorf("circuit validation failed: %s", strings.Join(messages, "; "))
-	}
-
+func (h *circuitHandle) register() error {
 	query := *h.query
 	query.Circuit = h.c
 
@@ -54,12 +37,62 @@ func (h *circuitHandle) validate() error {
 	if err := h.vm.runtime.Add(proc); err != nil {
 		return fmt.Errorf("runtime add circuit: %w", err)
 	}
+
 	h.proc = proc
 	if err := h.installObserver(); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (h *circuitHandle) incrementalize() (*circuitHandle, error) {
+	prevProc := h.proc
+	if prevProc != nil {
+		h.vm.runtime.Stop(prevProc)
+		h.proc = nil
+	}
+
+	inc, err := transform.Incrementalize(h.c)
+	if err != nil {
+		if prevProc != nil {
+			h.proc = prevProc
+			if regErr := h.register(); regErr != nil {
+				return nil, fmt.Errorf("incrementalize: %w (restore failed: %v)", err, regErr)
+			}
+		}
+		return nil, fmt.Errorf("incrementalize: %w", err)
+	}
+
+	next := &circuitHandle{c: inc, query: h.query, vm: h.vm, obsFn: h.obsFn}
+	if err := next.register(); err != nil {
+		if prevProc != nil {
+			h.proc = prevProc
+			if regErr := h.installObserver(); regErr != nil {
+				return nil, fmt.Errorf("incrementalize: register incremental circuit: %w (restore failed: %v)", err, regErr)
+			}
+		}
+		return nil, fmt.Errorf("incrementalize: register incremental circuit: %w", err)
+	}
+
+	return next, nil
+}
+
+func (h *circuitHandle) validate() error {
+	errs := h.c.Validate()
+	if len(errs) > 0 {
+		messages := make([]string, 0, len(errs))
+		for _, err := range errs {
+			messages = append(messages, err.Error())
+		}
+		return fmt.Errorf("circuit validation failed: %s", strings.Join(messages, "; "))
+	}
+
+	if h.proc != nil {
+		return nil
+	}
+
+	return h.register()
 }
 
 func (h *circuitHandle) observe(jsFn goja.Callable) error {
