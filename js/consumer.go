@@ -83,7 +83,7 @@ func (v *VM) registerCallbackConsumer(topic string, jsFn goja.Callable) {
 	}()
 }
 
-func (v *VM) registerTransformCallbackConsumer(sourceTopic, targetTopic string, jsFn goja.Callable) {
+func (v *VM) registerTransformCallback(sourceTopic, targetTopic, errorOrigin string, jsFn goja.Callable) {
 	sub := v.runtime.NewSubscriber()
 	sub.Subscribe(sourceTopic)
 	pub := v.runtime.NewPublisher()
@@ -156,7 +156,7 @@ func (v *VM) registerTransformCallbackConsumer(sourceTopic, targetTopic string, 
 						}
 
 						if err := pub.Publish(out); err != nil {
-							v.runtime.ReportError("kubernetes-watch-callback", fmt.Errorf("publish transformed event: %w", err))
+							v.runtime.ReportError(errorOrigin, fmt.Errorf("publish transformed event: %w", err))
 						}
 					})
 				})

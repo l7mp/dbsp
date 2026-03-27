@@ -362,23 +362,38 @@ producer.kubernetes.list({
 });
 ```
 
-### `consumer.kubernetes.patcher({ gvk, topic })`
+### `consumer.kubernetes.patcher({ gvk, topic }[, fn])`
 
 This installs a Kubernetes consumer that applies merge-style patches from a topic onto existing
 objects.
+
+An optional callback `fn(entries)` can transform each batch before it is applied:
+
+- return a new entries array to apply transformed output;
+- return `undefined` to pass through the original entries unchanged;
+- return `null` to drop the batch.
 
 ```js
 consumer.kubernetes.patcher({
   gvk: "v1/Service",
   topic: "desired-services",
 });
+
+consumer.kubernetes.patcher({
+  gvk: "v1/Service",
+  topic: "desired-services",
+}, (entries) => {
+  return entries.filter(([doc, _w]) => doc?.metadata?.name !== "kubernetes");
+});
 ```
 
 Use this when the pipeline output is a partial object that should update an existing resource.
 
-### `consumer.kubernetes.updater({ gvk, topic })`
+### `consumer.kubernetes.updater({ gvk, topic }[, fn])`
 
 This installs a Kubernetes consumer that writes whole objects from a topic.
+
+Optional callback semantics are the same as for `consumer.kubernetes.patcher(...)`.
 
 ```js
 consumer.kubernetes.updater({
@@ -388,6 +403,10 @@ consumer.kubernetes.updater({
 ```
 
 Use this when the pipeline emits the full desired object rather than a patch.
+
+In short: plain `consumer(...)` / `subscribe(...)` callbacks are sink observers (return value is
+ignored), while connector callbacks (`producer.kubernetes.*`, `consumer.kubernetes.*`) are
+transform callbacks (return value controls the forwarded batch).
 
 ### `producer.jsonl(...)` and `consumer.redis(...)`
 

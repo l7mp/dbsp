@@ -116,7 +116,7 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 			kind = "kubernetes-list"
 		}
 		publishTopic = v.nextInternalTopic(kind, opts.Topic)
-		v.registerTransformCallbackConsumer(publishTopic, opts.Topic, callback)
+		v.registerTransformCallback(publishTopic, opts.Topic, kind+"-callback", callback)
 	}
 
 	producerKind := "watcher"
@@ -171,6 +171,21 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 		return nil, fmt.Errorf("consumer.kubernetes.*({ ... }) requires options")
 	}
 
+	var callback goja.Callable
+	if len(call.Arguments) > 1 {
+		arg := call.Argument(1)
+		if !goja.IsUndefined(arg) && !goja.IsNull(arg) {
+			cb, ok := goja.AssertFunction(arg)
+			if !ok {
+				if patcher {
+					return nil, fmt.Errorf("consumer.kubernetes.patcher callback must be a function")
+				}
+				return nil, fmt.Errorf("consumer.kubernetes.updater callback must be a function")
+			}
+			callback = cb
+		}
+	}
+
 	var opts k8sConsumerOptions
 	if err := decodeOptionValue(call.Argument(0), &opts); err != nil {
 		return nil, fmt.Errorf("consumer.kubernetes options: %w", err)
@@ -193,12 +208,17 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 	if patcher {
 		consumerKind = "patcher"
 	}
+	consumeTopic := opts.Topic
+	if callback != nil {
+		consumeTopic = v.nextInternalTopic("kubernetes-consumer-"+consumerKind, opts.Topic)
+		v.registerTransformCallback(opts.Topic, consumeTopic, "kubernetes-consumer-"+consumerKind+"-callback", callback)
+	}
 
 	name := fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, opts.Topic, strings.ToLower(gvk.String()))
 	baseCfg := k8sconsumer.Config{
 		Client:     krt.GetClient(),
 		Name:       name,
-		OutputName: opts.Topic,
+		OutputName: consumeTopic,
 		TargetGVK:  gvk,
 		Runtime:    v.runtime,
 		Logger:     v.logger,

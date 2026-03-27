@@ -184,7 +184,7 @@ publish("input-topic", [[{id: 7}, 1]]);
 		})
 	}
 
-	It("transforms forwarded events with registerTransformCallbackConsumer", func() {
+	It("transforms forwarded events with registerTransformCallback", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -208,7 +208,7 @@ publish("input-topic", [[{id: 7}, 1]]);
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		vm.registerTransformCallbackConsumer("transform-in", "transform-out", fn)
+		vm.registerTransformCallback("transform-in", "transform-out", "test-transform", fn)
 		Expect(runScript(vm, `publish("transform-in", [[{id: 1}, 1]]);`)).To(Succeed())
 
 		var first dbspruntime.Event
@@ -248,7 +248,7 @@ publish("input-topic", [[{id: 7}, 1]]);
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		vm.registerTransformCallbackConsumer("transform-pass-in", "transform-pass-out", fn)
+		vm.registerTransformCallback("transform-pass-in", "transform-pass-out", "test-transform", fn)
 		Expect(runScript(vm, `publish("transform-pass-in", [[{id: 7}, 1]]);`)).To(Succeed())
 
 		var first dbspruntime.Event
@@ -288,7 +288,7 @@ publish("input-topic", [[{id: 7}, 1]]);
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		vm.registerTransformCallbackConsumer("transform-drop-in", "transform-drop-out", fn)
+		vm.registerTransformCallback("transform-drop-in", "transform-drop-out", "test-transform", fn)
 		Expect(runScript(vm, `publish("transform-drop-in", [[{id: 9}, 1]]);`)).To(Succeed())
 
 		Consistently(func() int {
@@ -326,6 +326,36 @@ producer.kubernetes.list({
 `)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("producer.kubernetes.list callback must be a function"))
+	})
+
+	It("validates kubernetes patcher callback type before startup", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScript(vm, `
+consumer.kubernetes.patcher({
+  gvk: "v1/Service",
+  topic: "desired-services"
+}, 42);
+`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("consumer.kubernetes.patcher callback must be a function"))
+	})
+
+	It("validates kubernetes updater callback type before startup", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScript(vm, `
+consumer.kubernetes.updater({
+  gvk: "apps/v1/Deployment",
+  topic: "desired-deployments"
+}, 42);
+`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("consumer.kubernetes.updater callback must be a function"))
 	})
 
 	It("invokes runtime.onError callback for async runtime errors", func() {
