@@ -53,11 +53,11 @@ var _ = Describe("Runtime logging helpers", func() {
 		runtime.LogFlowEvent(debugLog, "consumer.apply", "consumer", "con-1", "apply", "out", "", zs, nil)
 		runtime.LogFlowEvent(debugLog, "producer.emit", "producer", "prod-1", "output", "in", "", zs, nil)
 		runtime.LogFlowEvent(debugLog, "processor.send", "processor", "proc-1", "output", "out", "", zs, nil)
-		Expect(*debugEntries).To(HaveLen(2))
+		Expect(*debugEntries).To(HaveLen(3))
 		for _, e := range *debugEntries {
 			Expect(e.message).To(Equal("dbsp runtime event"))
 			em := kv(e.kv)
-			Expect(em["operator"]).To(BeElementOf("consumer", "producer"))
+			Expect(em["operator"]).To(BeElementOf("consumer", "producer", "processor"))
 			_, docsPresent := em["docs"]
 			Expect(docsPresent).To(BeFalse())
 		}

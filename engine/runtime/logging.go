@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	componentConsumer = "consumer"
-	componentProducer = "producer"
+	componentConsumer  = "consumer"
+	componentProducer  = "producer"
+	componentProcessor = "processor"
 )
 
 // EventLogBuffer builds a structured runtime flow log payload.
@@ -63,8 +64,8 @@ func ApplyLogBuffer(eventType, componentType, component, direction, topic, logic
 }
 
 // LogFlowEvent emits a single exclusive runtime log line:
-// - V(2): producer/consumer "dbsp runtime event docs"
-// - V(1): producer/consumer "dbsp runtime event"
+// - V(2): producer/consumer/processor "dbsp runtime event docs"
+// - V(1): producer/consumer/processor "dbsp runtime event"
 // - V(0): consumer "dbsp runtime event"
 func LogFlowEvent(log logr.Logger, eventType, componentType, component, direction, topic, logical string, data zset.ZSet, docsOverride []string, extra ...any) {
 	infoBuf := EventLogBuffer(eventType, componentType, component, direction, topic, logical, data, extra...)
@@ -125,7 +126,7 @@ func shouldLogInfo(componentType string) bool {
 }
 
 func shouldLogDebug(componentType string) bool {
-	return componentType == componentConsumer || componentType == componentProducer
+	return componentType == componentConsumer || componentType == componentProducer || componentType == componentProcessor
 }
 
 // ZSetPKSummary returns a stable primary-key summary (with weights) for logging.
