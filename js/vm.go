@@ -19,7 +19,7 @@ import (
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -361,7 +361,7 @@ func (v *VM) fromJSEntries(value goja.Value) (zset.ZSet, error) {
 			return set, fmt.Errorf("entry %d document: %w", i, err)
 		}
 
-		doc := dbunstructured.New(map[string]any{}, nil)
+		doc := dbspunstructured.New(map[string]any{}, nil)
 		if err := doc.UnmarshalJSON(docJSON); err != nil {
 			return set, fmt.Errorf("entry %d document decode: %w", i, err)
 		}

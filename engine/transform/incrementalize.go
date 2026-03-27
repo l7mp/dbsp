@@ -137,7 +137,7 @@ func resolveSource(c *circuit.Circuit, mapping map[string]*nodeMapping, nodeID s
 }
 
 // resolveDest finds the actual input node for a given destination.
-func resolveDest(c *circuit.Circuit, mapping map[string]*nodeMapping, nodeID string, port int) string {
+func resolveDest(c *circuit.Circuit, mapping map[string]*nodeMapping, nodeID string, _ int) string {
 	m := mapping[nodeID]
 	if m.skip {
 		// Find where this bypassed node outputs to.
@@ -150,7 +150,7 @@ func resolveDest(c *circuit.Circuit, mapping map[string]*nodeMapping, nodeID str
 }
 
 // createOperatorEdges creates the external edges for an operator.
-func createOperatorEdges(c, result *circuit.Circuit, node *circuit.Node, e *circuit.Edge, mapping map[string]*nodeMapping) {
+func createOperatorEdges(_ *circuit.Circuit, result *circuit.Circuit, node *circuit.Node, e *circuit.Edge, mapping map[string]*nodeMapping) {
 	op := node.Operator
 	prefix := incrementalID(node.ID)
 
@@ -217,5 +217,8 @@ func createOperatorEdges(c, result *circuit.Circuit, node *circuit.Node, e *circ
 			toMapping := mapping[e.To]
 			result.AddEdge(circuit.NewEdge(sourceNode, toMapping.inputNode, e.Port))
 		}
+
+	default:
+		// Primitive/Bypass kinds are handled in dedicated branches elsewhere.
 	}
 }

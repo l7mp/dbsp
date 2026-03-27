@@ -7,7 +7,7 @@ import (
 
 	"github.com/dop251/goja"
 
-	compilersql "github.com/l7mp/dbsp/engine/compiler/sql"
+	dbspsqlcompiler "github.com/l7mp/dbsp/engine/compiler/sql"
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
 )
 
@@ -68,7 +68,7 @@ func (v *VM) sqlCompile(call goja.FunctionCall) (goja.Value, error) {
 	}
 	binding = parsed
 
-	compiled, err := compilersql.New(v.db).CompileString(query)
+	compiled, err := dbspsqlcompiler.New(v.db).CompileString(query)
 	if err != nil {
 		return nil, fmt.Errorf("sql.compile: %w", err)
 	}

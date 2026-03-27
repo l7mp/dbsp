@@ -46,6 +46,8 @@ func formatCircuit(c *circuit.Circuit, schedule []string) string {
 }
 
 // formatCircuitCompact returns a one-line summary for logging.
+//
+//nolint:unused
 func formatCircuitCompact(c *circuit.Circuit, schedule []string) string {
 	var b strings.Builder
 	b.WriteString("Circuit(")

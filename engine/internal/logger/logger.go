@@ -24,7 +24,7 @@ func DiscardLogger() logr.Logger {
 // NewZapLogger creates a logr.Logger backed by zap.
 func NewZapLogger(level zapcore.Level) logr.Logger {
 	zc := zap.NewDevelopmentConfig()
-	zc.Level = zap.NewAtomicLevelAt(zapcore.Level(level))
+	zc.Level = zap.NewAtomicLevelAt(level)
 	z, _ := zc.Build()
 	return zapr.NewLogger(z)
 }

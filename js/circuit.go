@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -97,6 +98,8 @@ func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
 			if opts.Rules != "" {
 				args = append(args, opts.Rules)
 			}
+		case transform.Incrementalizer:
+			// No options are currently supported.
 		}
 	}
 
@@ -105,7 +108,7 @@ func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
 		if prevProc != nil {
 			h.proc = prevProc
 			if regErr := h.register(); regErr != nil {
-				return fmt.Errorf("transform: %w (restore failed: %v)", err, regErr)
+				return errors.Join(fmt.Errorf("transform: %w", err), fmt.Errorf("restore failed: %w", regErr))
 			}
 		}
 		return fmt.Errorf("transform: %w", err)
@@ -116,7 +119,7 @@ func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
 		if prevProc != nil {
 			h.proc = prevProc
 			if regErr := h.register(); regErr != nil {
-				return fmt.Errorf("transform %s: %w (restore failed: %v)", typ, err, regErr)
+				return errors.Join(fmt.Errorf("transform %s: %w", typ, err), fmt.Errorf("restore failed: %w", regErr))
 			}
 		}
 		return fmt.Errorf("transform %s: %w", typ, err)
@@ -129,7 +132,10 @@ func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
 		if prevProc != nil {
 			h.proc = prevProc
 			if regErr := h.installObserver(); regErr != nil {
-				return fmt.Errorf("transform %s: register transformed circuit: %w (restore failed: %v)", typ, err, regErr)
+				return errors.Join(
+					fmt.Errorf("transform %s: register transformed circuit: %w", typ, err),
+					fmt.Errorf("restore failed: %w", regErr),
+				)
 			}
 		}
 		return fmt.Errorf("transform %s: register transformed circuit: %w", typ, err)

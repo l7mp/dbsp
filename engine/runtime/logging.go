@@ -223,7 +223,7 @@ func overrideKey(buf []any, key string, value any) {
 			return
 		}
 	}
-	buf = append(buf, key, value)
+	_ = append(buf, key, value)
 }
 
 func resolveDoc(src any) string {

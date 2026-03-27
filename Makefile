@@ -1,4 +1,5 @@
 GO ?= go
+GOLANGCI_LINT ?= golangci-lint
 SHELL := /usr/bin/env bash
 .SHELLFLAGS := -eu -o pipefail -c
 
@@ -8,7 +9,7 @@ DCTRL_LOCALBIN := dcontroller/bin
 K8S_LOCALBIN_ABS := $(abspath $(K8S_LOCALBIN))
 DCTRL_LOCALBIN_ABS := $(abspath $(DCTRL_LOCALBIN))
 
-.PHONY: help build test test-fast clean test-report
+.PHONY: help build test test-fast clean test-report lint
 .PHONY: build-connectors-kubernetes build-connectors-misc build-engine build-js build-dcontroller build-dcontroller-examples
 .PHONY: test-connectors-kubernetes test-connectors-misc test-engine test-js test-dcontroller
 .PHONY: test-fast-connectors-kubernetes test-fast-connectors-misc test-fast-engine test-fast-js test-fast-dcontroller
@@ -19,6 +20,7 @@ help:
 	@printf "  make test         Run all tests (fail fast)\n"
 	@printf "  make test-fast    Run fast tests (skip integration/examples)\n"
 	@printf "  make test-report  Run all tests and print per-module pass/fail summary\n"
+	@printf "  make lint         Run golangci-lint across workspace modules\n"
 	@printf "  make clean        Remove build/test artifacts across sub-projects\n"
 
 build: build-connectors-kubernetes build-connectors-misc build-engine build-js build-dcontroller
@@ -137,6 +139,10 @@ test-report:
 		exit 1; \
 	fi; \
 	printf "\\nAll module test suites passed.\\n"
+
+lint:
+	@printf "==> [workspace] golangci-lint\n"
+	@$(GOLANGCI_LINT) run ./connectors/kubernetes/... ./connectors/misc/... ./dcontroller/... ./engine/... ./js/...
 
 clean:
 	@printf "==> [connectors/kubernetes] clean\n"

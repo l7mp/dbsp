@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/l7mp/dbsp/engine/expression"
-	exprdbsp "github.com/l7mp/dbsp/engine/expression/dbsp"
+	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/operator"
 
 	"gonum.org/v1/gonum/graph"
@@ -174,7 +174,7 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 	s := stageSpec{Index: i, Op: stage.Op, RawArgs: stage.Args}
 	switch stage.Op {
 	case "@join", "@select":
-		expr, err := exprdbsp.NewParser().Parse(stage.Args)
+		expr, err := dbspexpr.NewParser().Parse(stage.Args)
 		if err != nil {
 			return s, wrapStageErr(i, stage.Op, "predicate", stage.Args, err)
 		}

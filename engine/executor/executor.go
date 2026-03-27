@@ -8,9 +8,9 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/l7mp/dbsp/engine/circuit"
+	"github.com/l7mp/dbsp/engine/internal/logger"
 	"github.com/l7mp/dbsp/engine/operator"
 	"github.com/l7mp/dbsp/engine/zset"
-	"github.com/l7mp/dbsp/engine/internal/logger"
 )
 
 // Executor executes a circuit.

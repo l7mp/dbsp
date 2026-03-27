@@ -120,7 +120,10 @@ func (n *Node) MarshalJSON() ([]byte, error) {
 	if err := json.Unmarshal(opData, &m); err != nil {
 		return nil, err
 	}
-	idJSON, _ := json.Marshal(n.ID)
+	idJSON, err := json.Marshal(n.ID)
+	if err != nil {
+		return nil, err
+	}
 	m["id"] = idJSON
 	return json.Marshal(m)
 }
@@ -172,6 +175,6 @@ func (e *Edge) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return err
 	}
-	*e = Edge{From: payload.From, To: payload.To, Port: payload.Port}
+	*e = Edge(payload)
 	return nil
 }

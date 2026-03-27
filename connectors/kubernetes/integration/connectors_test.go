@@ -26,7 +26,7 @@ import (
 	kauth "github.com/l7mp/dbsp/connectors/kubernetes/runtime/auth"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	rtstore "github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -358,7 +358,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 
 func output(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {
 	z := zset.New()
-	z.Insert(dbunstructured.New(doc, nil), w)
+	z.Insert(dbspunstructured.New(doc, nil), w)
 	return dbspruntime.Event{Name: name, Data: z}
 }
 
@@ -386,7 +386,7 @@ func singleField(z zset.ZSet, path ...string) string {
 func allFieldValues(z zset.ZSet, path ...string) []string {
 	vals := make([]string, 0, z.Size())
 	for _, e := range z.Entries() {
-		doc, ok := e.Document.(*dbunstructured.Unstructured)
+		doc, ok := e.Document.(*dbspunstructured.Unstructured)
 		Expect(ok).To(BeTrue())
 		v, ok, err := unstructured.NestedString(doc.Fields(), path...)
 		Expect(err).NotTo(HaveOccurred())

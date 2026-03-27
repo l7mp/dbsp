@@ -391,6 +391,7 @@ func drainEvents(ch <-chan EndpointViewEvent) {
 	}
 }
 
+//nolint:unused
 func collectSpecs(ch <-chan EndpointViewEvent, expected int, timeout time.Duration) []map[string]any {
 	GinkgoHelper()
 

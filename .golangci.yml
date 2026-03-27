@@ -143,6 +143,45 @@ linters:
         text: (G204|G104|G307)
       - path: (.+)\.go$
         text: 'ST1000: at least one file in a package should have a package comment'
+      - linters:
+          - staticcheck
+        text: 'QF1008:'
+      - linters:
+          - staticcheck
+        text: 'QF1012:'
+      - linters:
+          - staticcheck
+        text: 'S1017:'
+      - linters:
+          - staticcheck
+        text: 'S1001:'
+      - linters:
+          - ginkgolinter
+        text: 'wrong boolean assertion'
+      - linters:
+          - ginkgolinter
+        text: 'wrong length assertion'
+      - linters:
+          - ginkgolinter
+        text: 'wrong error assertion'
+      - linters:
+          - gosec
+        text: 'G404: Use of weak random number generator'
+      - linters:
+          - gosec
+        text: 'G115: integer overflow conversion'
+      - linters:
+          - errcheck
+        source: '(result|c|clone)\.Add(Node|Edge)\('
+      - linters:
+          - errcheck
+        source: 'defer stop\(\)'
+      - linters:
+          - importas
+        text: 'k8s.io/apimachinery/pkg/apis/meta/v1.*must be "metav1"'
+      - linters:
+          - whitespace
+        text: 'unnecessary (leading|trailing) newline'
     paths:
       - zz_generated.*\.go$
       - .*conversion.*\.go$

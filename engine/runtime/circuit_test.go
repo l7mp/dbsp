@@ -273,7 +273,7 @@ var _ = Describe("Circuit", func() {
 			}
 		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
 
-		Eventually(func() int64 { return called.Load() }, time.Second, 10*time.Millisecond).Should(BeNumerically(">", 0))
+		Eventually(called.Load, time.Second, 10*time.Millisecond).Should(BeNumerically(">", 0))
 
 		rt.Stop(c)
 		Expect(rt.SetCircuitObserver("test-circuit", nil)).To(BeFalse())

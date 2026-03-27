@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -158,7 +158,7 @@ func singleField(z zset.ZSet, path ...string) string {
 func allFieldValues(z zset.ZSet, path ...string) []string {
 	vals := []string{}
 	for _, e := range z.Entries() {
-		u, ok := e.Document.(*dbunstructured.Unstructured)
+		u, ok := e.Document.(*dbspunstructured.Unstructured)
 		Expect(ok).To(BeTrue())
 		v, ok, err := unstructured.NestedString(u.Fields(), path...)
 		Expect(err).NotTo(HaveOccurred())

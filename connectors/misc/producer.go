@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -256,7 +256,7 @@ func (p *baseProducer) emit() error {
 	return p.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
 }
 
-func (p *baseProducer) triggerDocument() *dbunstructured.Unstructured {
+func (p *baseProducer) triggerDocument() *dbspunstructured.Unstructured {
 	fields := map[string]any{
 		VirtualSourceTypeField:      p.sourceType,
 		VirtualSourceKindField:      p.triggerKind,
@@ -266,7 +266,7 @@ func (p *baseProducer) triggerDocument() *dbunstructured.Unstructured {
 	if p.namespace != "" {
 		fields[VirtualSourceNamespaceField] = p.namespace
 	}
-	return dbunstructured.New(fields, nil)
+	return dbspunstructured.New(fields, nil)
 }
 
 func (p *baseProducer) reportError(err error) {

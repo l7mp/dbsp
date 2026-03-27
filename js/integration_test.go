@@ -105,6 +105,7 @@ func zsetRowsByField(ev dbspruntime.Event, field string) []string {
 	return rows
 }
 
+//nolint:unused
 func zsetRowsJSON(ev dbspruntime.Event) []string {
 	rows := make([]string, 0, ev.Data.Size())
 	ev.Data.Iter(func(doc datamodel.Document, weight zset.Weight) bool {

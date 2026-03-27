@@ -26,7 +26,7 @@ import (
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	dobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	doperator "github.com/l7mp/dbsp/dcontroller/operator"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/executor"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -347,7 +347,7 @@ func (c *epConsumer) classifyDeltas(data zset.ZSet) ([]classifiedEndpointDelta, 
 }
 
 func endpointObjectFromDocument(doc any, fallbackGVK schema.GroupVersionKind) (dobject.Object, error) {
-	udoc, ok := doc.(*dbunstructured.Unstructured)
+	udoc, ok := doc.(*dbspunstructured.Unstructured)
 	if !ok {
 		return nil, fmt.Errorf("unsupported document type %T", doc)
 	}

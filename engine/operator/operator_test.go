@@ -9,7 +9,7 @@ import (
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/expression"
-	exprdbsp "github.com/l7mp/dbsp/engine/expression/dbsp"
+	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/internal/testutils"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -477,7 +477,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("supports list grouping with values and documents output", func() {
-			op := NewGroupBy(nil, exprdbsp.NewGet("value"))
+			op := NewGroupBy(nil, dbspexpr.NewGet("value"))
 
 			r1 := testutils.Record{ID: "ns-a", Value: 1}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}
@@ -505,7 +505,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("supports distinct mode", func() {
-			op := NewGroupBy(nil, exprdbsp.NewGet("value")).WithDistinct(true)
+			op := NewGroupBy(nil, dbspexpr.NewGet("value")).WithDistinct(true)
 
 			r1 := testutils.Record{ID: "ns-a", Value: 2}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}

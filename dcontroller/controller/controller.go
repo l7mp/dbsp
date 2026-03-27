@@ -18,7 +18,7 @@ import (
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
 	aggcompiler "github.com/l7mp/dbsp/engine/compiler/aggregation"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/transform"
 )
@@ -445,7 +445,7 @@ func formatRuntimeEventDocs(evt dbspruntime.Event) []string {
 	entries := evt.Data.Entries()
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
-		u, ok := e.Document.(*dbunstructured.Unstructured)
+		u, ok := e.Document.(*dbspunstructured.Unstructured)
 		if !ok {
 			out = append(out, fmt.Sprintf("%s@%d", e.Document.String(), e.Weight))
 			continue

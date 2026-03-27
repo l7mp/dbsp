@@ -2,6 +2,7 @@ package adaptor
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
@@ -19,7 +20,7 @@ func SecretDataAdaptor(doc datamodel.Document) *Adaptor {
 		}
 		raw, err := base64.StdEncoding.DecodeString(s)
 		if err != nil {
-			return value, nil
+			return value, fmt.Errorf("decode secret data %q: %w", path, err)
 		}
 		return string(raw), nil
 	}

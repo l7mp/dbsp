@@ -14,8 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
-	dbruntime "github.com/l7mp/dbsp/engine/runtime"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -28,7 +27,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		u, err := NewUpdater(Config{Name: "test-updater", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		add := map[string]any{
@@ -102,7 +101,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		p, err := NewPatcher(Config{Name: "test-patcher", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime(logr.Discard())})
+		p, err := NewPatcher(Config{Name: "test-patcher", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		patchUpsert := map[string]any{
@@ -175,7 +174,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		p, err := NewPatcher(Config{Name: "test-patcher-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime(logr.Discard())})
+		p, err := NewPatcher(Config{Name: "test-patcher-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		oldDoc := map[string]any{
@@ -240,7 +239,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		u, err := NewUpdater(Config{Name: "test-updater-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		oldDoc := map[string]any{
@@ -283,14 +282,14 @@ type docWeight struct {
 
 func out(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {
 	z := zset.New()
-	z.Insert(dbunstructured.New(doc, nil), w)
+	z.Insert(dbspunstructured.New(doc, nil), w)
 	return dbspruntime.Event{Name: name, Data: z}
 }
 
 func outMany(name string, entries ...docWeight) dbspruntime.Event {
 	z := zset.New()
 	for _, e := range entries {
-		z.Insert(dbunstructured.New(e.doc, nil), e.w)
+		z.Insert(dbspunstructured.New(e.doc, nil), e.w)
 	}
 	return dbspruntime.Event{Name: name, Data: z}
 }

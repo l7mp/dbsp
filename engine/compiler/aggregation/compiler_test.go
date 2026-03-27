@@ -156,8 +156,8 @@ var _ = Describe("Aggregation compiler parity", func() {
 		docs := collectDocs(outs[outID])
 		Expect(docs).To(HaveLen(3))
 
-		names := []string{}
-		vals := []any{}
+		names := make([]string, 0, len(docs))
+		vals := make([]any, 0, len(docs))
 		for _, d := range docs {
 			name, _ := d.GetField("metadata.name")
 			v, _ := d.GetField("spec.list")

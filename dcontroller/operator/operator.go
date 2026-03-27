@@ -214,7 +214,7 @@ func (op *Operator) UnregisterGVKs() {
 
 // GetGVKs returns the GVKs of this operator group.
 func (op *Operator) GetGVKs() []schema.GroupVersionKind {
-	gvks := []schema.GroupVersionKind{}
+	gvks := make([]schema.GroupVersionKind, 0, len(op.controllers))
 	for _, c := range op.controllers {
 		gvks = append(gvks, c.GetGVKs()...)
 	}

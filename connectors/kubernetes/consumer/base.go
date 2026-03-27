@@ -18,7 +18,7 @@ import (
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	"github.com/l7mp/dbsp/engine/datamodel"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -307,7 +307,7 @@ func minWeight(a, b zset.Weight) zset.Weight {
 }
 
 func toObject(doc datamodel.Document) (kobject.Object, error) {
-	udoc, ok := doc.(*dbunstructured.Unstructured)
+	udoc, ok := doc.(*dbspunstructured.Unstructured)
 	if !ok {
 		return nil, fmt.Errorf("consumer: unsupported document type %T", doc)
 	}

@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -19,7 +20,7 @@ import (
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
 	opv1a1 "github.com/l7mp/dbsp/dcontroller/api/operator/v1alpha1"
 	"github.com/l7mp/dbsp/engine/circuit"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -332,13 +333,13 @@ func (p *operatorProcessor) publishStatus(spec *opv1a1.Operator, status opv1a1.O
 	}
 
 	zs := zset.New()
-	zs.Insert(dbunstructured.New(unstructuredObj, nil), 1)
+	zs.Insert(dbspunstructured.New(unstructuredObj, nil), 1)
 
 	return p.Publish(dbspruntime.Event{Name: p.outputTopic, Data: zs})
 }
 
 func decodeOperator(doc any) (*opv1a1.Operator, error) {
-	udoc, ok := doc.(*dbunstructured.Unstructured)
+	udoc, ok := doc.(*dbspunstructured.Unstructured)
 	if !ok {
 		return nil, fmt.Errorf("unsupported document type %T", doc)
 	}
@@ -378,5 +379,5 @@ func errorsJoin(a, b error) error {
 	if b == nil {
 		return a
 	}
-	return fmt.Errorf("%v; %w", a, b)
+	return errors.Join(a, b)
 }

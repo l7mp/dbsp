@@ -98,7 +98,9 @@ var _ = Describe("Error reporting", func() {
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			go func() { c.Start(ctx) }() //nolint:errcheck
+			go func() {
+				_ = c.Start(ctx)
+			}()
 
 			// Publish an event that will trigger the failing operator.
 			pub := rt.NewPublisher()

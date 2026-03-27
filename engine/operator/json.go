@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/l7mp/dbsp/engine/expression"
-	exprdbsp "github.com/l7mp/dbsp/engine/expression/dbsp"
+	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 )
 
 // jsonOp is the wire format for all operators. It implements MarshalJSON and
@@ -71,7 +71,7 @@ func (o *Select) UnmarshalJSON(data []byte) error {
 	if len(p.Predicate) == 0 {
 		return fmt.Errorf("select: predicate required")
 	}
-	pred, err := exprdbsp.Compile(p.Predicate)
+	pred, err := dbspexpr.Compile(p.Predicate)
 	if err != nil {
 		return fmt.Errorf("select: compile predicate: %w", err)
 	}
@@ -97,7 +97,7 @@ func (o *Project) UnmarshalJSON(data []byte) error {
 	if len(p.Projection) == 0 {
 		return fmt.Errorf("project: projection required")
 	}
-	proj, err := exprdbsp.Compile(p.Projection)
+	proj, err := dbspexpr.Compile(p.Projection)
 	if err != nil {
 		return fmt.Errorf("project: compile projection: %w", err)
 	}
@@ -167,11 +167,11 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 {
 			return nil, fmt.Errorf("group_by operator: keyExpr and valueExpr are required")
 		}
-		keyExpr, err := exprdbsp.Compile(p.KeyExpr)
+		keyExpr, err := dbspexpr.Compile(p.KeyExpr)
 		if err != nil {
 			return nil, fmt.Errorf("group_by operator: compile keyExpr: %w", err)
 		}
-		valueExpr, err := exprdbsp.Compile(p.ValueExpr)
+		valueExpr, err := dbspexpr.Compile(p.ValueExpr)
 		if err != nil {
 			return nil, fmt.Errorf("group_by operator: compile valueExpr: %w", err)
 		}
@@ -180,7 +180,7 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		if len(p.Predicate) == 0 {
 			return nil, fmt.Errorf("select operator: predicate required")
 		}
-		pred, err := exprdbsp.Compile(p.Predicate)
+		pred, err := dbspexpr.Compile(p.Predicate)
 		if err != nil {
 			return nil, fmt.Errorf("select operator: compile predicate: %w", err)
 		}
@@ -189,7 +189,7 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		if len(p.Projection) == 0 {
 			return nil, fmt.Errorf("project operator: projection required")
 		}
-		proj, err := exprdbsp.Compile(p.Projection)
+		proj, err := dbspexpr.Compile(p.Projection)
 		if err != nil {
 			return nil, fmt.Errorf("project operator: compile projection: %w", err)
 		}
@@ -231,13 +231,13 @@ func (o *GroupBy) UnmarshalJSON(data []byte) error {
 	}
 	var keyExpr expression.Expression
 	if string(p.KeyExpr) != "null" {
-		k, err := exprdbsp.Compile(p.KeyExpr)
+		k, err := dbspexpr.Compile(p.KeyExpr)
 		if err != nil {
 			return fmt.Errorf("group_by: compile keyExpr: %w", err)
 		}
 		keyExpr = k
 	}
-	valueExpr, err := exprdbsp.Compile(p.ValueExpr)
+	valueExpr, err := dbspexpr.Compile(p.ValueExpr)
 	if err != nil {
 		return fmt.Errorf("group_by: compile valueExpr: %w", err)
 	}

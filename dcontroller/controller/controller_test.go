@@ -16,7 +16,7 @@ import (
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/datamodel"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 
@@ -42,8 +42,8 @@ func rawPipeline(s string) *apiextensionsv1.JSON {
 	return &apiextensionsv1.JSON{Raw: []byte(s)}
 }
 
-func doc(obj map[string]any) *dbunstructured.Unstructured {
-	return dbunstructured.New(obj, nil)
+func doc(obj map[string]any) *dbspunstructured.Unstructured {
+	return dbspunstructured.New(obj, nil)
 }
 
 func zsetFromDocs(objs ...map[string]any) zset.ZSet {

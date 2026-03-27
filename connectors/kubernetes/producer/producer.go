@@ -15,7 +15,7 @@ import (
 	"github.com/go-logr/logr"
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	kpredicate "github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -219,7 +219,7 @@ func k8sDocsSummary(zs zset.ZSet) []string {
 	entries := zs.Entries()
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
-		u, ok := e.Document.(*dbunstructured.Unstructured)
+		u, ok := e.Document.(*dbspunstructured.Unstructured)
 		if !ok {
 			out = append(out, fmt.Sprintf("%s@%d", e.Document.String(), e.Weight))
 			continue

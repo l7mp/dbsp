@@ -13,7 +13,7 @@ import (
 	"github.com/l7mp/dbsp/engine/datamodel/product"
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/expression"
-	exprdbsp "github.com/l7mp/dbsp/engine/expression/dbsp"
+	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/operator"
 )
 
@@ -273,7 +273,7 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 					return nil, fmt.Errorf("@join namespace: missing document")
 				}
 				return product.New(map[string]datamodel.Document{src: doc}), nil
-			}, exprdbsp.NewSet(exprdbsp.NewString(src), exprdbsp.NewCopy()))
+			}, dbspexpr.NewSet(dbspexpr.NewString(src), dbspexpr.NewCopy()))
 			if err := compiled.AddNode(circuit.Op(nsID, operator.NewProject(nsExpr))); err != nil {
 				return "", err
 			}
@@ -416,7 +416,7 @@ func compileProjectExpression(args json.RawMessage, stageIndex int, stageOp stri
 
 		for _, key := range keys {
 			rawExpr := stage[key]
-			expr, err := exprdbsp.NewParser().Parse(rawExpr)
+			expr, err := dbspexpr.NewParser().Parse(rawExpr)
 			if err != nil {
 				return nil, wrapStageErr(stageIndex, stageOp, fmt.Sprintf("projection[%q]", key), rawExpr, err)
 			}
@@ -433,7 +433,7 @@ func compileProjectExpression(args json.RawMessage, stageIndex int, stageOp stri
 		}
 	}
 
-	original, err := exprdbsp.NewParser().Parse(args)
+	original, err := dbspexpr.NewParser().Parse(args)
 	if err != nil {
 		return nil, wrapStageErr(stageIndex, stageOp, "projection", args, err)
 	}
@@ -502,7 +502,7 @@ func compileGroupByOp(args json.RawMessage, stageIndex int, stageOp string) (ope
 		if string(raw) == "null" {
 			return nil, nil
 		}
-		return exprdbsp.NewParser().Parse(raw)
+		return dbspexpr.NewParser().Parse(raw)
 	}
 
 	keyExpr, err := parseExpr(list[0])

@@ -70,6 +70,8 @@ func (c *Circuit) AddNode(n *Node) error {
 			ID:       n.ID + "_absorb",
 			Operator: absorbOp,
 		})
+	default:
+		// Other kinds do not affect circuit boundary bookkeeping.
 	}
 	return nil
 }
@@ -93,7 +95,7 @@ func (c *Circuit) AddEdge(e *Edge) error {
 	// Rewrite edges that target a delay emit node to its absorb node.
 	to := e.To
 	if c.delayEmitIDs[to] {
-		to = to + "_absorb"
+		to += "_absorb"
 		e = &Edge{From: e.From, To: to, Port: e.Port}
 	}
 

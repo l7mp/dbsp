@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -37,7 +37,7 @@ var _ = Describe("Virtual source producers", func() {
 			entries := in.Data.Entries()
 			Expect(entries).To(HaveLen(1))
 			Expect(entries[0].Weight).To(Equal(zset.Weight(1)))
-			doc, ok := entries[0].Document.(*dbunstructured.Unstructured)
+			doc, ok := entries[0].Document.(*dbspunstructured.Unstructured)
 			Expect(ok).To(BeTrue())
 			Expect(doc.Fields()[VirtualSourceTypeField]).To(Equal(opv1a1OneShotSourceType))
 			count++
@@ -80,7 +80,7 @@ var _ = Describe("Virtual source producers", func() {
 			entries := in.Data.Entries()
 			Expect(entries).To(HaveLen(1))
 			Expect(entries[0].Weight).To(Equal(zset.Weight(1)))
-			doc, ok := entries[0].Document.(*dbunstructured.Unstructured)
+			doc, ok := entries[0].Document.(*dbspunstructured.Unstructured)
 			Expect(ok).To(BeTrue())
 			Expect(doc.Fields()[VirtualSourceTypeField]).To(Equal(opv1a1PeriodicSourceType))
 			count++

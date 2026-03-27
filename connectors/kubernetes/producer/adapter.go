@@ -7,7 +7,7 @@ import (
 
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
-	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -71,10 +71,10 @@ func (p *baseProducer) convertDeltaToZSet(delta kobject.Delta) (zset.ZSet, error
 	return zs, nil
 }
 
-func toDocument(obj kobject.Object) *dbunstructured.Unstructured {
+func toDocument(obj kobject.Object) *dbspunstructured.Unstructured {
 	content := kobject.DeepCopyAny(obj.UnstructuredContent()).(map[string]any)
 	unstructured.RemoveNestedField(content, "metadata", "managedFields")
 	unstructured.RemoveNestedField(content, "metadata", "generation")
 
-	return dbunstructured.New(content, nil)
+	return dbspunstructured.New(content, nil)
 }

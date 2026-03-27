@@ -296,6 +296,7 @@ func tableColumns(table string, tbl *relation.Table) []*sqlparser.ColName {
 	return cols
 }
 
+//nolint:unused
 func qualifyUnqualifiedColumns(sel *sqlparser.Select, aliases map[string]string, db *relation.Database) error {
 	if db == nil {
 		return nil

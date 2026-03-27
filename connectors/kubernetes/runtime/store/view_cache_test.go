@@ -114,7 +114,7 @@ var _ = Describe("ViewCache", func() {
 			}
 
 			list := NewViewObjectList("test", "view")
-			listOpts := []client.ListOption{}
+			listOpts := make([]client.ListOption, 0, 1)
 			listOpts = append(listOpts, client.MatchingLabelsSelector{
 				Selector: labels.SelectorFromSet(labels.Set(map[string]string{"app": "test"})),
 			})
@@ -139,7 +139,7 @@ var _ = Describe("ViewCache", func() {
 			}
 
 			list := NewViewObjectList("test", "view")
-			listOpts := []client.ListOption{}
+			listOpts := make([]client.ListOption, 0, 1)
 			selector, err := fields.ParseSelector("metadata.name=test-1")
 			Expect(err).NotTo(HaveOccurred())
 			listOpts = append(listOpts, client.MatchingFieldsSelector{Selector: selector})

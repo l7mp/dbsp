@@ -159,7 +159,7 @@ func (s *APIServer) registerDiscoveryHandlers(group string, gvks []schema.GroupV
 	}
 
 	// Build API group metadata for discovery
-	apiVersionsForDiscovery := []metav1.GroupVersionForDiscovery{}
+	apiVersionsForDiscovery := make([]metav1.GroupVersionForDiscovery, 0, len(versionedGVKs))
 	for version := range versionedGVKs {
 		gv := schema.GroupVersion{Group: group, Version: version}
 		apiVersionsForDiscovery = append(apiVersionsForDiscovery, metav1.GroupVersionForDiscovery{
