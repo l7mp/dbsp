@@ -184,6 +184,134 @@ publish("input-topic", [[{id: 7}, 1]]);
 		})
 	}
 
+	It("transforms forwarded events with registerTransformCallbackConsumer", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("transform-collector", vm.runtime, "transform-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		var fn goja.Callable
+		err = vm.runOnLoopSync(func(rt *goja.Runtime) error {
+			value, runErr := rt.RunString(`(entries) => [[{id: entries[0][0].id + 1}, entries[0][1]]]`)
+			if runErr != nil {
+				return runErr
+			}
+			cb, ok := goja.AssertFunction(value)
+			if !ok {
+				return fmt.Errorf("transform callback is not a function")
+			}
+			fn = cb
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		vm.registerTransformCallbackConsumer("transform-in", "transform-out", fn)
+		Expect(runScript(vm, `publish("transform-in", [[{id: 1}, 1]]);`)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:2"}))
+	})
+
+	It("passes through events when transform callback returns undefined", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("transform-pass-collector", vm.runtime, "transform-pass-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		var fn goja.Callable
+		err = vm.runOnLoopSync(func(rt *goja.Runtime) error {
+			value, runErr := rt.RunString(`(_entries) => {}`)
+			if runErr != nil {
+				return runErr
+			}
+			cb, ok := goja.AssertFunction(value)
+			if !ok {
+				return fmt.Errorf("transform callback is not a function")
+			}
+			fn = cb
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		vm.registerTransformCallbackConsumer("transform-pass-in", "transform-pass-out", fn)
+		Expect(runScript(vm, `publish("transform-pass-in", [[{id: 7}, 1]]);`)).To(Succeed())
+
+		var first dbspruntime.Event
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			first = events[0]
+			return true
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:7"}))
+	})
+
+	It("drops events when transform callback returns null", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("transform-drop-collector", vm.runtime, "transform-drop-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		var fn goja.Callable
+		err = vm.runOnLoopSync(func(rt *goja.Runtime) error {
+			value, runErr := rt.RunString(`(_entries) => null`)
+			if runErr != nil {
+				return runErr
+			}
+			cb, ok := goja.AssertFunction(value)
+			if !ok {
+				return fmt.Errorf("transform callback is not a function")
+			}
+			fn = cb
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		vm.registerTransformCallbackConsumer("transform-drop-in", "transform-drop-out", fn)
+		Expect(runScript(vm, `publish("transform-drop-in", [[{id: 9}, 1]]);`)).To(Succeed())
+
+		Consistently(func() int {
+			return len(collector.Snapshot())
+		}, 200*time.Millisecond, 10*time.Millisecond).Should(Equal(0))
+	})
+
+	It("validates kubernetes watch callback type before startup", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScript(vm, `
+producer.kubernetes.watch({
+  gvk: "v1/Service",
+  namespace: "default",
+  topic: "services"
+}, 42);
+`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("producer.kubernetes.watch callback must be a function"))
+	})
+
 	It("invokes runtime.onError callback for async runtime errors", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

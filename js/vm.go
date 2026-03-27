@@ -35,6 +35,8 @@ type VM struct {
 	runtimeDone      chan error
 	runtimeErrCh     chan dbspruntime.Error
 	closeOnce        sync.Once
+	drainOnIdle      atomic.Bool
+	internalTopicSeq atomic.Uint64
 	pendingCallbacks atomic.Int64
 	lastActivityNS   atomic.Int64
 
@@ -81,6 +83,7 @@ func NewVM(logger logr.Logger) (*VM, error) {
 		runtimeErrCh: make(chan dbspruntime.Error, dbspruntime.EventBufferSize),
 	}
 	v.runtime.SetErrorChannel(v.runtimeErrCh)
+	v.drainOnIdle.Store(true)
 	v.touchActivity()
 	v.logger.V(1).Info("vm created")
 
@@ -154,6 +157,9 @@ func (v *VM) runEventLoop() error {
 	for {
 		select {
 		case <-ticker.C:
+			if !v.drainOnIdle.Load() {
+				continue
+			}
 			if v.isIdle(idleGracePeriod) {
 				v.logger.Info("queues drained, shutting down")
 				v.Close()
@@ -163,6 +169,17 @@ func (v *VM) runEventLoop() error {
 			return v.waitRuntimeStop(runtimeStopTimeout)
 		}
 	}
+}
+
+func (v *VM) disableIdleDrain(reason string) {
+	if v.drainOnIdle.CompareAndSwap(true, false) {
+		v.logger.V(1).Info("disabling idle drain mode", "reason", reason)
+	}
+}
+
+func (v *VM) nextInternalTopic(component, topic string) string {
+	seq := v.internalTopicSeq.Add(1)
+	return fmt.Sprintf("__dbsp_internal/%s/%s/%d", component, topic, seq)
 }
 
 func (v *VM) schedule(fn func()) {

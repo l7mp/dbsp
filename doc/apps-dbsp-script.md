@@ -304,18 +304,41 @@ runtime.subscribe("users-out", (entries) => {
 });
 ```
 
-### `producer.kubernetes.watch({ gvk, namespace, labels, topic })`
+### `producer.kubernetes.watch({ gvk, namespace, labels, topic }[, fn])`
 
 This starts a Kubernetes watcher and publishes object deltas into a runtime topic.
 
 `gvk` may be written as `v1/Kind` for core resources or `group/version/kind` for grouped APIs.
 `namespace` and `labels` are optional filters.
 
+An optional callback `fn(entries)` can transform each watched batch before it is published:
+
+- return a new entries array to publish transformed output;
+- return `undefined` to pass through the original entries unchanged;
+- return `null` to drop the batch.
+
+If provided, `fn` must be a function.
+
 ```js
 producer.kubernetes.watch({
   gvk: "v1/Service",
   namespace: "default",
   topic: "services",
+});
+
+producer.kubernetes.watch({
+  gvk: "v1/Service",
+  namespace: "default",
+  topic: "services-with-label",
+}, (entries) => {
+  const out = [];
+  for (const [doc, weight] of entries) {
+    const anns = (doc.metadata && doc.metadata.annotations) || {};
+    if (anns["dbsp-sentinel"] !== "true") {
+      out.push([doc, weight]);
+    }
+  }
+  return out;
 });
 ```
 

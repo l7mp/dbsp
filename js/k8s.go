@@ -48,6 +48,18 @@ func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("producer.kubernetes.watch({ ... }) requires options")
 	}
 
+	var callback goja.Callable
+	if len(call.Arguments) > 1 {
+		arg := call.Argument(1)
+		if !goja.IsUndefined(arg) && !goja.IsNull(arg) {
+			cb, ok := goja.AssertFunction(arg)
+			if !ok {
+				return nil, fmt.Errorf("producer.kubernetes.watch callback must be a function")
+			}
+			callback = cb
+		}
+	}
+
 	var opts k8sWatchOptions
 	if err := decodeOptionValue(call.Argument(0), &opts); err != nil {
 		return nil, fmt.Errorf("producer.kubernetes.watch options: %w", err)
@@ -71,12 +83,18 @@ func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
 		selector = &v1.LabelSelector{MatchLabels: opts.Labels}
 	}
 
+	publishTopic := opts.Topic
+	if callback != nil {
+		publishTopic = v.nextInternalTopic("kubernetes-watch", opts.Topic)
+		v.registerTransformCallbackConsumer(publishTopic, opts.Topic, callback)
+	}
+
 	name := fmt.Sprintf("kubernetes-producer-%s-%s", opts.Topic, strings.ToLower(gvk.String()))
 	p, err := k8sproducer.NewWatcher(k8sproducer.Config{
 		Client:        krt.GetClient(),
 		SourceGVK:     gvk,
 		Name:          name,
-		InputName:     opts.Topic,
+		InputName:     publishTopic,
 		Namespace:     opts.Namespace,
 		LabelSelector: selector,
 		Runtime:       v.runtime,
@@ -89,6 +107,7 @@ func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
 	if err := v.runtime.Add(p); err != nil {
 		return nil, fmt.Errorf("producer.kubernetes.watch: register watcher: %w", err)
 	}
+	v.disableIdleDrain("kubernetes watch producer")
 	return goja.Undefined(), nil
 }
 
