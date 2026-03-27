@@ -146,6 +146,16 @@ The full expression language is documented in the generic reference guides. On t
 side, the important point is simply that the pipeline describes the snapshot transformation while
 the runtime executes it incrementally.
 
+## Controller options
+
+Controllers can tune transform passes with `options`.
+
+By default, Δ-controller compiles pipelines to incremental circuits and then applies the reconciler
+pass. This is the recommended mode for most controllers. The incrementalization pass can be
+disabled using `options.enableSnapshot: true` to keep snapshot execution, and reconciler can be
+disabled with `options.disableReconciler: true`. Setting both `enableSnapshot: true` and
+`disableReconciler: true` is an error.
+
 ## Operators
 
 The current operator shape is:

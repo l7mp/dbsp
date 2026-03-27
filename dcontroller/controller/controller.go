@@ -132,10 +132,26 @@ func New(cfg Config) (*Controller, error) {
 	}
 
 	// 4. Incrementalize the circuit.
+	enableSnapshot := cfg.Spec.Options != nil && cfg.Spec.Options.EnableSnapshot
+	disableReconciler := cfg.Spec.Options != nil && cfg.Spec.Options.DisableReconciler
+
+	if enableSnapshot && !disableReconciler {
+		return nil, fmt.Errorf("controller: options.enableSnapshot=true requires options.disableReconciler=true")
+	}
+
 	var err error
-	q.Circuit, err = transform.NewIncrementalizer().Transform(q.Circuit)
-	if err != nil {
-		return nil, fmt.Errorf("controller: failed to incrementalize circuit: %w", err)
+	if !enableSnapshot {
+		q.Circuit, err = transform.NewIncrementalizer().Transform(q.Circuit)
+		if err != nil {
+			return nil, fmt.Errorf("controller: failed to incrementalize circuit: %w", err)
+		}
+
+		if !disableReconciler {
+			q.Circuit, err = transform.NewReconciler().Transform(q.Circuit)
+			if err != nil {
+				return nil, fmt.Errorf("controller: failed to apply reconciler transform: %w", err)
+			}
+		}
 	}
 
 	// 5. Apply optional query transformer.

@@ -163,6 +163,42 @@ var _ = Describe("Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ctrl).NotTo(BeNil())
 		})
+
+		It("should reject snapshot mode with reconciler enabled", func() {
+			rt := dbspruntime.NewRuntime(logger)
+			krt, err := k8sruntime.New(k8sruntime.Config{})
+			Expect(err).NotTo(HaveOccurred())
+
+			spec := defaultSpec()
+			spec.Options = &opv1a1.ControllerOptions{EnableSnapshot: true}
+
+			_, err = controller.New(controller.Config{
+				OperatorName: "test",
+				Spec:         spec,
+				Runtime:      rt,
+				K8sRuntime:   krt,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("enableSnapshot=true requires options.disableReconciler=true"))
+		})
+
+		It("should allow snapshot mode when reconciler is disabled", func() {
+			rt := dbspruntime.NewRuntime(logger)
+			krt, err := k8sruntime.New(k8sruntime.Config{})
+			Expect(err).NotTo(HaveOccurred())
+
+			spec := defaultSpec()
+			spec.Options = &opv1a1.ControllerOptions{EnableSnapshot: true, DisableReconciler: true}
+
+			ctrl, err := controller.New(controller.Config{
+				OperatorName: "test",
+				Spec:         spec,
+				Runtime:      rt,
+				K8sRuntime:   krt,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ctrl).NotTo(BeNil())
+		})
 	})
 
 	Describe("executes a project pipeline end-to-end", func() {

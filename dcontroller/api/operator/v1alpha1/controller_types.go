@@ -50,6 +50,25 @@ type Controller struct {
 
 	// Targets are the resource endpoints where results are written.
 	Targets []Target `json:"targets"`
+
+	// Options control optional controller compilation/runtime transforms.
+	//
+	// +optional
+	Options *ControllerOptions `json:"options,omitempty"`
+}
+
+// ControllerOptions controls optional transform passes.
+type ControllerOptions struct {
+	// EnableSnapshot disables incrementalization and keeps snapshot (non-delta)
+	// circuit execution.
+	//
+	// +optional
+	EnableSnapshot bool `json:"enableSnapshot,omitempty"`
+
+	// DisableReconciler disables the reconciler transform pass.
+	//
+	// +optional
+	DisableReconciler bool `json:"disableReconciler,omitempty"`
 }
 
 // Resource specifies a resource by the GVK.

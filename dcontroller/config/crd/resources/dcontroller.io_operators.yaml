@@ -68,6 +68,16 @@ spec:
                         Circuit is a compiler dbsp Circuit applied to base objects. At least one of a Pipeline,
                         a Circuit or an SQL query must be specified.
                       x-kubernetes-preserve-unknown-fields: true
+                    options:
+                      description: Options control optional controller compilation/runtime transforms.
+                      properties:
+                        disableReconciler:
+                          description: DisableReconciler disables the reconciler transform pass.
+                          type: boolean
+                        enableSnapshot:
+                          description: EnableSnapshot disables incrementalization and keeps snapshot (non-delta) circuit execution.
+                          type: boolean
+                      type: object
                     name:
                       description: Name is the unique name of the controller.
                       type: string
@@ -209,6 +219,9 @@ spec:
                   - sources
                   - targets
                   type: object
+                  x-kubernetes-validations:
+                  - message: options.enableSnapshot=true requires options.disableReconciler=true
+                    rule: '!has(self.options) || !has(self.options.enableSnapshot) || !self.options.enableSnapshot || (has(self.options.disableReconciler) && self.options.disableReconciler)'
                 maxItems: 255
                 minItems: 1
                 type: array
