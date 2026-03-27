@@ -92,6 +92,8 @@ type SourceType string
 const (
 	// Watcher is a source that watches Kubernetes resources and performs incremental reconciliation.
 	Watcher SourceType = "Watcher"
+	// Lister is a source that watches Kubernetes resources and emits full snapshots on each watch event.
+	Lister SourceType = "Lister"
 	// Periodic is a source that triggers state-of-the-world reconciliation for all other sources.
 	Periodic SourceType = "Periodic"
 	// OneShot is a source that emits a single empty object for initialization.

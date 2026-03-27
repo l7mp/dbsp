@@ -312,6 +312,22 @@ producer.kubernetes.watch({
 		Expect(err.Error()).To(ContainSubstring("producer.kubernetes.watch callback must be a function"))
 	})
 
+	It("validates kubernetes list callback type before startup", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScript(vm, `
+producer.kubernetes.list({
+  gvk: "v1/Service",
+  namespace: "default",
+  topic: "services"
+}, 42);
+`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("producer.kubernetes.list callback must be a function"))
+	})
+
 	It("invokes runtime.onError callback for async runtime errors", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

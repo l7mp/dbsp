@@ -257,6 +257,28 @@ func (c *Controller) addProducer(operatorName string, src opv1a1.Source) (dbspru
 			return nil, fmt.Errorf("controller: failed to register watcher for %q: %w", src.Kind, err)
 		}
 
+	case opv1a1.Lister:
+		if c.cfg.K8sRuntime == nil {
+			return nil, fmt.Errorf("controller: kubernetes runtime is required for lister source %q", src.Kind)
+		}
+		p, err = k8sproducer.NewLister(k8sproducer.Config{
+			Name:          fmt.Sprintf("%s.source.%s.lister", c.cfg.Spec.Name, src.Kind),
+			Client:        c.cfg.K8sRuntime.GetClient(),
+			SourceGVK:     gvk,
+			InputName:     circuit.InputTopic(c.cfg.Spec.Name, src.Kind),
+			Namespace:     ns,
+			LabelSelector: src.LabelSelector,
+			Predicate:     src.Predicate,
+			Runtime:       c.cfg.Runtime,
+			Logger:        c.log,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("controller: failed to create lister for %q: %w", src.Kind, err)
+		}
+		if err := c.cfg.Runtime.Add(p); err != nil {
+			return nil, fmt.Errorf("controller: failed to register lister for %q: %w", src.Kind, err)
+		}
+
 	case opv1a1.Periodic:
 		period, err := parsePeriod(src)
 		if err != nil {

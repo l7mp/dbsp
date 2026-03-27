@@ -16,6 +16,7 @@ import (
 	"github.com/go-logr/logr"
 
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
+	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
@@ -179,7 +180,8 @@ func (v *VM) disableIdleDrain(reason string) {
 
 func (v *VM) nextInternalTopic(component, topic string) string {
 	seq := v.internalTopicSeq.Add(1)
-	return fmt.Sprintf("__dbsp_internal/%s/%s/%d", component, topic, seq)
+	name := fmt.Sprintf("%s-%s-%d", component, topic, seq)
+	return circuit.InputTopic("js-internal", name)
 }
 
 func (v *VM) schedule(fn func()) {
@@ -405,6 +407,9 @@ func (v *VM) injectGlobals() error {
 	producerObj := v.rt.Get("producer").ToObject(v.rt)
 	k8sProd := v.rt.NewObject()
 	if err := k8sProd.Set("watch", v.wrap(v.k8sWatch)); err != nil {
+		return err
+	}
+	if err := k8sProd.Set("list", v.wrap(v.k8sList)); err != nil {
 		return err
 	}
 	if err := producerObj.Set("kubernetes", k8sProd); err != nil {

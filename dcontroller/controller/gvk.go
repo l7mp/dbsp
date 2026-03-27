@@ -22,7 +22,7 @@ import (
 //  2. Group set, Version nil → standard Kubernetes resource resolved via REST mapper.
 //  3. Group and Version both set → explicit GVK, used as-is.
 //
-// All source types (Watcher, OneShot, Periodic) and targets use the same resolution.
+// All source types (Watcher, Lister, OneShot, Periodic) and targets use the same resolution.
 func resolveGVK(operatorName string, r opv1a1.Resource, mapper meta.RESTMapper) (schema.GroupVersionKind, error) {
 	if r.Kind == "" {
 		return schema.GroupVersionKind{}, fmt.Errorf("resource Kind is required")
@@ -61,8 +61,8 @@ func resolveGVK(operatorName string, r opv1a1.Resource, mapper meta.RESTMapper) 
 	}, nil
 }
 
-// sourceGVK resolves the full GVK for a source. All source types (Watcher, OneShot,
-// Periodic) use the same GVK resolution — there is no special "trigger" GVK.
+// sourceGVK resolves the full GVK for a source. All source types (Watcher, Lister,
+// OneShot, Periodic) use the same GVK resolution — there is no special "trigger" GVK.
 func sourceGVK(operatorName string, s opv1a1.Source, mapper meta.RESTMapper) (schema.GroupVersionKind, error) {
 	return resolveGVK(operatorName, s.Resource, mapper)
 }

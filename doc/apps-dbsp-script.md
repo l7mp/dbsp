@@ -345,6 +345,23 @@ producer.kubernetes.watch({
 This works for native Kubernetes resources and, when the runtime can discover them, Δ-controller
 view resources as well.
 
+### `producer.kubernetes.list({ gvk, namespace, labels, topic }[, fn])`
+
+This starts a Kubernetes state-of-the-world source.
+
+It subscribes to watch events as a trigger, but each trigger publishes the full filtered list of
+objects as one output batch. This is useful for naive snapshot reconciliation loops.
+
+Filtering and optional callback semantics are the same as for `producer.kubernetes.watch(...)`.
+
+```js
+producer.kubernetes.list({
+  gvk: "v1/Service",
+  namespace: "default",
+  topic: "services-sotw",
+});
+```
+
 ### `consumer.kubernetes.patcher({ gvk, topic })`
 
 This installs a Kubernetes consumer that applies merge-style patches from a topic onto existing

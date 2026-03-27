@@ -57,6 +57,17 @@ sources:
         app: web
 ```
 
+For state-of-the-world reconciliation, use a `Lister` source. A lister still subscribes to watch
+events, but each trigger emits the full filtered list as the input batch.
+
+```yaml
+sources:
+  - apiGroup: ""
+    kind: Service
+    type: Lister
+    namespace: default
+```
+
 Δ-controller also supports two synthetic source types.
 
 `OneShot` emits one empty trigger object when the controller starts. `Periodic` emits trigger

@@ -59,7 +59,7 @@ func makeSimpleControllerSpec(name, srcKind, targetKind string) opv1a1.Controlle
 		Name: name,
 		Sources: []opv1a1.Source{{
 			Resource: opv1a1.Resource{Kind: srcKind},
-			Type:     opv1a1.Watcher,
+			Type:     opv1a1.Lister,
 		}},
 		Pipeline: rawJSON(`[
 			{"@project":{

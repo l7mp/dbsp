@@ -579,6 +579,33 @@ var _ = Describe("Controller", func() {
 		})
 	})
 
+	Describe("wires a lister source", func() {
+		It("should create the controller with a Kubernetes runtime", func() {
+			krt, err := k8sruntime.New(k8sruntime.Config{})
+			Expect(err).NotTo(HaveOccurred())
+
+			listerSpec := opv1a1.Controller{
+				Name: "test-lister-op",
+				Sources: []opv1a1.Source{{
+					Resource: opv1a1.Resource{Kind: "Foo"},
+					Type:     opv1a1.Lister,
+				}},
+				Pipeline: rawPipeline(testPipelineJSON),
+				Targets:  []opv1a1.Target{},
+			}
+
+			rt := dbspruntime.NewRuntime(logger)
+			ctrl, err := controller.New(controller.Config{
+				OperatorName: "test",
+				Spec:         listerSpec,
+				Runtime:      rt,
+				K8sRuntime:   krt,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ctrl).NotTo(BeNil())
+		})
+	})
+
 	Describe("wires a periodic source", func() {
 		It("should create the controller with a periodic producer", func() {
 			spec := opv1a1.Controller{

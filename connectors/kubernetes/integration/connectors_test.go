@@ -88,6 +88,52 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 		Expect(singleField(in.Data, "data", "k")).To(Equal("v2"))
 	})
 
+	It("lister emits full snapshots for ConfigMaps", func() {
+		rt := dbspruntime.NewRuntime(logr.Discard())
+		sub := rt.NewSubscriber()
+		sub.Subscribe("in")
+
+		p, err := producer.NewLister(producer.Config{
+			Name:      "lister-test",
+			Client:    suite.WatchClient,
+			SourceGVK: schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
+			InputName: "in",
+			Namespace: suite.Namespace,
+			Runtime:   rt,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		startCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			defer GinkgoRecover()
+			err := p.Start(startCtx)
+			Expect(err).NotTo(HaveOccurred())
+		}()
+
+		cm1 := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "l-cm-1", Namespace: suite.Namespace},
+			Data:       map[string]string{"k": "v1"},
+		}
+		Expect(suite.K8sClient.Create(ctx, cm1)).To(Succeed())
+
+		in := mustReceiveInput(sub.GetChannel())
+		Expect(in.Name).To(Equal("in"))
+		Expect(allFieldValues(in.Data, "metadata", "name")).To(ContainElement("l-cm-1"))
+
+		cm2 := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "l-cm-2", Namespace: suite.Namespace},
+			Data:       map[string]string{"k": "v2"},
+		}
+		Expect(suite.K8sClient.Create(ctx, cm2)).To(Succeed())
+
+		Eventually(func() bool {
+			in = mustReceiveInput(sub.GetChannel())
+			names := allFieldValues(in.Data, "metadata", "name")
+			return len(names) >= 2 && contains(names, "l-cm-1") && contains(names, "l-cm-2")
+		}, suite.Timeout, suite.Interval).Should(BeTrue())
+	})
+
 	It("updater writes and removes native Kubernetes objects", func() {
 		u, err := consumer.NewUpdater(consumer.Config{
 			Name:       "updater-test",
@@ -353,6 +399,15 @@ func allFieldValues(z zset.ZSet, path ...string) []string {
 	}
 	sort.Strings(vals)
 	return vals
+}
+
+func contains(xs []string, x string) bool {
+	for _, e := range xs {
+		if e == x {
+			return true
+		}
+	}
+	return false
 }
 
 func restConfigFromGeneratedKubeconfig(cfg *clientcmdapi.Config) (*rest.Config, error) {

@@ -11,7 +11,7 @@ import (
 
 var _ = Describe("Producer adapters", func() {
 	It("converts add/update/delete lifecycle to zset deltas", func() {
-		p := &Watcher{sourceCache: map[schema.GroupVersionKind]*store.Store{}}
+		p := &baseProducer{sourceCache: map[schema.GroupVersionKind]*store.Store{}}
 
 		obj := kobject.New()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
@@ -53,7 +53,7 @@ var _ = Describe("Producer adapters", func() {
 	})
 
 	It("suppresses noop updates", func() {
-		p := &Watcher{sourceCache: map[schema.GroupVersionKind]*store.Store{}}
+		p := &baseProducer{sourceCache: map[schema.GroupVersionKind]*store.Store{}}
 
 		obj := kobject.New()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}

@@ -6,12 +6,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"strings"
+
 	"github.com/go-logr/logr"
 	"github.com/go-logr/zapr"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"strings"
 )
 
 func main() {
@@ -30,7 +31,7 @@ func run(args []string) error {
 	fs := pflag.NewFlagSet("dbsp", pflag.ContinueOnError)
 	fs.SortFlags = false
 	fs.SetOutput(os.Stderr)
-	fs.StringVarP(&logLevel, "loglevel", "l", "error", "Log level: debug|info|warn|error")
+	fs.StringVarP(&logLevel, "loglevel", "l", "error", "Log level: trace|debug|info|warn|error")
 	fs.BoolVarP(&verbose, "verbose", "v", false, "Enable debug logs (same as --loglevel=debug)")
 
 	if err := fs.Parse(args); err != nil {
@@ -89,6 +90,8 @@ func run(args []string) error {
 
 func parseLogLevel(raw string) (zapcore.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "trace":
+		return -10, nil
 	case "debug":
 		return zapcore.DebugLevel, nil
 	case "info":

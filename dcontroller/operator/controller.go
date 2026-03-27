@@ -18,20 +18,23 @@ import (
 	k8sproducer "github.com/l7mp/dbsp/connectors/kubernetes/producer"
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
 	opv1a1 "github.com/l7mp/dbsp/dcontroller/api/operator/v1alpha1"
+	"github.com/l7mp/dbsp/engine/circuit"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
 const (
-	operatorInputTopic  = "operator-controller.input"
-	operatorStatusTopic = "operator-controller.status"
-
 	watcherComponentName   = "operator-controller.watcher"
 	updaterComponentName   = "operator-controller.updater"
 	processorComponentName = "operator-controller.processor"
 
 	stopWaitTimeout = 5 * time.Second
+)
+
+var (
+	operatorInputTopic  = circuit.InputTopic("operator-controller", "operator")
+	operatorStatusTopic = circuit.OutputTopic("operator-controller", "operator-status")
 )
 
 var operatorGVK = opv1a1.GroupVersion.WithKind("Operator")

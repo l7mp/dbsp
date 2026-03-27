@@ -6,18 +6,15 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/go-logr/logr"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	crevent "sigs.k8s.io/controller-runtime/pkg/event"
-	crpredicate "sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	"github.com/go-logr/logr"
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	kpredicate "github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
-	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -43,30 +40,31 @@ type Config struct {
 
 // Watcher watches Kubernetes objects and emits DBSP runtime inputs.
 type Watcher struct {
-	*dbspruntime.BaseProducer
+	*baseProducer
+}
 
-	client    client.WithWatch
-	list      client.ObjectList
-	inputName string
-
-	listOpts   []client.ListOption
-	predicates []crpredicate.TypedPredicate[client.Object]
-
-	rt *dbspruntime.Runtime
-
-	sourceCache map[schema.GroupVersionKind]*store.Store
-
-	log logr.Logger
+// Lister watches a source and emits full list snapshots on each watch event.
+type Lister struct {
+	*baseProducer
 }
 
 var _ dbspruntime.Producer = (*Watcher)(nil)
+var _ dbspruntime.Producer = (*Lister)(nil)
 
 // Name returns the watcher's unique component name.
 func (w *Watcher) Name() string { return w.BaseProducer.Name() }
 
+// Name returns the lister's unique component name.
+func (l *Lister) Name() string { return l.BaseProducer.Name() }
+
 // String implements fmt.Stringer.
 func (w *Watcher) String() string {
-	return fmt.Sprintf("producer<k8s>{name=%q, topic=%q}", w.Name(), w.inputName)
+	return fmt.Sprintf("producer<k8s-watcher>{name=%q, topic=%q}", w.Name(), w.inputName)
+}
+
+// String implements fmt.Stringer.
+func (l *Lister) String() string {
+	return fmt.Sprintf("producer<k8s-lister>{name=%q, topic=%q}", l.Name(), l.inputName)
 }
 
 // MarshalJSON provides a stable machine-readable representation.
@@ -78,108 +76,65 @@ func (w *Watcher) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"component": "producer",
 		"type":      "kubernetes",
+		"mode":      "watcher",
 		"name":      w.Name(),
 		"topic":     w.inputName,
+	})
+}
+
+// MarshalJSON provides a stable machine-readable representation.
+func (l *Lister) MarshalJSON() ([]byte, error) {
+	if l == nil {
+		return json.Marshal(map[string]any{"component": "producer", "type": "kubernetes", "nil": true})
+	}
+
+	return json.Marshal(map[string]any{
+		"component": "producer",
+		"type":      "kubernetes",
+		"mode":      "lister",
+		"name":      l.Name(),
+		"topic":     l.inputName,
 	})
 }
 
 // NewWatcher creates a Kubernetes producer. Name uniqueness is enforced when
 // the watcher is passed to Runtime.Add.
 func NewWatcher(cfg Config) (*Watcher, error) {
-	if cfg.Runtime == nil {
-		return nil, fmt.Errorf("producer: runtime is required")
-	}
-
-	log := cfg.Logger
-	if log.GetSink() == nil {
-		log = logr.Discard()
-	}
-
-	inputName := cfg.InputName
-	base, err := dbspruntime.NewBaseProducer(dbspruntime.BaseProducerConfig{
-		Name:          cfg.Name,
-		Publisher:     cfg.Runtime.NewPublisher(),
-		ErrorReporter: cfg.Runtime,
-		Logger:        log.WithName("kubernetes-producer").WithValues("topic", inputName),
-		Topics:        []string{inputName},
-	})
+	b, err := newBase(cfg, "kubernetes-producer")
 	if err != nil {
 		return nil, err
 	}
 
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(cfg.SourceGVK)
+	return &Watcher{baseProducer: b}, nil
+}
 
-	p := &Watcher{
-		BaseProducer: base,
-		client:       cfg.Client,
-		list:         list,
-		inputName:    inputName,
-		rt:           cfg.Runtime,
-		sourceCache:  map[schema.GroupVersionKind]*store.Store{},
-		log:          log.WithName("kubernetes-producer").WithValues("topic", inputName),
+// NewLister creates a Kubernetes state-of-the-world producer. Name uniqueness
+// is enforced when the lister is passed to Runtime.Add.
+func NewLister(cfg Config) (*Lister, error) {
+	b, err := newBase(cfg, "kubernetes-producer")
+	if err != nil {
+		return nil, err
 	}
 
-	if cfg.Namespace != "" {
-		p.listOpts = append(p.listOpts, client.InNamespace(cfg.Namespace))
-	}
-
-	if cfg.LabelSelector != nil {
-		lp, err := kpredicate.FromLabelSelector(*cfg.LabelSelector)
-		if err != nil {
-			return nil, fmt.Errorf("producer: invalid label selector: %w", err)
-		}
-		p.predicates = append(p.predicates, lp)
-
-		sel, err := v1.LabelSelectorAsSelector(cfg.LabelSelector)
-		if err == nil {
-			p.listOpts = append(p.listOpts, client.MatchingLabelsSelector{Selector: sel})
-		}
-	}
-
-	if cfg.Predicate != nil {
-		pred, err := kpredicate.FromPredicate(*cfg.Predicate)
-		if err != nil {
-			return nil, fmt.Errorf("producer: invalid predicate: %w", err)
-		}
-		p.predicates = append(p.predicates, pred)
-	}
-
-	if cfg.Namespace != "" {
-		p.predicates = append(p.predicates, kpredicate.FromNamespace(cfg.Namespace))
-	}
-
-	return p, nil
+	return &Lister{baseProducer: b}, nil
 }
 
 func (p *Watcher) Publish(event dbspruntime.Event) error {
 	return p.BaseProducer.Publish(event)
 }
 
+func (p *Lister) Publish(event dbspruntime.Event) error {
+	return p.BaseProducer.Publish(event)
+}
+
 // Start starts the watch loop.
 func (p *Watcher) Start(ctx context.Context) error {
-	w, err := p.client.Watch(ctx, p.list, p.listOpts...)
-	if err != nil {
-		return fmt.Errorf("producer: watch failed: %w", err)
-	}
-	defer w.Stop()
+	return p.baseProducer.start(ctx, p.handleEvent)
+}
 
-	p.log.V(2).Info("watch started")
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case evt, ok := <-w.ResultChan():
-			if !ok {
-				return nil
-			}
-
-			if err := p.handleEvent(ctx, evt); err != nil {
-				p.HandleError(err)
-			}
-		}
-	}
+// Start starts the watch loop for list-triggered snapshots.
+func (p *Lister) Start(ctx context.Context) error {
+	return p.baseProducer.start(ctx, p.handleEvent)
 }
 
 func (p *Watcher) handleEvent(ctx context.Context, evt watch.Event) error {
@@ -196,12 +151,36 @@ func (p *Watcher) handleEvent(ctx context.Context, evt watch.Event) error {
 		}
 	}
 
-	if !p.allow(evt.Type, old, obj) {
+	if !p.allowEvent(evt.Type, old, obj) {
 		return nil
 	}
 
 	delta := watchEventToDelta(evt.Type, obj)
 	zs, err := p.convertDeltaToZSet(delta)
+	if err != nil {
+		return err
+	}
+
+	if zs.IsZero() {
+		return nil
+	}
+
+	var docs []string
+	if p.log.V(2).Enabled() {
+		docs = k8sDocsSummary(zs)
+	}
+	dbspruntime.LogFlowEvent(p.log, "producer.emit", "producer", p.String(), "output", p.inputName, "", zs, docs, "watch_event", string(evt.Type))
+
+	return p.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
+}
+
+func (p *Lister) handleEvent(ctx context.Context, evt watch.Event) error {
+	obj, ok := evt.Object.(*unstructured.Unstructured)
+	if !ok || obj == nil {
+		return nil
+	}
+
+	zs, err := p.listSnapshot(ctx)
 	if err != nil {
 		return err
 	}
@@ -230,35 +209,6 @@ func watchEventToDelta(t watch.EventType, obj *unstructured.Unstructured) kobjec
 	default:
 		return kobject.NilDelta
 	}
-}
-
-func (p *Watcher) allow(t watch.EventType, oldObj, newObj *unstructured.Unstructured) bool {
-	if len(p.predicates) == 0 {
-		return true
-	}
-
-	for _, pred := range p.predicates {
-		var ok bool
-		switch t {
-		case watch.Added:
-			ok = pred.Create(crevent.TypedCreateEvent[client.Object]{Object: newObj})
-		case watch.Modified:
-			if oldObj == nil {
-				ok = true
-			} else {
-				ok = pred.Update(crevent.TypedUpdateEvent[client.Object]{ObjectOld: oldObj, ObjectNew: newObj})
-			}
-		case watch.Deleted:
-			ok = pred.Delete(crevent.TypedDeleteEvent[client.Object]{Object: newObj})
-		default:
-			ok = false
-		}
-		if !ok {
-			return false
-		}
-	}
-
-	return true
 }
 
 func objectKey(obj *unstructured.Unstructured) string {
