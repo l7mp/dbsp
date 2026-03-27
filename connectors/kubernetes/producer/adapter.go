@@ -3,6 +3,8 @@ package producer
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	dbunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
@@ -70,5 +72,9 @@ func (p *baseProducer) convertDeltaToZSet(delta kobject.Delta) (zset.ZSet, error
 }
 
 func toDocument(obj kobject.Object) *dbunstructured.Unstructured {
-	return dbunstructured.New(obj.UnstructuredContent(), nil)
+	content := kobject.DeepCopyAny(obj.UnstructuredContent()).(map[string]any)
+	unstructured.RemoveNestedField(content, "metadata", "managedFields")
+	unstructured.RemoveNestedField(content, "metadata", "generation")
+
+	return dbunstructured.New(content, nil)
 }
