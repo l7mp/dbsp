@@ -151,12 +151,13 @@ var _ = Describe("Rewrite", func() {
 			c.AddEdge(circuit.NewEdge("i2", "d2", 0))
 			c.AddEdge(circuit.NewEdge("d2", "b", 0))
 
-			passes := Rewrite(c, DefaultRules()...)
-			Expect(passes).To(BeNumerically(">=", 2))
-			Expect(c.Nodes()).To(HaveLen(2)) // Only a, b remain.
-			edges := c.EdgesTo("b")
+			rewritten, err := NewRewriter(DefaultRules()...).Transform(c)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rewritten.Nodes()).To(HaveLen(2)) // Only a, b remain.
+			edges := rewritten.EdgesTo("b")
 			Expect(edges).To(HaveLen(1))
 			Expect(edges[0].From).To(Equal("a"))
+			Expect(c.Nodes()).To(HaveLen(6))
 		})
 
 		It("converges in one pass when no rules match", func() {
@@ -165,8 +166,9 @@ var _ = Describe("Rewrite", func() {
 			c.AddNode(circuit.Output("b"))
 			c.AddEdge(circuit.NewEdge("a", "b", 0))
 
-			passes := Rewrite(c, DefaultRules()...)
-			Expect(passes).To(Equal(1))
+			rewritten, err := NewRewriter(DefaultRules()...).Transform(c)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rewritten.Nodes()).To(HaveLen(2))
 			Expect(c.Nodes()).To(HaveLen(2))
 		})
 	})
@@ -417,11 +419,12 @@ var _ = Describe("Rewrite", func() {
 			c.AddEdge(circuit.NewEdge("proj2", "dist2", 0))
 			c.AddEdge(circuit.NewEdge("dist2", "out", 0))
 
-			Rewrite(c, PreRules()...)
+			rewritten, err := NewRewriter(PreRules()...).Transform(c)
+			Expect(err).NotTo(HaveOccurred())
 
 			// After PreRules, only one Distinct should remain (at the end).
 			distinctCount := 0
-			for _, n := range c.Nodes() {
+			for _, n := range rewritten.Nodes() {
 				if isDistinct(n) {
 					distinctCount++
 				}
@@ -451,13 +454,14 @@ var _ = Describe("Rewrite", func() {
 			c.AddEdge(circuit.NewEdge("sel", "int", 0))
 			c.AddEdge(circuit.NewEdge("int", "b", 0))
 
-			Rewrite(c, PostRules()...)
+			rewritten, err := NewRewriter(PostRules()...).Transform(c)
+			Expect(err).NotTo(HaveOccurred())
 
 			// D and I should be gone. Only a → σ → b remains.
-			Expect(c.Nodes()).To(HaveLen(3)) // a, sel-node, b.
+			Expect(rewritten.Nodes()).To(HaveLen(3)) // a, sel-node, b.
 			// Find the operator node.
 			var opNode *circuit.Node
-			for _, n := range c.Nodes() {
+			for _, n := range rewritten.Nodes() {
 				if n.Kind() == operator.KindSelect {
 					opNode = n
 					break
@@ -467,10 +471,10 @@ var _ = Describe("Rewrite", func() {
 			Expect(opNode.Operator.Linearity()).To(Equal(operator.Linear))
 
 			// Verify connectivity: a → op → b.
-			inEdges := c.EdgesTo(opNode.ID)
+			inEdges := rewritten.EdgesTo(opNode.ID)
 			Expect(inEdges).To(HaveLen(1))
 			Expect(inEdges[0].From).To(Equal("a"))
-			outEdges := c.EdgesTo("b")
+			outEdges := rewritten.EdgesTo("b")
 			Expect(outEdges).To(HaveLen(1))
 			Expect(outEdges[0].From).To(Equal(opNode.ID))
 		})
@@ -493,7 +497,7 @@ var _ = Describe("Rewrite", func() {
 			c.AddEdge(circuit.NewEdge("dist1", "dist2", 0))
 			c.AddEdge(circuit.NewEdge("dist2", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Before rewrite: all expansion nodes should exist.
@@ -504,34 +508,39 @@ var _ = Describe("Rewrite", func() {
 			Expect(incr.Node("dist2^Δ_op")).NotTo(BeNil())
 			Expect(incr.Node("dist2^Δ_diff")).NotTo(BeNil())
 
-			Rewrite(incr, DefaultRules()...)
+			rewritten, err := NewRewriter(DefaultRules()...).Transform(incr)
+			Expect(err).NotTo(HaveOccurred())
 
 			// After rewrite: D1, I2, and Op1 should be eliminated.
-			Expect(incr.Node("dist1^Δ_diff")).To(BeNil())
-			Expect(incr.Node("dist2^Δ_int")).To(BeNil())
-			Expect(incr.Node("dist1^Δ_op")).To(BeNil())
+			Expect(rewritten.Node("dist1^Δ_diff")).To(BeNil())
+			Expect(rewritten.Node("dist2^Δ_int")).To(BeNil())
+			Expect(rewritten.Node("dist1^Δ_op")).To(BeNil())
 
 			// Remaining: in → I1 → Op2 → D2 → out.
-			Expect(incr.Node("dist1^Δ_int")).NotTo(BeNil())
-			Expect(incr.Node("dist2^Δ_op")).NotTo(BeNil())
-			Expect(incr.Node("dist2^Δ_diff")).NotTo(BeNil())
+			Expect(rewritten.Node("dist1^Δ_int")).NotTo(BeNil())
+			Expect(rewritten.Node("dist2^Δ_op")).NotTo(BeNil())
+			Expect(rewritten.Node("dist2^Δ_diff")).NotTo(BeNil())
 
 			// Verify connectivity.
-			intEdges := incr.EdgesTo("dist1^Δ_int")
+			intEdges := rewritten.EdgesTo("dist1^Δ_int")
 			Expect(intEdges).To(HaveLen(1))
 			Expect(intEdges[0].From).To(Equal("in"))
 
-			opEdges := incr.EdgesTo("dist2^Δ_op")
+			opEdges := rewritten.EdgesTo("dist2^Δ_op")
 			Expect(opEdges).To(HaveLen(1))
 			Expect(opEdges[0].From).To(Equal("dist1^Δ_int"))
 
-			diffEdges := incr.EdgesTo("dist2^Δ_diff")
+			diffEdges := rewritten.EdgesTo("dist2^Δ_diff")
 			Expect(diffEdges).To(HaveLen(1))
 			Expect(diffEdges[0].From).To(Equal("dist2^Δ_op"))
 
-			outEdges := incr.EdgesTo("out")
+			outEdges := rewritten.EdgesTo("out")
 			Expect(outEdges).To(HaveLen(1))
 			Expect(outEdges[0].From).To(Equal("dist2^Δ_diff"))
+
+			// Original incrementalized circuit remains unchanged.
+			Expect(incr.Node("dist1^Δ_diff")).NotTo(BeNil())
+			Expect(incr.Node("dist2^Δ_int")).NotTo(BeNil())
 		})
 	})
 })

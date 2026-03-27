@@ -118,14 +118,14 @@ graph LR
     PUB -->|event| T3((result))
 ```
 
-You create a processor by compiling a query and optionally incrementalizing it:
+You create a processor by compiling a query and optionally transforming it with `Incrementalizer`:
 
 ```js
 sql.table("pods", "name TEXT, status TEXT, ns TEXT");
 const c = sql.compile(
     "SELECT name, status FROM pods WHERE ns = 'default'",
     { output: "filtered" }
-).incrementalize();
+).transform("Incrementalizer");
 ```
 
 At this point the processor is running. It reacts to events on its input topics and emits deltas on its output topics. Errors during execution are non-critical: they are reported to the runtime error handler and the processor continues processing subsequent events.

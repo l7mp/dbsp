@@ -60,7 +60,7 @@ publish("users", [
 ```
 
 This is enough to build small end-to-end experiments entirely in JavaScript. A typical script
-defines input schemas or pipelines, compiles a circuit, incrementalizes and validates it, and then
+defines input schemas or pipelines, compiles a circuit, transforms it with `Incrementalizer`, and then
 publishes a few test deltas into input topics.
 
 ```js
@@ -69,7 +69,7 @@ const c = aggregate.compile([
   { "@project": { name: "$.metadata.name", status: "$.status" } }
 ], { inputs: "pods", output: "result" });
 
-c.incrementalize();
+c.transform("Incrementalizer");
 publish("pods", [[{ metadata: { name: "pod-a", namespace: "default" }, status: "Running" }, 1]]);
 ```
 
@@ -116,7 +116,7 @@ const c = sql.compile(
   { output: "senior-users" }
 );
 
-c.incrementalize();
+c.transform("Incrementalizer");
 
 publish("users", [
   [{ id: 1, name: "alice", age: 30 }, 1],
@@ -133,7 +133,7 @@ sql.table("orders", "id INTEGER PRIMARY KEY, user_id INTEGER, total REAL");
 sql.compile(
   "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id",
   { output: "user-orders" }
-).incrementalize());
+).transform("Incrementalizer");
 ```
 
 ### `aggregate.compile(pipeline, { inputs, output })`
@@ -149,7 +149,7 @@ const c = aggregate.compile([
   output: "obs-output",
 });
 
-c.incrementalize();
+c.transform("Incrementalizer");
 ```
 
 For pipelines with multiple logical inputs, bind topic names explicitly:
@@ -168,14 +168,43 @@ aggregate.compile(pipeline, {
     { name: "svc-topic", logical: "services" }
   ],
   output: { name: "result-topic", logical: "output" }
-}).incrementalize();
+}).transform("Incrementalizer");
 ```
 
-### Circuit handles: `.incrementalize()`, `.validate()`, `.observe(fn)`
+### Circuit handles: `.transform(name[, opts])`, `.validate()`, `.observe(fn)`
 
 Both `sql.compile(...)` and `aggregate.compile(...)` return a circuit handle.
 
-`.incrementalize()` transforms the circuit into its incremental form and returns a new handle.
+`.transform(name[, opts])` applies a circuit transformer in place and returns the same handle.
+
+Supported transformer names are:
+
+- `"Incrementalizer"`
+- `"Rewriter"`
+- `"Reconciler"`
+
+Optional transformer options:
+
+- `"Rewriter"`: `{ rules: "Pre" | "Post" | "Default" }`
+- `"Reconciler"`: `{ pairs: [["inputID", "outputID"], ...] }`
+
+`"Reconciler"` auto-detects self-referential input/output pairs by node ID stem
+(`input_x` with `output_x`). If no pair is found, the transform is a no-op.
+
+Example with explicit reconciler pair:
+
+```js
+c.transform("Reconciler", {
+  pairs: [[
+    "services",
+    "desired-services"
+  ]]
+});
+```
+
+Pairs accept either raw node IDs (`input_services`, `output_desired_services`) or
+plain topic names (`services`, `desired-services`).
+
 `.validate()` checks the circuit.
 `.observe(fn)` attaches a handle-scoped execution observer. Pass `null` or `undefined` to clear it.
 
@@ -188,7 +217,7 @@ c.observe((e) => {
   console.log("node", e.node.id, "position", e.position);
 });
 
-c.incrementalize();
+c.transform("Incrementalizer");
 ```
 
 Handle-scoped observation is usually the easiest way to inspect a single script-built circuit.

@@ -22,7 +22,7 @@ const c = sql.compile(
     `SELECT oid, product_id, pid, name, price, qty
        FROM orders JOIN products ON product_id = pid`,
     { output: "joined-orders" }
-).incrementalize().validate();
+).transform("Incrementalizer").validate();
 
 console.log("circuit:", c);
 
@@ -49,7 +49,7 @@ aggregate.compile(
         }},
     ],
     { inputs: ["orders", "products"], output: "joined-orders-agg" }
-).incrementalize();
+).transform("Incrementalizer");
 
 consumer("joined-orders-agg", (entries) => {
     console.log("=== aggregate join output ===");

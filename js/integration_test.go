@@ -705,7 +705,7 @@ const c = aggregate.compile([
 		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:111"}))
 	})
 
-	It("incrementalize swaps runtime registration without validate", func() {
+	It("transform(Incrementalizer) swaps runtime registration without validate", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -726,7 +726,7 @@ const c = aggregate.compile([
   output: "agg-inc-out"
 });
 
-const ci = c.incrementalize();
+const ci = c.transform("Incrementalizer");
 
 runtime.observe("aggregation^Δ", (e) => {
   runtime.publish("agg-inc-obs", [[{node: e.node.id}, 1]]);
@@ -946,7 +946,7 @@ const c = aggregate.compile([
   {"@select": {"@eq": ["$.metadata.namespace", "default"]}},
   {"@project": {name: "$.metadata.name", status: "$.status"}}
 ], {inputs: "pods", output: "result"});
-c.incrementalize().validate();
+c.transform("Incrementalizer").validate();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -1058,7 +1058,7 @@ publish("pods", [[{id: 9}, 1]]);
 
 		script := `
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT, age INTEGER");
-sql.compile("SELECT name, age FROM users WHERE age > 25", { output: "senior-users" }).incrementalize().validate();
+sql.compile("SELECT name, age FROM users WHERE age > 25", { output: "senior-users" }).transform("Incrementalizer").validate();
 publish("users", [
   [{ id: 1, name: "alice", age: 30 }, 1],
   [{ id: 2, name: "bob", age: 22 }, 1]
@@ -1088,7 +1088,7 @@ publish("users", [
 		script := `
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT");
 sql.table("orders", "id INTEGER PRIMARY KEY, user_id INTEGER, total REAL");
-sql.compile("SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id", { output: "user-orders" }).incrementalize().validate();
+sql.compile("SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id", { output: "user-orders" }).transform("Incrementalizer").validate();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 	})
@@ -1116,7 +1116,7 @@ aggregate.compile(pipeline, {
     {name: "svc-topic", logical: "services"}
   ],
   output: {name: "result-topic", logical: "output"}
-}).incrementalize().validate();
+}).transform("Incrementalizer").validate();
 
 publish("pods-topic", [[{metadata:{name:"shared"}}, 1]]);
 publish("svc-topic", [[{metadata:{name:"shared"}}, 1]]);

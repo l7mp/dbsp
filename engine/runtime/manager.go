@@ -71,6 +71,9 @@ func (m *manager) Stop(r Runnable) {
 	for _, item := range m.items {
 		if sameRunnable(item.r, r) {
 			toStop = append(toStop, item)
+			// Release the component name so a replacement with the same name can be
+			// added later (for example transformed circuits re-registered in-place).
+			delete(m.names, item.r.Name())
 			continue
 		}
 		keep = append(keep, item)

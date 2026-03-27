@@ -21,6 +21,11 @@ type circuitHandle struct {
 	obsFn goja.Callable
 }
 
+type circuitTransformOptions struct {
+	Pairs [][]string `json:"pairs"`
+	Rules string     `json:"rules"`
+}
+
 func (h *circuitHandle) register() error {
 	query := *h.query
 	query.Circuit = h.c
@@ -46,36 +51,91 @@ func (h *circuitHandle) register() error {
 	return nil
 }
 
-func (h *circuitHandle) incrementalize() (*circuitHandle, error) {
+func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
 	prevProc := h.proc
 	if prevProc != nil {
 		h.vm.runtime.Stop(prevProc)
 		h.proc = nil
 	}
 
-	inc, err := transform.Incrementalize(h.c)
+	typ := transform.TransformerType(name)
+	var args []any
+	if jsArgs != nil && !goja.IsUndefined(jsArgs) && !goja.IsNull(jsArgs) {
+		var opts circuitTransformOptions
+		if err := decodeOptionValue(jsArgs, &opts); err != nil {
+			return fmt.Errorf("transform %s options: %w", typ, err)
+		}
+
+		switch typ {
+		case transform.Reconciler:
+			if len(opts.Pairs) > 0 {
+				pairs := make([]transform.ReconcilerPair, 0, len(opts.Pairs))
+				for i, p := range opts.Pairs {
+					if len(p) != 2 {
+						return fmt.Errorf("transform %s: pair %d must have exactly 2 elements", typ, i)
+					}
+					inputID := strings.TrimSpace(p[0])
+					outputID := strings.TrimSpace(p[1])
+					if inputID == "" || outputID == "" {
+						return fmt.Errorf("transform %s: pair %d must not contain empty values", typ, i)
+					}
+
+					// Convenience for JS callers: allow topic names in addition to raw
+					// node IDs. Node IDs are generated as input_*/output_*.
+					if !strings.HasPrefix(inputID, "input_") {
+						inputID = circuit.InputNodeID(inputID)
+					}
+					if !strings.HasPrefix(outputID, "output_") {
+						outputID = circuit.OutputNodeID(outputID)
+					}
+
+					pairs = append(pairs, transform.ReconcilerPair{InputID: inputID, OutputID: outputID})
+				}
+				args = append(args, pairs)
+			}
+		case transform.Rewriter:
+			if opts.Rules != "" {
+				args = append(args, opts.Rules)
+			}
+		}
+	}
+
+	t, err := transform.New(typ, args...)
 	if err != nil {
 		if prevProc != nil {
 			h.proc = prevProc
 			if regErr := h.register(); regErr != nil {
-				return nil, fmt.Errorf("incrementalize: %w (restore failed: %v)", err, regErr)
+				return fmt.Errorf("transform: %w (restore failed: %v)", err, regErr)
 			}
 		}
-		return nil, fmt.Errorf("incrementalize: %w", err)
+		return fmt.Errorf("transform: %w", err)
 	}
 
-	next := &circuitHandle{c: inc, query: h.query, vm: h.vm, obsFn: h.obsFn}
-	if err := next.register(); err != nil {
+	result, err := t.Transform(h.c)
+	if err != nil {
+		if prevProc != nil {
+			h.proc = prevProc
+			if regErr := h.register(); regErr != nil {
+				return fmt.Errorf("transform %s: %w (restore failed: %v)", typ, err, regErr)
+			}
+		}
+		return fmt.Errorf("transform %s: %w", typ, err)
+	}
+
+	prevCircuit := h.c
+	h.c = result
+	if err := h.register(); err != nil {
+		h.c = prevCircuit
 		if prevProc != nil {
 			h.proc = prevProc
 			if regErr := h.installObserver(); regErr != nil {
-				return nil, fmt.Errorf("incrementalize: register incremental circuit: %w (restore failed: %v)", err, regErr)
+				return fmt.Errorf("transform %s: register transformed circuit: %w (restore failed: %v)", typ, err, regErr)
 			}
 		}
-		return nil, fmt.Errorf("incrementalize: register incremental circuit: %w", err)
+		return fmt.Errorf("transform %s: register transformed circuit: %w", typ, err)
 	}
 
-	return next, nil
+	return nil
 }
 
 func (h *circuitHandle) validate() error {
@@ -180,12 +240,22 @@ func (v *VM) observerPayload(node *circuit.Node, values map[string]zset.ZSet, sc
 func (h *circuitHandle) jsObject() *goja.Object {
 	obj := h.vm.rt.NewObject()
 
-	_ = obj.Set("incrementalize", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
-		next, err := h.incrementalize()
+	_ = obj.Set("transform", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		if len(call.Arguments) < 1 {
+			return nil, fmt.Errorf("circuit.transform(name[, opts]) requires transformer name")
+		}
+
+		name := call.Argument(0).String()
+		var jsArgs goja.Value
+		if len(call.Arguments) > 1 {
+			jsArgs = call.Argument(1)
+		}
+
+		err := h.doTransform(name, jsArgs)
 		if err != nil {
 			return nil, err
 		}
-		return next.jsObject(), nil
+		return obj, nil
 	}))
 
 	_ = obj.Set("validate", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {

@@ -11,24 +11,33 @@ import (
 // It returns true if any changes were made.
 type RewriteRule func(c *circuit.Circuit) bool
 
-// Rewrite applies the given rewrite rules to the circuit until no rule makes
-// any further changes (fixed-point iteration). It modifies the circuit in place
-// and returns the number of passes performed.
-func Rewrite(c *circuit.Circuit, rules ...RewriteRule) int {
-	passes := 0
+type rewriter struct {
+	rules []RewriteRule
+}
+
+func NewRewriter(rules ...RewriteRule) Transformer {
+	if len(rules) == 0 {
+		rules = DefaultRules()
+	}
+	return &rewriter{rules: rules}
+}
+
+func (t *rewriter) Name() TransformerType { return Rewriter }
+
+func (t *rewriter) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
+	clone := c.Clone()
 	for {
 		changed := false
-		for _, rule := range rules {
-			if rule(c) {
+		for _, rule := range t.rules {
+			if rule(clone) {
 				changed = true
 			}
 		}
-		passes++
 		if !changed {
 			break
 		}
 	}
-	return passes
+	return clone, nil
 }
 
 // DefaultRules returns the basic post-incrementalization rules (D∘I, I∘D, adjacent distinct).

@@ -133,7 +133,7 @@ func New(cfg Config) (*Controller, error) {
 
 	// 4. Incrementalize the circuit.
 	var err error
-	q.Circuit, err = transform.Incrementalize(q.Circuit)
+	q.Circuit, err = transform.NewIncrementalizer().Transform(q.Circuit)
 	if err != nil {
 		return nil, fmt.Errorf("controller: failed to incrementalize circuit: %w", err)
 	}

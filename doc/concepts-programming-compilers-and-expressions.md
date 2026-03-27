@@ -10,15 +10,15 @@ The engine ships two compilers. The **SQL compiler** accepts standard SELECT sta
 graph LR
     SRC["query (SQL or pipeline)"] --> COMP[compile]
     COMP --> CIRC[circuit]
-    CIRC --> INC[incrementalize]
+    CIRC --> INC[transform Incrementalizer]
     INC --> LIVE[running processor]
 ```
 
-The typical lifecycle is: compile a query, and optionally incrementalize the resulting circuit so it processes deltas instead of full snapshots. In JS this is a one-liner:
+The typical lifecycle is: compile a query, and optionally transform the resulting circuit with `Incrementalizer` so it processes deltas instead of full snapshots. In JS this is a one-liner:
 
 ```js
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT, age INTEGER");
-sql.compile("SELECT name FROM users WHERE age > 25", { output: "out" }).incrementalize();
+sql.compile("SELECT name FROM users WHERE age > 25", { output: "out" }).transform("Incrementalizer");
 ```
 
 ## The SQL compiler
@@ -38,7 +38,7 @@ A basic filter-and-project query:
 sql.compile(
     "SELECT name, age FROM users WHERE age > 25",
     { output: "senior-users" }
-).incrementalize();
+).transform("Incrementalizer");
 ```
 
 Feed data by publishing rows to the table's topic:
@@ -58,7 +58,7 @@ JOIN clauses compile into a Cartesian product operator followed by the join cond
 sql.compile(
     "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id",
     { output: "user-orders" }
-).incrementalize();
+).transform("Incrementalizer");
 ```
 
 ```mermaid
@@ -84,7 +84,7 @@ const c = aggregate.compile([
         containers: { "@len": ["$.spec.containers"] }
     }}
 ], { inputs: "pods", output: "result" });
-c.incrementalize();
+c.transform("Incrementalizer");
 ```
 
 A pipeline can also be a single stage object instead of an array.
@@ -114,7 +114,7 @@ aggregate.compile(pipeline, {
 For the SQL compiler, table names serve as the input topic names by default, and the output binding is specified explicitly:
 
 ```js
-sql.compile("SELECT name FROM users", { output: "my-output-topic" }).incrementalize();
+sql.compile("SELECT name FROM users", { output: "my-output-topic" }).transform("Incrementalizer");
 ```
 
 ## Expressions
@@ -169,7 +169,7 @@ const c = aggregate.compile([
     ],
     output: "pod-svc-pairs"
 });
-c.incrementalize();
+c.transform("Incrementalizer");
 
 // React to results
 subscribe("pod-svc-pairs", (entries) => {

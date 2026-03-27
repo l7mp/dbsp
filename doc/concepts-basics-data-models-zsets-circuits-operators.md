@@ -65,21 +65,21 @@ const c = aggregate.compile([
 ], { inputs: "pods", output: "result" });
 ```
 
-The returned handle wraps the compiled circuit. By default, compiled circuits perform snapshot computation. To process changes, circuits need to be explicitly incrementalized.
+The returned handle wraps the compiled circuit. By default, compiled circuits perform snapshot computation. To process changes, circuits need to be explicitly transformed with `Incrementalizer`.
 
 ```js
-c.incrementalize();
+c.transform("Incrementalizer");
 ```
 
 At this point the circuit is ready to process deltas: it subscribes to the `pods` topic, processes every incoming change as a Z-set, and publishes results to the `result` topic (again as a Z-set).
 
 ### Incrementalization
 
-This is the central idea of DBSP. Any circuit that operates on full snapshots can be mechanically transformed into an equivalent circuit that operates on deltas, producing only the changes in the output. The `incrementalize()` call performs this transformation.
+This is the central idea of DBSP. Any circuit that operates on full snapshots can be mechanically transformed into an equivalent circuit that operates on deltas, producing only the changes in the output. The `transform("Incrementalizer")` call performs this transformation.
 
 The transformation works differently depending on the operator type. Simple operators like filters and projections already work element-by-element, so they can process deltas directly with no extra machinery. Joins need some bookkeeping: they must remember what they have seen from each input so they can correctly combine a new element from one side with the accumulated elements from the other. Operators like `distinct` need to track the full accumulated state internally to decide whether an element's membership has changed.
 
-The important thing is that this transformation is automatic. You write your query against full collections, and `incrementalize()` rewrites it into an efficient delta-processing pipeline. The DBSP theorem guarantees that the incremental version produces exactly the same results as re-running the original query from scratch after every change.
+The important thing is that this transformation is automatic. You write your query against full collections, and `transform("Incrementalizer")` rewrites it into an efficient delta-processing pipeline. The DBSP theorem guarantees that the incremental version produces exactly the same results as re-running the original query from scratch after every change.
 
 ### Feedback loops
 

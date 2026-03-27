@@ -78,7 +78,7 @@ func (e *baseEngine) Compile(source string) error {
 	}
 	compiled := query
 	if e.incremental {
-		incr, err := transform.Incrementalize(query.Circuit)
+		incr, err := transform.NewIncrementalizer().Transform(query.Circuit)
 		if err != nil {
 			return err
 		}

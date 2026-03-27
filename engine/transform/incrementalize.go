@@ -12,6 +12,14 @@ func incrementalID(id string) string {
 	return id + "^Δ"
 }
 
+type incrementalizer struct{}
+
+func NewIncrementalizer() Transformer {
+	return &incrementalizer{}
+}
+
+func (t *incrementalizer) Name() TransformerType { return Incrementalizer }
+
 // nodeMapping tracks how original nodes map to result nodes.
 type nodeMapping struct {
 	// outputNode is the node that should be used as the source for
@@ -24,7 +32,7 @@ type nodeMapping struct {
 	inputNode string
 }
 
-// Incrementalize transforms circuit C into C^Δ (Algorithm 6.4 from DBSP spec).
+// Transform transforms circuit C into C^Δ (Algorithm 6.4 from DBSP spec).
 //
 // Rules:
 // 1. Linear operators pass through unchanged (O^Δ = O).
@@ -35,7 +43,7 @@ type nodeMapping struct {
 //   - ∫^Δ = identity (bypass).
 //   - D^Δ = identity (bypass).
 //   - δ₀^Δ = δ₀.
-func Incrementalize(c *circuit.Circuit) (*circuit.Circuit, error) {
+func (t *incrementalizer) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
 	result := circuit.New(fmt.Sprintf("%s^Δ", c.Name()))
 
 	// Mapping from original node IDs to their transformation info.

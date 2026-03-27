@@ -10,11 +10,11 @@ import (
 
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/expression"
+	"github.com/l7mp/dbsp/engine/internal/logger"
+	"github.com/l7mp/dbsp/engine/internal/testutils"
 	"github.com/l7mp/dbsp/engine/operator"
 	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
-	"github.com/l7mp/dbsp/engine/internal/logger"
-	"github.com/l7mp/dbsp/engine/internal/testutils"
 )
 
 const logLevel = zapcore.ErrorLevel
@@ -217,7 +217,7 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 	// verifyEquivalence verifies the DBSP theorem:
 	// D(C(∫(Δs))) = C^Δ(Δs)
 	verifyEquivalence := func(normalCircuit *circuit.Circuit, inputSequence []map[string]zset.ZSet) {
-		incrCircuit, err := transform.Incrementalize(normalCircuit)
+		incrCircuit, err := transform.NewIncrementalizer().Transform(normalCircuit)
 		Expect(err).NotTo(HaveOccurred())
 
 		normalExec, err := New(normalCircuit, logger.NewZapLogger(logLevel))
@@ -373,7 +373,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			Expect(c.Validate()).To(BeEmpty())
 
 			// Use verifyEquivalence pattern but adapted for feedback.
-			incrCircuit, err := transform.Incrementalize(c)
+			incrCircuit, err := transform.NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			normalExec, _ := New(c, logger.NewZapLogger(logLevel))
@@ -419,7 +419,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			c.AddEdge(circuit.NewEdge("plus", "out", 0))
 			c.AddEdge(circuit.NewEdge("plus", "delay", 0))
 
-			incrCircuit, _ := transform.Incrementalize(c)
+			incrCircuit, _ := transform.NewIncrementalizer().Transform(c)
 			incrExec, _ := New(incrCircuit, logger.NewZapLogger(logLevel))
 
 			input := zset.New().WithElems(zset.Elem{Document: testutils.Record{ID: "a", Value: 1}, Weight: 1})

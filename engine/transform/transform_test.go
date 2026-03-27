@@ -29,7 +29,7 @@ var _ = Describe("Incrementalize", func() {
 			c.AddEdge(circuit.NewEdge("in", "sel", 0))
 			c.AddEdge(circuit.NewEdge("sel", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(incr.Name()).To(Equal("linear-test^Δ"))
 
@@ -56,7 +56,7 @@ var _ = Describe("Incrementalize", func() {
 			c.AddEdge(circuit.NewEdge("right", "prod", 1))
 			c.AddEdge(circuit.NewEdge("prod", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should have integrators.
@@ -89,7 +89,7 @@ var _ = Describe("Incrementalize", func() {
 			c.AddEdge(circuit.NewEdge("in", "dist", 0))
 			c.AddEdge(circuit.NewEdge("dist", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should have integrate -> op -> differentiate.
@@ -124,7 +124,7 @@ var _ = Describe("Incrementalize", func() {
 			c.AddEdge(circuit.NewEdge("in", "dpi", 0))
 			c.AddEdge(circuit.NewEdge("dpi", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should NOT use generic D∘O∘I pattern — no external int/delay/op/diff.
@@ -158,7 +158,7 @@ var _ = Describe("Incrementalize", func() {
 			c.AddEdge(circuit.NewEdge("in", "z-1", 0))
 			c.AddEdge(circuit.NewEdge("z-1", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(incr.Node("z-1^Δ").Kind()).To(Equal(operator.KindDelay))
@@ -173,7 +173,7 @@ var _ = Describe("Incrementalize", func() {
 			c.AddEdge(circuit.NewEdge("in", "int", 0))
 			c.AddEdge(circuit.NewEdge("int", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Integrate node should be bypassed.
@@ -194,7 +194,7 @@ var _ = Describe("Incrementalize", func() {
 			c.AddEdge(circuit.NewEdge("in", "diff", 0))
 			c.AddEdge(circuit.NewEdge("diff", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Differentiate node should be bypassed.
@@ -214,7 +214,7 @@ var _ = Describe("Incrementalize", func() {
 			c.AddEdge(circuit.NewEdge("in", "d0", 0))
 			c.AddEdge(circuit.NewEdge("d0", "out", 0))
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(incr.Node("d0^Δ").Kind()).To(Equal(operator.KindDelta0))
@@ -228,7 +228,7 @@ var _ = Describe("Incrementalize", func() {
 			})
 			c := circuit.Join("join-test", predicate)
 
-			incr, err := Incrementalize(c)
+			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should have original inputs and output.
