@@ -46,6 +46,19 @@ func (o *LinearCombination) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
+// NoOp returns its input unchanged.
+type NoOp struct{ linearOp }
+
+// NewNoOp creates a new NoOp operator.
+func NewNoOp(opts ...Option) *NoOp {
+	return &NoOp{newLinearOp(KindNoOp, 1, "NoOp", opts)}
+}
+
+// Apply implements Operator.
+func (o *NoOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+	return inputs[0], nil
+}
+
 // Negate returns -Z.
 type Negate struct{ linearOp }
 

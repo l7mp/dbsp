@@ -142,6 +142,8 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		return NewDifferentiate(), nil
 	case "delta0":
 		return NewDelta0(), nil
+	case "noop":
+		return NewNoOp(), nil
 	case "negate":
 		return NewNegate(), nil
 	case "plus":

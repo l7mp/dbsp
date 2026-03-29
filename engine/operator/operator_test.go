@@ -49,6 +49,23 @@ var _ = Describe("Operators", func() {
 		})
 	})
 
+	Describe("NoOp", func() {
+		It("passes through input unchanged", func() {
+			op := NewNoOp()
+			Expect(op.Arity()).To(Equal(1))
+			Expect(op.Linearity()).To(Equal(Linear))
+			Expect(op.Kind()).To(Equal(KindNoOp))
+
+			input := zset.New()
+			recordA := testutils.Record{ID: "a", Value: 3}
+			input.Insert(recordA, 2)
+
+			result, err := op.Apply(input)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Equal(input)).To(BeTrue())
+		})
+	})
+
 	Describe("Plus", func() {
 		It("adds two Z-sets", func() {
 			op := NewPlus()

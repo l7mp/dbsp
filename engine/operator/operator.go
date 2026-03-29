@@ -73,6 +73,7 @@ const (
 	KindDelta0                    // Delta0Op: initial value injection δ₀.
 
 	// Linear operators (O^Δ = O).
+	KindNoOp              // NoOp: identity operator.
 	KindNegate            // Negate: -Z.
 	KindLinearCombination // LinearCombination: Σ coeffs[i]·inputs[i].  Covers Sum and Subtract.
 	KindSelect            // Select: σ filter.
@@ -105,6 +106,8 @@ func (k Kind) String() string {
 		return "differentiate"
 	case KindDelta0:
 		return "delta0"
+	case KindNoOp:
+		return "noop"
 	case KindNegate:
 		return "negate"
 	case KindLinearCombination:

@@ -37,6 +37,14 @@ var _ = Describe("Circuit", func() {
 			Expect(n.Operator).To(Equal(op))
 		})
 
+		It("creates noop operator nodes", func() {
+			op := operator.NewNoOp()
+			n := Op("noop", op)
+			Expect(n.ID).To(Equal("noop"))
+			Expect(n.Kind()).To(Equal(operator.KindNoOp))
+			Expect(n.Operator).To(Equal(op))
+		})
+
 		It("creates delay nodes", func() {
 			n := Delay("z-1")
 			Expect(n.ID).To(Equal("z-1"))
