@@ -43,7 +43,33 @@ func (p *Product) Hash() string {
 	return strings.Join(chunks, "|")
 }
 
-func (p *Product) PrimaryKey() (string, error) { return p.Hash(), nil }
+func (p *Product) PrimaryKey() (string, error) {
+	parts, err := p.primaryKeyParts()
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(parts, ":"), nil
+}
+
+func (p *Product) primaryKeyParts() ([]string, error) {
+	keys := make([]string, 0, len(p.parts))
+	for k := range p.parts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pk, err := p.parts[k].PrimaryKey()
+		if err != nil {
+			return nil, fmt.Errorf("product: primary key for part %q: %w", k, err)
+		}
+		parts = append(parts, pk)
+	}
+	sort.Strings(parts)
+
+	return parts, nil
+}
 
 func (p *Product) String() string { return p.Hash() }
 
