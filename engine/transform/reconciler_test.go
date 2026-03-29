@@ -1,11 +1,15 @@
 package transform
 
 import (
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/l7mp/dbsp/engine/circuit"
+	"github.com/l7mp/dbsp/engine/executor"
+	"github.com/l7mp/dbsp/engine/internal/testutils"
 	"github.com/l7mp/dbsp/engine/operator"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
 var _ = Describe("Reconciler", func() {
@@ -74,7 +78,7 @@ var _ = Describe("Reconciler", func() {
 		Expect(rec.Validate()).To(BeEmpty())
 	})
 
-	It("errors when output has multiple incoming edges", func() {
+	It("injects reconciliation for outputs with multiple incoming edges", func() {
 		c := circuit.New("bad-output")
 		Expect(c.AddNode(circuit.Input("input_x"))).To(Succeed())
 		Expect(c.AddNode(circuit.Op("a", operator.NewNegate()))).To(Succeed())
@@ -83,11 +87,30 @@ var _ = Describe("Reconciler", func() {
 		Expect(c.AddEdge(circuit.NewEdge("input_x", "a", 0))).To(Succeed())
 		Expect(c.AddEdge(circuit.NewEdge("a", "output_x", 0))).To(Succeed())
 		Expect(c.AddEdge(circuit.NewEdge("input_x", "b", 0))).To(Succeed())
-		Expect(c.AddEdge(circuit.NewEdge("b", "output_x", 0))).To(Succeed())
+		Expect(c.AddEdge(circuit.NewEdge("b", "output_x", 1))).To(Succeed())
 
-		_, err := NewReconciler(ReconcilerPair{InputID: "input_x", OutputID: "output_x"}).Transform(c)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("2 incoming edges"))
+		rec, err := NewReconciler(ReconcilerPair{InputID: "input_x", OutputID: "output_x"}).Transform(c)
+		Expect(err).NotTo(HaveOccurred())
+
+		sumID := "_rec_output_x_sum"
+		Expect(rec.Node(sumID)).NotTo(BeNil())
+		Expect(rec.Node(sumID).Kind()).To(Equal(operator.KindLinearCombination))
+
+		outEdges := rec.EdgesTo("output_x")
+		Expect(outEdges).To(HaveLen(1))
+		Expect(outEdges[0].From).To(Equal("_rec_output_x_acc"))
+
+		sumIn := rec.EdgesTo(sumID)
+		Expect(sumIn).To(HaveLen(2))
+		Expect(sumIn[0].From).To(Equal("a"))
+		Expect(sumIn[1].From).To(Equal("b"))
+
+		subIn := rec.EdgesTo("_rec_output_x_sub")
+		Expect(subIn).To(HaveLen(2))
+		Expect(subIn[0].From).To(Equal(sumID))
+		Expect(subIn[1].From).To(Equal("input_x"))
+
+		Expect(rec.Validate()).To(BeEmpty())
 	})
 
 	It("errors when no pairs found and none specified", func() {
@@ -121,4 +144,34 @@ var _ = Describe("Reconciler", func() {
 		Expect(c.Node("_rec_output_x_sub")).To(BeNil())
 	})
 
+	It("produces U = C(deltaY) - deltaY + U[t-1]", func() {
+		c := circuit.New("reconciler-exec")
+		Expect(c.AddNode(circuit.Input("input_x"))).To(Succeed())
+		Expect(c.AddNode(circuit.Op("neg", operator.NewNegate()))).To(Succeed())
+		Expect(c.AddNode(circuit.Output("output_x"))).To(Succeed())
+		Expect(c.AddEdge(circuit.NewEdge("input_x", "neg", 0))).To(Succeed())
+		Expect(c.AddEdge(circuit.NewEdge("neg", "output_x", 0))).To(Succeed())
+
+		rec, err := NewReconciler().Transform(c)
+		Expect(err).NotTo(HaveOccurred())
+
+		exec, err := executor.New(rec, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+
+		a := testutils.Record{ID: "a", Value: 1}
+		b := testutils.Record{ID: "b", Value: 3}
+
+		step1 := zset.New().WithElems(zset.Elem{Document: a, Weight: 1})
+		out1, err := exec.Execute(map[string]zset.ZSet{"input_x": step1})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out1["output_x"].Lookup(a.Hash())).To(Equal(zset.Weight(-2)))
+
+		step2 := zset.New().WithElems(zset.Elem{Document: b, Weight: 1})
+		out2, err := exec.Execute(map[string]zset.ZSet{"input_x": step2})
+		Expect(err).NotTo(HaveOccurred())
+
+		// U[2] = (-2a) + (-2b).
+		Expect(out2["output_x"].Lookup(a.Hash())).To(Equal(zset.Weight(-2)))
+		Expect(out2["output_x"].Lookup(b.Hash())).To(Equal(zset.Weight(-2)))
+	})
 })

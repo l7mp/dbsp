@@ -97,16 +97,40 @@ func injectReconcilerLoop(c *circuit.Circuit, pair ReconcilerPair) error {
 	}
 
 	inEdges := c.EdgesTo(pair.OutputID)
-	if len(inEdges) != 1 {
-		return fmt.Errorf("reconciler: output node %q has %d incoming edges, expected 1", pair.OutputID, len(inEdges))
+	if len(inEdges) == 0 {
+		return fmt.Errorf("reconciler: output node %q has no incoming edges", pair.OutputID)
 	}
-	predEdge := inEdges[0]
-	predID := predEdge.From
 
 	prefix := "_rec_" + pair.OutputID
+	sumID := prefix + "_sum"
 	subID := prefix + "_sub"
 	accID := prefix + "_acc"
 	delayID := prefix + "_delay"
+
+	predID := ""
+	if len(inEdges) == 1 {
+		predID = inEdges[0].From
+	} else {
+		maxPort := 0
+		for _, e := range inEdges {
+			if e.Port > maxPort {
+				maxPort = e.Port
+			}
+		}
+		coeffs := make([]int, maxPort+1)
+		for i := range coeffs {
+			coeffs[i] = 1
+		}
+		if err := c.AddNode(circuit.Op(sumID, operator.NewLinearCombination(coeffs))); err != nil {
+			return fmt.Errorf("reconciler: add sum node: %w", err)
+		}
+		for _, e := range inEdges {
+			if err := c.AddEdge(circuit.NewEdge(e.From, sumID, e.Port)); err != nil {
+				return fmt.Errorf("reconciler: wire pred→sum: %w", err)
+			}
+		}
+		predID = sumID
+	}
 
 	if err := c.AddNode(circuit.Op(subID, operator.NewMinus())); err != nil {
 		return fmt.Errorf("reconciler: add sub node: %w", err)
@@ -118,8 +142,10 @@ func injectReconcilerLoop(c *circuit.Circuit, pair ReconcilerPair) error {
 		return fmt.Errorf("reconciler: add delay node: %w", err)
 	}
 
-	if err := c.RemoveEdge(predID, pair.OutputID, predEdge.Port); err != nil {
-		return fmt.Errorf("reconciler: remove pred→output edge: %w", err)
+	for _, e := range inEdges {
+		if err := c.RemoveEdge(e.From, pair.OutputID, e.Port); err != nil {
+			return fmt.Errorf("reconciler: remove pred→output edge: %w", err)
+		}
 	}
 
 	if err := c.AddEdge(circuit.NewEdge(predID, subID, 0)); err != nil {
