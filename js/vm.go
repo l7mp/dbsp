@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,6 +67,12 @@ const (
 	idlePollInterval   = 25 * time.Millisecond
 	idleGracePeriod    = 200 * time.Millisecond
 	runtimeStopTimeout = 2 * time.Second
+)
+
+var (
+	staticImportRe = regexp.MustCompile(`(?m)^\s*import(?:\s|\()`)
+	exportRe       = regexp.MustCompile(`(?m)^\s*export\s`)
+	forAwaitRe     = regexp.MustCompile(`\bfor\s+await\s*\(`)
 )
 
 func NewVM(logger logr.Logger) (*VM, error) {
@@ -137,17 +145,81 @@ func (v *VM) RunFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("read script: %w", err)
 	}
-
-	if err := v.runOnLoopSync(func(rt *goja.Runtime) error {
-		_, runErr := rt.RunScript(absPath, string(src))
-		return runErr
-	}); err != nil {
-		return fmt.Errorf("execute script %s: %w", absPath, err)
+	if err := v.runSourceAsModule(absPath, string(src)); err != nil {
+		return fmt.Errorf("execute module %s: %w", absPath, err)
 	}
 	v.touchActivity()
-	v.logger.V(1).Info("script loaded, entering event loop", "path", absPath)
+	v.logger.V(1).Info("module loaded, entering event loop", "path", absPath)
 
 	return v.runEventLoop()
+}
+
+func (v *VM) runSourceAsModule(name, src string) error {
+	if staticImportRe.MatchString(src) || strings.Contains(src, "import(") || exportRe.MatchString(src) {
+		return fmt.Errorf("ES module import/export is not supported by this goja version")
+	}
+
+	if forAwaitRe.MatchString(src) {
+		return fmt.Errorf("for-await-of is not supported by this goja version; use subscribe(topic).next() in a loop")
+	}
+
+	wrapped := fmt.Sprintf("(async () => {\n%s\n})();", src)
+	done := make(chan error, 1)
+	var settleOnce sync.Once
+	settle := func(err error) {
+		settleOnce.Do(func() {
+			done <- err
+		})
+	}
+
+	if err := v.runOnLoopSync(func(rt *goja.Runtime) error {
+		value, runErr := rt.RunScript(name, wrapped)
+		if runErr != nil {
+			return runErr
+		}
+
+		promise, ok := value.Export().(*goja.Promise)
+		if !ok {
+			return fmt.Errorf("module wrapper did not return a Promise")
+		}
+
+		switch promise.State() {
+		case goja.PromiseStatePending:
+		case goja.PromiseStateFulfilled:
+			settle(nil)
+			return nil
+		case goja.PromiseStateRejected:
+			settle(fmt.Errorf("top-level await rejected: %v", promise.Result()))
+			return nil
+		}
+
+		thenFn, ok := goja.AssertFunction(value.ToObject(rt).Get("then"))
+		if !ok {
+			return fmt.Errorf("module result is not thenable")
+		}
+
+		resolveHandler := rt.ToValue(func(call goja.FunctionCall) goja.Value {
+			settle(nil)
+			return goja.Undefined()
+		})
+		rejectHandler := rt.ToValue(func(call goja.FunctionCall) goja.Value {
+			reason := call.Argument(0)
+			settle(fmt.Errorf("top-level await rejected: %v", reason))
+			return goja.Undefined()
+		})
+
+		_, err := thenFn(value, resolveHandler, rejectHandler)
+		return err
+	}); err != nil {
+		return err
+	}
+
+	select {
+	case err := <-done:
+		return err
+	case <-v.ctx.Done():
+		return v.ctx.Err()
+	}
 }
 
 func (v *VM) runEventLoop() error {
@@ -401,10 +473,7 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 
-	if err := v.rt.Set("producer", v.wrap(v.genericProducer)); err != nil {
-		return err
-	}
-	producerObj := v.rt.Get("producer").ToObject(v.rt)
+	producerObj := v.rt.NewObject()
 	k8sProd := v.rt.NewObject()
 	if err := k8sProd.Set("watch", v.wrap(v.k8sWatch)); err != nil {
 		return err
@@ -418,11 +487,11 @@ func (v *VM) injectGlobals() error {
 	if err := producerObj.Set("jsonl", v.wrap(v.jsonlProducer)); err != nil {
 		return err
 	}
-
-	if err := v.rt.Set("consumer", v.wrap(v.genericConsumer)); err != nil {
+	if err := v.rt.Set("producer", producerObj); err != nil {
 		return err
 	}
-	consumerObj := v.rt.Get("consumer").ToObject(v.rt)
+
+	consumerObj := v.rt.NewObject()
 	k8sCons := v.rt.NewObject()
 	if err := k8sCons.Set("patcher", v.wrap(v.k8sPatcher)); err != nil {
 		return err
@@ -436,14 +505,33 @@ func (v *VM) injectGlobals() error {
 	if err := consumerObj.Set("redis", v.wrap(v.redisConsumer)); err != nil {
 		return err
 	}
+	if err := v.rt.Set("consumer", consumerObj); err != nil {
+		return err
+	}
 
 	if err := v.rt.Set("publish", v.wrap(v.publish)); err != nil {
 		return err
 	}
-	if err := v.rt.Set("subscribe", v.wrap(v.subscribe)); err != nil {
+	if err := v.rt.Set("subscribe", v.wrap(v.subscribeDispatch)); err != nil {
+		return err
+	}
+	subObj := v.rt.Get("subscribe").ToObject(v.rt)
+	if err := subObj.Set("once", v.wrap(v.subscribeOnce)); err != nil {
 		return err
 	}
 	if err := v.rt.Set("cancel", v.wrap(v.cancel)); err != nil {
+		return err
+	}
+
+	startTime := time.Now()
+	perfObj := v.rt.NewObject()
+	if err := perfObj.Set("now", func(call goja.FunctionCall) goja.Value {
+		elapsed := time.Since(startTime)
+		return v.rt.ToValue(float64(elapsed.Nanoseconds()) / 1e6)
+	}); err != nil {
+		return err
+	}
+	if err := v.rt.Set("performance", perfObj); err != nil {
 		return err
 	}
 
@@ -454,16 +542,10 @@ func (v *VM) injectGlobals() error {
 	if err := runtimeObj.Set("aggregate", aggObj); err != nil {
 		return err
 	}
-	if err := runtimeObj.Set("producer", v.rt.Get("producer")); err != nil {
-		return err
-	}
-	if err := runtimeObj.Set("consumer", v.rt.Get("consumer")); err != nil {
-		return err
-	}
 	if err := runtimeObj.Set("publish", v.wrap(v.publish)); err != nil {
 		return err
 	}
-	if err := runtimeObj.Set("subscribe", v.wrap(v.subscribe)); err != nil {
+	if err := runtimeObj.Set("subscribe", v.rt.Get("subscribe")); err != nil {
 		return err
 	}
 	if err := runtimeObj.Set("onError", v.wrap(v.runtimeOnError)); err != nil {
@@ -478,7 +560,7 @@ func (v *VM) injectGlobals() error {
 	if err := runtimeObj.Set("toJSON", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
 		return v.rt.ToValue(map[string]any{
 			"kind": "runtime",
-			"apis": []string{"sql", "aggregate", "producer", "consumer", "publish", "subscribe", "observe", "onError", "cancel"},
+			"apis": []string{"sql", "aggregate", "publish", "subscribe", "observe", "onError", "cancel"},
 		}), nil
 	})); err != nil {
 		return err

@@ -9,26 +9,6 @@ import (
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
-func (v *VM) genericConsumer(call goja.FunctionCall) (goja.Value, error) {
-	if len(call.Arguments) < 2 {
-		return nil, fmt.Errorf("consumer(topic, fn) requires topic and callback")
-	}
-
-	topic := call.Argument(0).String()
-	if topic == "" {
-		return nil, fmt.Errorf("consumer: empty topic")
-	}
-
-	jsFn, ok := goja.AssertFunction(call.Argument(1))
-	if !ok {
-		return nil, fmt.Errorf("consumer callback must be a function")
-	}
-
-	v.registerCallbackConsumer(topic, jsFn)
-
-	return goja.Undefined(), nil
-}
-
 func (v *VM) registerCallbackConsumer(topic string, jsFn goja.Callable) {
 
 	sub := v.runtime.NewSubscriber()

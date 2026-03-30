@@ -92,6 +92,10 @@ func runScript(vm *VM, script string) error {
 	})
 }
 
+func runScriptAsModule(vm *VM, script string) error {
+	return vm.runSourceAsModule("<inline-module>", script)
+}
+
 func zsetRowsByField(ev dbspruntime.Event, field string) []string {
 	rows := make([]string, 0, ev.Data.Size())
 	ev.Data.Iter(func(doc datamodel.Document, weight zset.Weight) bool {
@@ -184,6 +188,131 @@ publish("input-topic", [[{id: 7}, 1]]);
 			Expect(zsetRowsByField(first, "id")).To(Equal(tc.expected))
 		})
 	}
+
+	It("supports top-level await in module scripts", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("tla-collector", vm.runtime, "tla-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			_ = runScript(vm, `publish("tla-in", [[{id: 42}, 1]]);`)
+		}()
+
+		script := `
+const result = await subscribe.once("tla-in");
+publish("tla-out", result);
+`
+		Expect(runScriptAsModule(vm, script)).To(Succeed())
+		Eventually(func() int {
+			return len(collector.Snapshot())
+		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+	})
+
+	It("subscribe.once resolves with first event", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("once-collector", vm.runtime, "once-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const first = await subscribe.once("once-trigger");
+publish("once-out", first);
+`
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			_ = runScript(vm, `publish("once-trigger", [[{id: 99}, 1]]);`)
+		}()
+		Expect(runScriptAsModule(vm, script)).To(Succeed())
+		Eventually(func() int {
+			return len(collector.Snapshot())
+		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+	})
+
+	It("subscribe returns async iterable that breaks cleanly", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("iter-collector", vm.runtime, "iter-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+let count = 0;
+const iter = subscribe("iter-in");
+while (count < 3) {
+  const step = await iter.next();
+  if (step.done) break;
+  count += step.value.length;
+}
+await iter.return();
+publish("iter-out", [[{total: count}, 1]]);
+`
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			for i := 0; i < 5; i++ {
+				_ = runScript(vm, fmt.Sprintf(`publish("iter-in", [[{id: %d}, 1]]);`, i))
+				time.Sleep(10 * time.Millisecond)
+			}
+		}()
+
+		Expect(runScriptAsModule(vm, script)).To(Succeed())
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			rows := zsetRowsByField(events[0], "total")
+			return len(rows) > 0 && rows[0] == "1:3"
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+	})
+
+	It("rejects import statements with a clear module error", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `import "./lib.js";`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("ES module import/export is not supported"))
+	})
+
+	It("rejects for-await-of with fallback guidance", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `for await (const e of subscribe("x")) { break; }`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("for-await-of is not supported"))
+		Expect(err.Error()).To(ContainSubstring("subscribe(topic).next()"))
+	})
+
+	It("consumer(topic, fn) is no longer available as a function", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScript(vm, `consumer("topic", (e) => {});`)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("consumer.kubernetes.patcher is still available", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScript(vm, `typeof consumer.kubernetes.patcher`)
+		Expect(err).NotTo(HaveOccurred())
+	})
 
 	It("transforms forwarded events with registerTransformCallback", func() {
 		vm, err := NewVM(logr.Discard())
@@ -412,7 +541,7 @@ runtime.onError((e) => {
 
 		script := `
 let called = 0;
-consumer("cancel-in", (entries) => {
+subscribe("cancel-in", (entries) => {
   called += 1;
   runtime.publish("cancel-events", [[{count: called}, 1]]);
   cancel();
@@ -577,13 +706,12 @@ const c = aggregate.compile([
 });
 
 c.validate();
-const p = producer("console-in");
 
 console.log(c);
-console.log(p);
+console.log(producer);
 console.log(runtime);
 
-consumer("console-out", (entries) => {
+subscribe("console-out", (entries) => {
   for (const [doc, weight] of entries) {
     console.log(doc);
     runtime.publish("console-json", [[doc, weight]]);
@@ -754,6 +882,22 @@ publish("agg-inc-in", [[{id: 222}, 1]]);
 		Eventually(func() int {
 			return len(obsCollector.Snapshot())
 		}, 2*time.Second, 10*time.Millisecond).Should(BeNumerically(">", 0))
+	})
+
+	It("rejects transform with non-string name", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {inputs: "in", output: "out"});
+c.transform(["Incrementalizer"]);
+`
+		err = runScript(vm, script)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("transformer name must be a string"))
 	})
 
 	It("compiles aggregate pipelines with binding objects", func() {

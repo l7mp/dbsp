@@ -76,9 +76,9 @@ publish("pods", [[{ metadata: { name: "pod-a", namespace: "default" }, status: "
 ## JavaScript environment
 
 The environment is intentionally small. It exposes `console.log`, the SQL compiler, the aggregation
-compiler, producer and consumer helpers, circuit observers, runtime observers, cancellation, and
-Kubernetes connectors. Most top-level APIs also exist under the `runtime` object, so
-`publish(...)` and `runtime.publish(...)` are equivalent.
+compiler, `publish`/`subscribe`, circuit observers, runtime observers, cancellation, and
+connectors. Most top-level APIs also exist under the `runtime` object, so `publish(...)` and
+`runtime.publish(...)` are equivalent.
 
 ## Reference
 
@@ -230,20 +230,9 @@ c.transform("Incrementalizer");
 
 Handle-scoped observation is usually the easiest way to inspect a single script-built circuit.
 
-### `producer(topic[, entries])` and `producer.publish(entries)`
+### `publish(topic, entries)` and `runtime.publish(topic, entries)`
 
-`producer` creates a publishing handle for a topic. If `entries` is passed immediately, the handle
-publishes them once during construction.
-
-```js
-const p = producer("orders");
-p.publish([
-  [{ oid: 101, product_id: 1, qty: 3 }, 1],
-  [{ oid: 102, product_id: 2, qty: 1 }, 1],
-]);
-```
-
-For one-off publishing, use the shorthand `publish(topic, entries)`.
+These functions publish one Z-set delta batch to a topic.
 
 ```js
 publish("products", [
@@ -252,13 +241,15 @@ publish("products", [
 ]);
 ```
 
-### `consumer(topic, fn)` and `subscribe(topic, fn)`
+### `subscribe(topic[, fn])`
 
-`consumer` registers a callback that receives one batch of Z-set entries per runtime event on the
-given topic. `subscribe` is the shorthand form and behaves the same way.
+`subscribe` has two forms:
+
+- `subscribe(topic, fn)`: callback subscriber.
+- `subscribe(topic)`: async-iterator-like object with `.next()` and `.return()`.
 
 ```js
-consumer("joined-orders", (entries) => {
+subscribe("joined-orders", (entries) => {
   for (const [doc, weight] of entries) {
     console.log(weight, doc);
   }
@@ -270,17 +261,50 @@ subscribe("my-topic", (entries) => {
 });
 ```
 
-Callbacks run on the VM event loop. Inside a callback, `cancel()` stops that callback owner.
-
-### `publish(topic, entries)` and `runtime.publish(topic, entries)`
-
-These functions publish one Z-set delta batch to a topic without creating an explicit producer
-handle.
+Single-event await is available via `subscribe.once(topic)`:
 
 ```js
-runtime.publish("audit", [[{ action: "compiled" }, 1]]);
-publish("users", [[{ id: 7, name: "carol" }, 1]]);
+const first = await subscribe.once("output");
+publish("mirror", first);
 ```
+
+The current Goja runtime does not support `for await (... of ...)`, so consume iterables with
+`await iter.next()`:
+
+```js
+const iter = subscribe("output");
+while (true) {
+  const step = await iter.next();
+  if (step.done) break;
+  console.log(step.value);
+}
+await iter.return();
+```
+
+If you need deterministic batch capture, subscribe first, publish in a `for` loop, then drain the
+iterator:
+
+```js
+const expected = 500;
+let seen = 0;
+
+const iter = subscribe("output");
+for (let i = 0; i < expected; i++) {
+  publish("input", [[{ id: i }, 1]]);
+}
+
+while (seen < expected) {
+  const step = await iter.next();
+  if (step.done) break;
+  seen += step.value.length;
+}
+await iter.return();
+```
+
+The runtime pub/sub currently delivers events only to subscribers registered at publish time.
+Publishing before subscribing can therefore drop events.
+
+Callbacks run on the VM event loop. Inside a callback, `cancel()` stops that callback owner.
 
 ### `runtime.onError(fn)`
 
@@ -318,17 +342,29 @@ Pass `null` or `undefined` as the second argument to remove the observer.
 
 `cancel()` is context-sensitive.
 
-At top level it stops the script VM. Inside `consumer`, `subscribe`, `circuit.observe`, or
+At top level it stops the script VM. Inside `subscribe`, `circuit.observe`, or
 `runtime.observe`, it stops the current callback owner instead.
 
 ```js
-consumer("obs-output", (entries) => {
+subscribe("obs-output", (entries) => {
   console.log(entries);
   cancel();
 });
 ```
 
-### `runtime.sql`, `runtime.aggregate`, `runtime.producer`, `runtime.consumer`, and `runtime.subscribe`
+### `performance.now()`
+
+Returns high-resolution elapsed milliseconds since script start:
+
+```js
+const t0 = performance.now();
+const done = subscribe.once("output");
+publish("input", [[{ id: 1 }, 1]]);
+await done;
+console.log(performance.now() - t0);
+```
+
+### `runtime.sql`, `runtime.aggregate`, and `runtime.subscribe`
 
 The `runtime` object mirrors the main top-level APIs. This is useful when you want all scripting
 operations to hang off a single namespace.
@@ -441,9 +477,9 @@ consumer.kubernetes.updater({
 
 Use this when the pipeline emits the full desired object rather than a patch.
 
-In short: plain `consumer(...)` / `subscribe(...)` callbacks are sink observers (return value is
-ignored), while connector callbacks (`producer.kubernetes.*`, `consumer.kubernetes.*`) are
-transform callbacks (return value controls the forwarded batch).
+In short: plain `subscribe(...)` callbacks are sink observers (return value is ignored), while
+connector callbacks (`producer.kubernetes.*`, `consumer.kubernetes.*`) are transform callbacks
+(return value controls the forwarded batch).
 
 ### `producer.jsonl(...)` and `consumer.redis(...)`
 
