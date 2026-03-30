@@ -2,9 +2,9 @@
 //
 // Globals injected by the Go/goja host:
 //   sql, aggregate                   - compilers
-//   producer(topic[, entries])       - generic Z-set producer factory
+//   publish(topic, entries)          - generic Z-set publisher
 //   producer.kubernetes.watch(opts)  - K8s watch producer
-//   consumer(topic, fn)              - generic callback consumer factory
+//   subscribe(topic, fn)             - generic callback subscriber
 //   consumer.kubernetes.patcher(opts)
 //   consumer.kubernetes.updater(opts)
 //   runtime.* aliases for all calls + runtime.onError(fn)
@@ -28,7 +28,7 @@ console.log("circuit:", c);
 
 // Fires once when products are published (join is empty — no orders yet),
 // then again when orders are published (with joined rows).
-consumer("joined-orders", (entries) => {
+subscribe("joined-orders", (entries) => {
     console.log("=== sql join output ===");
     for (const [doc, weight] of entries) {
         console.log(weight > 0 ? `+${weight}` : weight, doc);
@@ -51,7 +51,7 @@ aggregate.compile(
     { inputs: ["orders", "products"], output: "joined-orders-agg" }
 ).transform("Incrementalizer");
 
-consumer("joined-orders-agg", (entries) => {
+subscribe("joined-orders-agg", (entries) => {
     console.log("=== aggregate join output ===");
     for (const [doc, weight] of entries) {
         console.log(weight > 0 ? `+${weight}` : weight, doc);
@@ -59,7 +59,7 @@ consumer("joined-orders-agg", (entries) => {
 });
 
 // === Publish inputs ===
-producer("products", [
+publish("products", [
     [{ pid: 1, name: "Widget", price: 9.99  }, 1],
     [{ pid: 2, name: "Gadget", price: 24.99 }, 1],
 ]);
@@ -68,4 +68,4 @@ const orderRows = [
     { oid: 101, product_id: 1, qty: 3 },
     { oid: 102, product_id: 2, qty: 1 },
 ];
-producer("orders", orderRows.map(doc => [doc, 1]));
+publish("orders", orderRows.map((doc) => [doc, 1]));

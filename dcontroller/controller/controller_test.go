@@ -164,13 +164,13 @@ var _ = Describe("Controller", func() {
 			Expect(ctrl).NotTo(BeNil())
 		})
 
-		It("should reject snapshot mode with reconciler enabled", func() {
+		It("should reject incrementalizer-disabled mode with reconciler enabled", func() {
 			rt := dbspruntime.NewRuntime(logger)
 			krt, err := k8sruntime.New(k8sruntime.Config{})
 			Expect(err).NotTo(HaveOccurred())
 
 			spec := defaultSpec()
-			spec.Options = &opv1a1.ControllerOptions{EnableSnapshot: true}
+			spec.Options = &opv1a1.ControllerOptions{DisableIncrementalizer: true}
 
 			_, err = controller.New(controller.Config{
 				OperatorName: "test",
@@ -179,16 +179,70 @@ var _ = Describe("Controller", func() {
 				K8sRuntime:   krt,
 			})
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("enableSnapshot=true requires options.disableReconciler=true"))
+			Expect(err.Error()).To(ContainSubstring("disableIncrementalizer=true requires options.disableReconciler=true"))
 		})
 
-		It("should allow snapshot mode when reconciler is disabled", func() {
+		It("should allow incrementalizer-disabled mode when reconciler is disabled", func() {
 			rt := dbspruntime.NewRuntime(logger)
 			krt, err := k8sruntime.New(k8sruntime.Config{})
 			Expect(err).NotTo(HaveOccurred())
 
 			spec := defaultSpec()
-			spec.Options = &opv1a1.ControllerOptions{EnableSnapshot: true, DisableReconciler: true}
+			spec.Options = &opv1a1.ControllerOptions{DisableIncrementalizer: true, DisableReconciler: true}
+
+			ctrl, err := controller.New(controller.Config{
+				OperatorName: "test",
+				Spec:         spec,
+				Runtime:      rt,
+				K8sRuntime:   krt,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ctrl).NotTo(BeNil())
+		})
+
+		It("should allow disabling regularizer", func() {
+			rt := dbspruntime.NewRuntime(logger)
+			krt, err := k8sruntime.New(k8sruntime.Config{})
+			Expect(err).NotTo(HaveOccurred())
+
+			spec := defaultSpec()
+			spec.Options = &opv1a1.ControllerOptions{DisableRegularizer: true}
+
+			ctrl, err := controller.New(controller.Config{
+				OperatorName: "test",
+				Spec:         spec,
+				Runtime:      rt,
+				K8sRuntime:   krt,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ctrl).NotTo(BeNil())
+		})
+
+		It("should allow disabling reconciler while keeping incrementalizer", func() {
+			rt := dbspruntime.NewRuntime(logger)
+			krt, err := k8sruntime.New(k8sruntime.Config{})
+			Expect(err).NotTo(HaveOccurred())
+
+			spec := defaultSpec()
+			spec.Options = &opv1a1.ControllerOptions{DisableReconciler: true}
+
+			ctrl, err := controller.New(controller.Config{
+				OperatorName: "test",
+				Spec:         spec,
+				Runtime:      rt,
+				K8sRuntime:   krt,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ctrl).NotTo(BeNil())
+		})
+
+		It("should allow disabling reconciler and regularizer while keeping incrementalizer", func() {
+			rt := dbspruntime.NewRuntime(logger)
+			krt, err := k8sruntime.New(k8sruntime.Config{})
+			Expect(err).NotTo(HaveOccurred())
+
+			spec := defaultSpec()
+			spec.Options = &opv1a1.ControllerOptions{DisableReconciler: true, DisableRegularizer: true}
 
 			ctrl, err := controller.New(controller.Config{
 				OperatorName: "test",

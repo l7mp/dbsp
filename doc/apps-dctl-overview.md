@@ -27,10 +27,11 @@ resources, or it may feed another runtime consumer implemented in Go.
 The main benefit is correctness by construction. A declarative controller describes the snapshot
 shape of the computation, and Δ-controller compiles it into an *incremental* form that processes
 changes. This avoids much of the usual operator boilerplate around watch management, object joins,
-caching, and diff handling. In addition, Δ-controller also applies a so-called *reconciler* pass
-after incrementalization, which makes sure noise (e.g., an adversary rewriting the controller
-target object in the API server) is canceled out by the controller. Both transformation passes can
-be disabled in a per-controller basis using `spec.controllers[].options`.
+caching, and diff handling. In addition, Δ-controller can optionally apply a *regularizer* pass and
+a *reconciler* pass after incrementalization. Reconciler cancels external noise (for example, an
+adversary rewriting the target object in the API server), while regularizer keeps outputs
+deterministic with one representative per primary key. Both transformation passes can be disabled
+on a per-controller basis using `spec.controllers[].options`.
 
 There are also deliberate tradeoffs. Δ-controller operates on unstructured objects, so there is no
 compile-time schema safety. Views are in-memory only, so they disappear on restart and get rebuilt

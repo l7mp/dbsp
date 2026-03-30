@@ -175,6 +175,8 @@ aggregate.compile(pipeline, {
 
 Both `sql.compile(...)` and `aggregate.compile(...)` return a circuit handle.
 
+#### Circuit Transforms
+
 `.transform(name[, opts])` applies a circuit transformer in place and returns the same handle.
 
 Supported transformer names are:
@@ -182,14 +184,21 @@ Supported transformer names are:
 - `"Incrementalizer"`
 - `"Rewriter"`
 - `"Reconciler"`
+- `"Regularizer"`
 
 Optional transformer options:
 
 - `"Rewriter"`: `{ rules: "Pre" | "Post" | "Default" }`
 - `"Reconciler"`: `{ pairs: [["inputID", "outputID"], ...] }`
 
-`"Reconciler"` auto-detects self-referential input/output pairs by node ID stem
-(`input_x` with `output_x`). If no pair is found, the transform is a no-op.
+`"Regularizer"` rewrites each output as `sum -> group_by(primary-key, identity) -> lexmin`
+to ensure deterministic one-row-per-key output deltas.
+
+`"Reconciler"` adds circuitry to handle self-referential input/output pairs. Pairs can be either
+explicit raw node IDs (`input_services`, `output_desired_services`) or plain topic names
+(`services`, `desired-services`), or `"Reconciler"` can also auto-detect self-referential
+input/output pairs by node ID stem (`input_x` with `output_x`). If no pair is found, the transform
+is a no-op.
 
 Example with explicit reconciler pair:
 
@@ -202,11 +211,10 @@ c.transform("Reconciler", {
 });
 ```
 
-Pairs accept either raw node IDs (`input_services`, `output_desired_services`) or
-plain topic names (`services`, `desired-services`).
+#### Miscellaneous handles
 
-`.validate()` checks the circuit.
-`.observe(fn)` attaches a handle-scoped execution observer. Pass `null` or `undefined` to clear it.
+`.validate()` checks the circuit. `.observe(fn)` attaches a handle-scoped execution observer. Pass
+`null` or `undefined` to clear it.
 
 ```js
 const c = aggregate.compile([

@@ -150,11 +150,13 @@ the runtime executes it incrementally.
 
 Controllers can tune transform passes with `options`.
 
-By default, Δ-controller compiles pipelines to incremental circuits and then applies the reconciler
-pass. This is the recommended mode for most controllers. The incrementalization pass can be
-disabled using `options.enableSnapshot: true` to keep snapshot execution, and reconciler can be
-disabled with `options.disableReconciler: true`. Setting both `enableSnapshot: true` and
-`disableReconciler: true` is an error.
+By default, Δ-controller applies the regularizer pass first, then incrementalizes, then applies the
+reconciler pass. This is the recommended mode for most controllers. The incrementalization pass can
+be disabled using `options.enableSnapshot: true` to keep snapshot execution. In snapshot mode,
+regularizer is still applied unless disabled explicitly. Reconciler can be disabled with
+`options.disableReconciler: true`, and regularizer can be disabled with
+`options.disableRegularizer: true`. Setting both `enableSnapshot: true` and
+`disableReconciler: false` is an error.
 
 ## Operators
 

@@ -115,11 +115,13 @@ var _ = Describe("Incrementalize", func() {
 			Expect(outEdges[0].From).To(Equal("dist^Δ_diff"))
 		})
 
-		It("uses self-contained operator for distinct_pi", func() {
-			// in -> distinct_pi -> out.
+		It("uses self-contained operator for group_by", func() {
+			// in -> group_by -> out.
 			c := circuit.New("distinct-pi-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("dpi", operator.NewDistinctPi()))
+			c.AddNode(circuit.Op("dpi", operator.NewGroupBy(nil, expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				return ctx.Subject(), nil
+			}))))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "dpi", 0))
 			c.AddEdge(circuit.NewEdge("dpi", "out", 0))
@@ -133,16 +135,16 @@ var _ = Describe("Incrementalize", func() {
 			Expect(incr.Node("dpi^Δ_op")).To(BeNil())
 			Expect(incr.Node("dpi^Δ_diff")).To(BeNil())
 
-			// Should have a single distinct_pi operator node.
-			Expect(incr.Node("dpi^Δ").Kind()).To(Equal(operator.KindDistinctPi))
+			// Should have a single group_by operator node.
+			Expect(incr.Node("dpi^Δ").Kind()).To(Equal(operator.KindGroupBy))
 
-			// distinct_pi receives one input: delta (port 0).
+			// group_by receives one input: delta (port 0).
 			aEdges := incr.EdgesTo("dpi^Δ")
 			Expect(aEdges).To(HaveLen(1))
 			Expect(aEdges[0].From).To(Equal("in"))
 			Expect(aEdges[0].Port).To(Equal(0))
 
-			// Output connects from distinct_pi.
+			// Output connects from group_by.
 			outEdges := incr.EdgesTo("out")
 			Expect(outEdges).To(HaveLen(1))
 			Expect(outEdges[0].From).To(Equal("dpi^Δ"))

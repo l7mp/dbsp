@@ -59,16 +59,21 @@ type Controller struct {
 
 // ControllerOptions controls optional transform passes.
 type ControllerOptions struct {
-	// EnableSnapshot disables incrementalization and keeps snapshot (non-delta)
-	// circuit execution.
+	// DisableIncrementalizer disables incrementalization and keeps snapshot
+	// (non-delta) circuit execution.
 	//
 	// +optional
-	EnableSnapshot bool `json:"enableSnapshot,omitempty"`
+	DisableIncrementalizer bool `json:"disableIncrementalizer,omitempty"`
 
 	// DisableReconciler disables the reconciler transform pass.
 	//
 	// +optional
 	DisableReconciler bool `json:"disableReconciler,omitempty"`
+
+	// DisableRegularizer disables the regularizer transform pass.
+	//
+	// +optional
+	DisableRegularizer bool `json:"disableRegularizer,omitempty"`
 }
 
 // Resource specifies a resource by the GVK.

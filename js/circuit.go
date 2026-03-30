@@ -98,6 +98,8 @@ func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
 			if opts.Rules != "" {
 				args = append(args, opts.Rules)
 			}
+		case transform.Regularizer:
+			// No options are currently supported.
 		case transform.Incrementalizer:
 			// No options are currently supported.
 		}

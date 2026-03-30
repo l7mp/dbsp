@@ -10,6 +10,7 @@ import (
 
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/expression"
+	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/internal/logger"
 	"github.com/l7mp/dbsp/engine/internal/testutils"
 	"github.com/l7mp/dbsp/engine/operator"
@@ -445,7 +446,17 @@ var _ = Describe("Fixed-Point Circuits", func() {
 		)
 
 		BeforeEach(func() {
-			incrCircuit := circuit.DistinctKeyedIncremental("dk-incr")
+			incrCircuit := circuit.New("dk-incr")
+			incrCircuit.AddNode(circuit.Input("delta"))
+			incrCircuit.AddNode(circuit.Op("A", operator.NewGroupBy(nil, expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				return ctx.Subject(), nil
+			}))))
+			incrCircuit.AddNode(circuit.Op("B", operator.NewProject(dbspexpr.NewLexMin(dbspexpr.NewGet("values")))))
+			incrCircuit.AddNode(circuit.Output("out"))
+
+			incrCircuit.AddEdge(circuit.NewEdge("delta", "A", 0))
+			incrCircuit.AddEdge(circuit.NewEdge("A", "B", 0))
+			incrCircuit.AddEdge(circuit.NewEdge("B", "out", 0))
 
 			var err error
 			incrExec, err = New(incrCircuit, logger.NewZapLogger(logLevel))

@@ -36,6 +36,8 @@ spec:
                 metadata:
                   annotations:
                     "dcontroller.io/configmap-version": "$.ConfigMap.metadata.resourceVersion"
+      # options:
+      #   disableRegularizer: true
       targets:
         - apiGroup: "apps"
           kind: Deployment

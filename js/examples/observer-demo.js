@@ -30,7 +30,7 @@ runtime.observe("aggregation", (e) => {
   console.log("[agg-debug]", e);
 });
 
-consumer("obs-output", (entries) => {
+subscribe("obs-output", (entries) => {
   for (const [doc, weight] of entries) {
     console.log(`[output ${weight}]`, doc);
   }

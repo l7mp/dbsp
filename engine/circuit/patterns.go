@@ -71,23 +71,6 @@ func BilinearIncremental(name string, bilinearOp operator.Operator) *Circuit {
 	return c
 }
 
-// DistinctKeyedIncremental creates the incremental circuit for distinct_π.
-// It uses the dedicated deterministic DistinctPi operator.
-//
-//	delta ──→ distinct_pi ──→ out
-func DistinctKeyedIncremental(name string) *Circuit {
-	c := New(name)
-
-	c.AddNode(Input("delta"))
-	c.AddNode(Op("A", operator.NewDistinctPi()))
-	c.AddNode(Output("out"))
-
-	c.AddEdge(NewEdge("delta", "A", 0))
-	c.AddEdge(NewEdge("A", "out", 0))
-
-	return c
-}
-
 // NonLinearIncremental creates the incremental pattern for a non-linear operator.
 // Implements: D ∘ O ∘ ∫.
 func NonLinearIncremental(name string, op operator.Operator) *Circuit {

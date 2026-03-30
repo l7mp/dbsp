@@ -44,9 +44,9 @@ const (
 
 	timeout  = time.Second * 1
 	interval = time.Millisecond * 250
-	loglevel = 0
+	//	loglevel = 0
 	// loglevel = -10
-	// loglevel int8 = -5
+	loglevel int8 = -5
 )
 
 var (

@@ -163,8 +163,6 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		return NewCartesianProduct(), nil
 	case "distinct":
 		return NewDistinct(), nil
-	case "distinct_pi", "hkeyed":
-		return NewDistinctPi(), nil
 	case "group_by":
 		if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 {
 			return nil, fmt.Errorf("group_by operator: keyExpr and valueExpr are required")
@@ -246,15 +244,5 @@ func (o *GroupBy) UnmarshalJSON(data []byte) error {
 	o.keyExpr = keyExpr
 	o.valueExpr = valueExpr
 	o.distinct = p.Distinct
-	return nil
-}
-
-// MarshalJSON implements json.Marshaler.
-func (o *DistinctPi) MarshalJSON() ([]byte, error) {
-	return json.Marshal(jsonOp{Type: "distinct_pi"})
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (o *DistinctPi) UnmarshalJSON(_ []byte) error {
 	return nil
 }

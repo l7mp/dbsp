@@ -12,8 +12,8 @@
 // After a disturbance the circuit emits only the minimal correction.
 //
 // For the linear @project stage C^Δ = C (LTI operators are self-incremental,
-// DBSP Theorem 3.1), so .transform("Incrementalizer") wraps the circuit in D ∘ C ∘ I,
-// which is the canonical incremental form.
+// DBSP Theorem 3.1), so .transform("Optimizer") applies the canonical pipeline:
+// Rewriter -> Reconciler -> Regularizer -> Incrementalizer.
 //
 // NOTE: the same Z-set cancellation caveat as naive-sentinel.js applies when
 // only the annotation field changes (C(old) = C(new) for the projected
@@ -50,7 +50,9 @@ aggregate.compile(
         }},
     ],
     { inputs: ["services"], output: "desired-services" }
-).transform("Incrementalizer").validate();   // Incremental form: D ∘ C ∘ I.
+).transform("Optimizer", {
+    pairs: [["services", "desired-services"]],
+}).validate();   // Optimized incremental closed loop.
 
 // === Output: apply U to the cluster via merge-patch ===
 consumer.kubernetes.patcher({

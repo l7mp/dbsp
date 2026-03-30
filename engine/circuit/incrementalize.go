@@ -72,7 +72,7 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 		result.AddEdge(NewEdge(term3, sumAll, 1))
 
 		return "", sumAll
-	case op.Kind() == operator.KindGroupBy || op.Kind() == operator.KindDistinctPi:
+	case op.Kind() == operator.KindGroupBy:
 		incrID := incrementalID(id)
 		result.AddNode(Op(incrID, op))
 		return incrID, incrID

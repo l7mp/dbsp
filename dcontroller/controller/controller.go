@@ -131,25 +131,41 @@ func New(cfg Config) (*Controller, error) {
 		}
 	}
 
-	// 4. Incrementalize the circuit.
-	enableSnapshot := cfg.Spec.Options != nil && cfg.Spec.Options.EnableSnapshot
+	// 4. Apply transform pipeline.
+	disableIncrementalizer := cfg.Spec.Options != nil && cfg.Spec.Options.DisableIncrementalizer
 	disableReconciler := cfg.Spec.Options != nil && cfg.Spec.Options.DisableReconciler
+	disableRegularizer := cfg.Spec.Options != nil && cfg.Spec.Options.DisableRegularizer
 
-	if enableSnapshot && !disableReconciler {
-		return nil, fmt.Errorf("controller: options.enableSnapshot=true requires options.disableReconciler=true")
+	if disableIncrementalizer && !disableReconciler {
+		return nil, fmt.Errorf("controller: options.disableIncrementalizer=true requires options.disableReconciler=true")
 	}
 
 	var err error
-	if !enableSnapshot {
-		q.Circuit, err = transform.NewIncrementalizer().Transform(q.Circuit)
+	useOptimizer := !disableIncrementalizer && !disableReconciler && !disableRegularizer
+	if useOptimizer {
+		q.Circuit, err = transform.NewOptimizer(transform.OptimizerOptions{}).Transform(q.Circuit)
 		if err != nil {
-			return nil, fmt.Errorf("controller: failed to incrementalize circuit: %w", err)
+			return nil, fmt.Errorf("controller: failed to apply optimizer transform: %w", err)
 		}
-
-		if !disableReconciler {
+	} else {
+		if !disableIncrementalizer && !disableReconciler {
 			q.Circuit, err = transform.NewReconciler().Transform(q.Circuit)
 			if err != nil {
 				return nil, fmt.Errorf("controller: failed to apply reconciler transform: %w", err)
+			}
+		}
+
+		if !disableRegularizer {
+			q.Circuit, err = transform.NewRegularizer().Transform(q.Circuit)
+			if err != nil {
+				return nil, fmt.Errorf("controller: failed to apply regularizer transform: %w", err)
+			}
+		}
+
+		if !disableIncrementalizer {
+			q.Circuit, err = transform.NewIncrementalizer().Transform(q.Circuit)
+			if err != nil {
+				return nil, fmt.Errorf("controller: failed to apply incrementalizer transform: %w", err)
 			}
 		}
 	}

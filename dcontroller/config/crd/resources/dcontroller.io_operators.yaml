@@ -68,19 +68,27 @@ spec:
                         Circuit is a compiler dbsp Circuit applied to base objects. At least one of a Pipeline,
                         a Circuit or an SQL query must be specified.
                       x-kubernetes-preserve-unknown-fields: true
-                    options:
-                      description: Options control optional controller compilation/runtime transforms.
-                      properties:
-                        disableReconciler:
-                          description: DisableReconciler disables the reconciler transform pass.
-                          type: boolean
-                        enableSnapshot:
-                          description: EnableSnapshot disables incrementalization and keeps snapshot (non-delta) circuit execution.
-                          type: boolean
-                      type: object
                     name:
                       description: Name is the unique name of the controller.
                       type: string
+                    options:
+                      description: Options control optional controller compilation/runtime
+                        transforms.
+                      properties:
+                        disableIncrementalizer:
+                          description: |-
+                            DisableIncrementalizer disables incrementalization and keeps snapshot
+                            (non-delta) circuit execution.
+                          type: boolean
+                        disableReconciler:
+                          description: DisableReconciler disables the reconciler transform
+                            pass.
+                          type: boolean
+                        disableRegularizer:
+                          description: DisableRegularizer disables the regularizer
+                            transform pass.
+                          type: boolean
+                      type: object
                     pipeline:
                       description: |-
                         Pipeline is an processing pipeline applied to base objects. At least one of a Pipeline,
@@ -163,11 +171,6 @@ spec:
                           type:
                             description: Type specifies the behavior of the source.
                               Default is Watcher.
-                            enum:
-                            - Watcher
-                            - Lister
-                            - Periodic
-                            - OneShot
                             type: string
                           version:
                             description: Version is the version of the resource. Optional.
@@ -219,9 +222,6 @@ spec:
                   - sources
                   - targets
                   type: object
-                  x-kubernetes-validations:
-                  - message: options.enableSnapshot=true requires options.disableReconciler=true
-                    rule: '!has(self.options) || !has(self.options.enableSnapshot) || !self.options.enableSnapshot || (has(self.options.disableReconciler) && self.options.disableReconciler)'
                 maxItems: 255
                 minItems: 1
                 type: array
