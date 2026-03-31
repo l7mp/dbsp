@@ -81,38 +81,38 @@ var _ = Describe("Incrementalize", func() {
 
 	Describe("Non-linear operators", func() {
 		It("wraps with integrate and differentiate", func() {
-			// in -> distinct -> out.
+			// in -> non-linear op -> out.
 			c := circuit.New("nonlinear-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("dist", operator.NewDistinct()))
+			c.AddNode(circuit.Op("nlin", newTestNonLinearOp()))
 			c.AddNode(circuit.Output("out"))
-			c.AddEdge(circuit.NewEdge("in", "dist", 0))
-			c.AddEdge(circuit.NewEdge("dist", "out", 0))
+			c.AddEdge(circuit.NewEdge("in", "nlin", 0))
+			c.AddEdge(circuit.NewEdge("nlin", "out", 0))
 
 			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Should have integrate -> op -> differentiate.
-			Expect(incr.Node("dist^Δ_int").Kind()).To(Equal(operator.KindIntegrate))
-			Expect(incr.Node("dist^Δ_op").Kind()).To(Equal(operator.KindDistinct))
-			Expect(incr.Node("dist^Δ_diff").Kind()).To(Equal(operator.KindDifferentiate))
+			Expect(incr.Node("nlin^Δ_int").Kind()).To(Equal(operator.KindIntegrate))
+			Expect(incr.Node("nlin^Δ_op").Operator.Linearity()).To(Equal(operator.NonLinear))
+			Expect(incr.Node("nlin^Δ_diff").Kind()).To(Equal(operator.KindDifferentiate))
 
 			// Verify chain: in -> int -> op -> diff -> out.
-			intEdges := incr.EdgesTo("dist^Δ_int")
+			intEdges := incr.EdgesTo("nlin^Δ_int")
 			Expect(intEdges).To(HaveLen(1))
 			Expect(intEdges[0].From).To(Equal("in"))
 
-			opEdges := incr.EdgesTo("dist^Δ_op")
+			opEdges := incr.EdgesTo("nlin^Δ_op")
 			Expect(opEdges).To(HaveLen(1))
-			Expect(opEdges[0].From).To(Equal("dist^Δ_int"))
+			Expect(opEdges[0].From).To(Equal("nlin^Δ_int"))
 
-			diffEdges := incr.EdgesTo("dist^Δ_diff")
+			diffEdges := incr.EdgesTo("nlin^Δ_diff")
 			Expect(diffEdges).To(HaveLen(1))
-			Expect(diffEdges[0].From).To(Equal("dist^Δ_op"))
+			Expect(diffEdges[0].From).To(Equal("nlin^Δ_op"))
 
 			outEdges := incr.EdgesTo("out")
 			Expect(outEdges).To(HaveLen(1))
-			Expect(outEdges[0].From).To(Equal("dist^Δ_diff"))
+			Expect(outEdges[0].From).To(Equal("nlin^Δ_diff"))
 		})
 
 		It("uses self-contained operator for group_by", func() {

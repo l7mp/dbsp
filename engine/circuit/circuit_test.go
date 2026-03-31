@@ -1,6 +1,7 @@
 package circuit
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -448,7 +449,7 @@ var _ = Describe("Circuit", func() {
 
 		Describe("NonLinearIncremental", func() {
 			It("creates the D ∘ O ∘ ∫ pattern", func() {
-				op := operator.NewDistinct()
+				op := operator.NewGroupBy(nil, nil)
 				c := NonLinearIncremental("nonlinear-incr", op)
 
 				Expect(c.Name()).To(Equal("nonlinear-incr"))
@@ -458,9 +459,48 @@ var _ = Describe("Circuit", func() {
 				// Verify structure: delta -> int -> op -> diff -> out.
 				Expect(c.Node("delta").Kind()).To(Equal(operator.KindInput))
 				Expect(c.Node("int").Kind()).To(Equal(operator.KindIntegrate))
-				Expect(c.Node("op").Kind()).To(Equal(operator.KindDistinct))
+				Expect(c.Node("op").Kind()).To(Equal(operator.KindGroupBy))
 				Expect(c.Node("diff").Kind()).To(Equal(operator.KindDifferentiate))
 				Expect(c.Node("out").Kind()).To(Equal(operator.KindOutput))
+			})
+
+			It("special-cases incremental Distinct", func() {
+				c := New("distinct_inc")
+				c.AddNode(Input("a"))
+				c.AddNode(Output("b"))
+				distinct := Op("distinct", operator.NewDistinct())
+				input, output := distinct.Incrementalize(c)
+				c.AddEdge(NewEdge("a", input, 0))
+				c.AddEdge(NewEdge(output, "b", 0))
+
+				Expect(c.Inputs()).To(HaveLen(1))
+				Expect(c.Outputs()).To(HaveLen(1))
+
+				prefix := incrementalID("distinct")
+				Expect(c.Node(prefix + "_noop").Kind()).To(Equal(operator.KindNoOp))
+				Expect(c.Node(prefix + "_int").Kind()).To(Equal(operator.KindIntegrate))
+				Expect(c.Node(prefix + "_delay").Kind()).To(Equal(operator.KindDelay))
+				Expect(c.Node(prefix + "_H_func").Kind()).To(Equal(operator.KindDistinctH))
+			})
+
+			It("round-trips JSON with incremental Distinct nodes", func() {
+				c := New("distinct_inc_json")
+				Expect(c.AddNode(Input("a"))).To(Succeed())
+				Expect(c.AddNode(Output("b"))).To(Succeed())
+				distinct := Op("distinct", operator.NewDistinct())
+				input, output := distinct.Incrementalize(c)
+				Expect(c.AddEdge(NewEdge("a", input, 0))).To(Succeed())
+				Expect(c.AddEdge(NewEdge(output, "b", 0))).To(Succeed())
+
+				payload, err := json.Marshal(c)
+				Expect(err).NotTo(HaveOccurred())
+
+				var decoded Circuit
+				Expect(json.Unmarshal(payload, &decoded)).To(Succeed())
+
+				prefix := incrementalID("distinct")
+				Expect(decoded.Node(prefix + "_H_func")).NotTo(BeNil())
+				Expect(decoded.Node(prefix + "_H_func").Kind()).To(Equal(operator.KindDistinctH))
 			})
 		})
 	})

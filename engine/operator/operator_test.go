@@ -25,6 +25,10 @@ var _ = Describe("Operators", func() {
 			Expect(Bilinear.String()).To(Equal("Bilinear"))
 			Expect(NonLinear.String()).To(Equal("NonLinear"))
 		})
+
+		It("includes distinct-h kind string", func() {
+			Expect(KindDistinctH.String()).To(Equal("H_func"))
+		})
 	})
 
 	Describe("Negate", func() {
@@ -487,6 +491,45 @@ var _ = Describe("Operators", func() {
 			result, err := op.Apply(input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.IsZero()).To(BeTrue())
+		})
+	})
+
+	Describe("DistinctH (H_func)", func() {
+		It("collapses positive weights to 1", func() {
+			op := NewDistinctH()
+			Expect(op.Arity()).To(Equal(2))
+			Expect(op.Linearity()).To(Equal(Primitive))
+
+			recordA := testutils.Record{ID: "a", Value: 1}
+			recordB := testutils.Record{ID: "b", Value: 2}
+
+			for _, testCase := range []struct {
+				delta, prev, res zset.ZSet
+			}{
+				// Add 1 doc
+				{
+					prev:  zset.New(),
+					delta: zset.New().WithElems(zset.Elem{recordA, 2}), //nolint:composites
+					res:   zset.New().WithElems(zset.Elem{recordA, 1}), //nolint:composites
+				},
+				// Remove 1 doc
+				{
+					prev:  zset.New().WithElems(zset.Elem{recordA, 2}),  //nolint:composites
+					delta: zset.New().WithElems(zset.Elem{recordA, -3}), //nolint:composites
+					res:   zset.New().WithElems(zset.Elem{recordA, -1}), //nolint:composites
+				},
+				// Change 2 docs
+				{
+					prev:  zset.New().WithElems(zset.Elem{recordA, 2}),                         //nolint:composites
+					delta: zset.New().WithElems(zset.Elem{recordA, -2}, zset.Elem{recordB, 3}), //nolint:composites
+					res:   zset.New().WithElems(zset.Elem{recordA, -1}, zset.Elem{recordB, 1}), //nolint:composites
+				},
+			} {
+				result, err := op.Apply(testCase.prev, testCase.delta)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Size()).To(Equal(testCase.res.Size()))
+				Expect(result.Equal(testCase.res)).To(BeTrue())
+			}
 		})
 	})
 })

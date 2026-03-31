@@ -3,6 +3,7 @@ package operator
 import (
 	"sync"
 
+	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -279,4 +280,39 @@ func (o *Delta0Op) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	}
 	o.fired = true
 	return inputs[0], nil
+}
+
+// DistinctH detects whether the multiplicity of an element in the input set is changing from
+// negative to positive or vice-versa (arity 1, Primitive).
+type DistinctH struct{ baseOp }
+
+// NewDistinctH creates a new DistinctH operator.
+func NewDistinctH(opts ...Option) *DistinctH {
+	return &DistinctH{newBaseOp("H_func", opts)}
+}
+
+func (o *DistinctH) Kind() Kind           { return KindDistinctH }
+func (o *DistinctH) String() string       { return "H_func" }
+func (o *DistinctH) Arity() int           { return 2 }
+func (o *DistinctH) Linearity() Linearity { return Primitive }
+
+// Set re-arms the operator (resets fired .
+func (o *DistinctH) Set(_ zset.ZSet) { return }
+
+// Apply implements Operator.
+func (o *DistinctH) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+	prev := inputs[0] // z⁻¹(I(δ)) = integrated state before this step
+	delta := inputs[1]
+	result := zset.New()
+	delta.Iter(func(elem datamodel.Document, w zset.Weight) bool {
+		oldWeight := prev.Lookup(elem.Hash())
+		newWeight := oldWeight + w
+		if oldWeight <= 0 && newWeight > 0 {
+			result.Insert(elem, 1)
+		} else if oldWeight > 0 && newWeight <= 0 {
+			result.Insert(elem, -1)
+		}
+		return true
+	})
+	return result, nil
 }

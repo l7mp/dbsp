@@ -71,6 +71,7 @@ const (
 	KindIntegrate                 // IntegrateOp: running sum ∫.
 	KindDifferentiate             // DifferentiateOp: difference D.
 	KindDelta0                    // Delta0Op: initial value injection δ₀.
+	KindDistinctH                 // KindDistinctH: H_function for incremental Distinct.
 
 	// Linear operators (O^Δ = O).
 	KindNoOp              // NoOp: identity operator.
@@ -105,6 +106,8 @@ func (k Kind) String() string {
 		return "differentiate"
 	case KindDelta0:
 		return "delta0"
+	case KindDistinctH:
+		return "H_func"
 	case KindNoOp:
 		return "noop"
 	case KindNegate:

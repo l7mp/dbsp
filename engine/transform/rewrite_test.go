@@ -482,65 +482,68 @@ var _ = Describe("Rewrite", func() {
 
 	Describe("End-to-end: Incrementalize + Rewrite", func() {
 		It("simplifies two sequential non-linear operators", func() {
-			// Original: in → distinct1 → distinct2 → out.
+			// Original: in → nlin1 → nlin2 → out.
 			// After Incrementalize: in → I1 → Op1 → D1 → I2 → Op2 → D2 → out.
 			// After Rewrite:
 			//   1. EliminateID cancels D1/I2: in → I1 → Op1 → Op2 → D2 → out.
-			//   2. ConsolidateDistinct merges Op1/Op2: in → I1 → Op2 → D2 → out.
-			// Final form is the canonical D ∘ O ∘ ∫ for a single Distinct.
+			// This test only checks the cancellation behavior.
 			c := circuit.New("two-nonlinear")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Op("dist1", operator.NewDistinct()))
-			c.AddNode(circuit.Op("dist2", operator.NewDistinct()))
+			c.AddNode(circuit.Op("nlin1", newTestNonLinearOp()))
+			c.AddNode(circuit.Op("nlin2", newTestNonLinearOp()))
 			c.AddNode(circuit.Output("out"))
-			c.AddEdge(circuit.NewEdge("in", "dist1", 0))
-			c.AddEdge(circuit.NewEdge("dist1", "dist2", 0))
-			c.AddEdge(circuit.NewEdge("dist2", "out", 0))
+			c.AddEdge(circuit.NewEdge("in", "nlin1", 0))
+			c.AddEdge(circuit.NewEdge("nlin1", "nlin2", 0))
+			c.AddEdge(circuit.NewEdge("nlin2", "out", 0))
 
 			incr, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Before rewrite: all expansion nodes should exist.
-			Expect(incr.Node("dist1^Δ_int")).NotTo(BeNil())
-			Expect(incr.Node("dist1^Δ_op")).NotTo(BeNil())
-			Expect(incr.Node("dist1^Δ_diff")).NotTo(BeNil())
-			Expect(incr.Node("dist2^Δ_int")).NotTo(BeNil())
-			Expect(incr.Node("dist2^Δ_op")).NotTo(BeNil())
-			Expect(incr.Node("dist2^Δ_diff")).NotTo(BeNil())
+			Expect(incr.Node("nlin1^Δ_int")).NotTo(BeNil())
+			Expect(incr.Node("nlin1^Δ_op")).NotTo(BeNil())
+			Expect(incr.Node("nlin1^Δ_diff")).NotTo(BeNil())
+			Expect(incr.Node("nlin2^Δ_int")).NotTo(BeNil())
+			Expect(incr.Node("nlin2^Δ_op")).NotTo(BeNil())
+			Expect(incr.Node("nlin2^Δ_diff")).NotTo(BeNil())
 
 			rewritten, err := NewRewriter(DefaultRules()...).Transform(incr)
 			Expect(err).NotTo(HaveOccurred())
 
-			// After rewrite: D1, I2, and Op1 should be eliminated.
-			Expect(rewritten.Node("dist1^Δ_diff")).To(BeNil())
-			Expect(rewritten.Node("dist2^Δ_int")).To(BeNil())
-			Expect(rewritten.Node("dist1^Δ_op")).To(BeNil())
+			// After rewrite: D1 and I2 should be eliminated.
+			Expect(rewritten.Node("nlin1^Δ_diff")).To(BeNil())
+			Expect(rewritten.Node("nlin2^Δ_int")).To(BeNil())
 
-			// Remaining: in → I1 → Op2 → D2 → out.
-			Expect(rewritten.Node("dist1^Δ_int")).NotTo(BeNil())
-			Expect(rewritten.Node("dist2^Δ_op")).NotTo(BeNil())
-			Expect(rewritten.Node("dist2^Δ_diff")).NotTo(BeNil())
+			// Remaining: in → I1 → Op1 → Op2 → D2 → out.
+			Expect(rewritten.Node("nlin1^Δ_int")).NotTo(BeNil())
+			Expect(rewritten.Node("nlin1^Δ_op")).NotTo(BeNil())
+			Expect(rewritten.Node("nlin2^Δ_op")).NotTo(BeNil())
+			Expect(rewritten.Node("nlin2^Δ_diff")).NotTo(BeNil())
 
 			// Verify connectivity.
-			intEdges := rewritten.EdgesTo("dist1^Δ_int")
+			intEdges := rewritten.EdgesTo("nlin1^Δ_int")
 			Expect(intEdges).To(HaveLen(1))
 			Expect(intEdges[0].From).To(Equal("in"))
 
-			opEdges := rewritten.EdgesTo("dist2^Δ_op")
-			Expect(opEdges).To(HaveLen(1))
-			Expect(opEdges[0].From).To(Equal("dist1^Δ_int"))
+			op1Edges := rewritten.EdgesTo("nlin1^Δ_op")
+			Expect(op1Edges).To(HaveLen(1))
+			Expect(op1Edges[0].From).To(Equal("nlin1^Δ_int"))
 
-			diffEdges := rewritten.EdgesTo("dist2^Δ_diff")
+			opEdges := rewritten.EdgesTo("nlin2^Δ_op")
+			Expect(opEdges).To(HaveLen(1))
+			Expect(opEdges[0].From).To(Equal("nlin1^Δ_op"))
+
+			diffEdges := rewritten.EdgesTo("nlin2^Δ_diff")
 			Expect(diffEdges).To(HaveLen(1))
-			Expect(diffEdges[0].From).To(Equal("dist2^Δ_op"))
+			Expect(diffEdges[0].From).To(Equal("nlin2^Δ_op"))
 
 			outEdges := rewritten.EdgesTo("out")
 			Expect(outEdges).To(HaveLen(1))
-			Expect(outEdges[0].From).To(Equal("dist2^Δ_diff"))
+			Expect(outEdges[0].From).To(Equal("nlin2^Δ_diff"))
 
 			// Original incrementalized circuit remains unchanged.
-			Expect(incr.Node("dist1^Δ_diff")).NotTo(BeNil())
-			Expect(incr.Node("dist2^Δ_int")).NotTo(BeNil())
+			Expect(incr.Node("nlin1^Δ_diff")).NotTo(BeNil())
+			Expect(incr.Node("nlin2^Δ_int")).NotTo(BeNil())
 		})
 	})
 })

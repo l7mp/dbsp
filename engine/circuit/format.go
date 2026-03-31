@@ -49,7 +49,7 @@ func FormatExecution(c *Circuit, schedule []string) string {
 			if k != operator.KindInput && k != operator.KindOutput &&
 				k != operator.KindDelay && k != operator.KindDelayAbsorb &&
 				k != operator.KindIntegrate && k != operator.KindDifferentiate &&
-				k != operator.KindDelta0 {
+				k != operator.KindDelta0 && k != operator.KindDistinctH {
 				b.WriteString(" [")
 				b.WriteString(node.Operator.String())
 				b.WriteString("]")
@@ -95,6 +95,8 @@ func nodeTypeIndicator(node *Node) string {
 		return "D"
 	case operator.KindDelta0:
 		return "δ₀"
+	case operator.KindDistinctH:
+		return "H"
 	default:
 		return "op"
 	}

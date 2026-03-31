@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -348,6 +349,117 @@ var _ = Describe("Normal vs Incremental Equivalence", func() {
 				{"in": zset.New().WithElems(zset.Elem{Document: r, Weight: -1})}, // Weight becomes 1, distinct still 1.
 				{"in": zset.New().WithElems(zset.Elem{Document: r, Weight: -1})}, // Weight becomes 0, distinct removes.
 			})
+		})
+
+		It("Distinct: normal vs incremental with mixed keys and batched deltas", func() {
+			c := circuit.New("distinct-mixed-test")
+			c.AddNode(circuit.Input("in"))
+			c.AddNode(circuit.Op("dist", operator.NewDistinct()))
+			c.AddNode(circuit.Output("out"))
+			c.AddEdge(circuit.NewEdge("in", "dist", 0))
+			c.AddEdge(circuit.NewEdge("dist", "out", 0))
+
+			rA := testutils.Record{ID: "a", Value: 1}
+			rB := testutils.Record{ID: "b", Value: 2}
+
+			verifyEquivalence(c, []map[string]zset.ZSet{
+				// add A and B in one batch
+				{"in": zset.New().WithElems(
+					zset.Elem{Document: rA, Weight: 1},
+					zset.Elem{Document: rB, Weight: 1},
+				)},
+				// increase multiplicity of A only (distinct output should be zero)
+				{"in": zset.New().WithElems(zset.Elem{Document: rA, Weight: 3})},
+				// remove B completely while A remains present
+				{"in": zset.New().WithElems(zset.Elem{Document: rB, Weight: -1})},
+				// remove A below zero in one shot (crosses positive->non-positive once)
+				{"in": zset.New().WithElems(zset.Elem{Document: rA, Weight: -5})},
+			})
+		})
+
+		It("Distinct: normal vs incremental with oscillating multiplicities", func() {
+			c := circuit.New("distinct-oscillate-test")
+			c.AddNode(circuit.Input("in"))
+			c.AddNode(circuit.Op("dist", operator.NewDistinct()))
+			c.AddNode(circuit.Output("out"))
+			c.AddEdge(circuit.NewEdge("in", "dist", 0))
+			c.AddEdge(circuit.NewEdge("dist", "out", 0))
+
+			r := testutils.Record{ID: "x", Value: 42}
+
+			verifyEquivalence(c, []map[string]zset.ZSet{
+				{"in": zset.New().WithElems(zset.Elem{Document: r, Weight: 2})},  // 0 -> 2 (emit +1)
+				{"in": zset.New().WithElems(zset.Elem{Document: r, Weight: -1})}, // 2 -> 1 (emit 0)
+				{"in": zset.New().WithElems(zset.Elem{Document: r, Weight: -2})}, // 1 -> -1 (emit -1)
+				{"in": zset.New().WithElems(zset.Elem{Document: r, Weight: 1})},  // -1 -> 0 (emit 0)
+				{"in": zset.New().WithElems(zset.Elem{Document: r, Weight: 3})},  // 0 -> 3 (emit +1)
+			})
+		})
+
+		It("Distinct: randomized normal vs incremental (deterministic seed)", func() {
+			c := circuit.New("distinct-rand-test")
+			c.AddNode(circuit.Input("in"))
+			c.AddNode(circuit.Op("dist", operator.NewDistinct()))
+			c.AddNode(circuit.Output("out"))
+			c.AddEdge(circuit.NewEdge("in", "dist", 0))
+			c.AddEdge(circuit.NewEdge("dist", "out", 0))
+
+			records := []testutils.Record{
+				{ID: "a", Value: 1},
+				{ID: "b", Value: 2},
+				{ID: "c", Value: 3},
+				{ID: "d", Value: 4},
+			}
+
+			rng := rand.New(rand.NewSource(1337))
+			sequence := make([]map[string]zset.ZSet, 0, 128)
+			for round := 0; round < 128; round++ {
+				delta := zset.New()
+				changes := 1 + rng.Intn(4)
+				for i := 0; i < changes; i++ {
+					r := records[rng.Intn(len(records))]
+					w := zset.Weight(rng.Intn(5) - 2) // [-2, 2]
+					if w == 0 {
+						continue
+					}
+					delta.Insert(r, w)
+				}
+				sequence = append(sequence, map[string]zset.ZSet{"in": delta})
+			}
+
+			verifyEquivalence(c, sequence)
+		})
+
+		It("Distinct: randomized threshold-crossing normal vs incremental", func() {
+			c := circuit.New("distinct-rand-threshold-test")
+			c.AddNode(circuit.Input("in"))
+			c.AddNode(circuit.Op("dist", operator.NewDistinct()))
+			c.AddNode(circuit.Output("out"))
+			c.AddEdge(circuit.NewEdge("in", "dist", 0))
+			c.AddEdge(circuit.NewEdge("dist", "out", 0))
+
+			records := []testutils.Record{
+				{ID: "a", Value: 1},
+				{ID: "b", Value: 2},
+				{ID: "c", Value: 3},
+			}
+
+			// Bias weights toward +/-1 to maximize sign-boundary crossings.
+			choices := []zset.Weight{-1, 1, -1, 1, -2, 2}
+			rng := rand.New(rand.NewSource(20260331))
+			sequence := make([]map[string]zset.ZSet, 0, 192)
+			for round := 0; round < 192; round++ {
+				delta := zset.New()
+				changes := 2 + rng.Intn(4) // 2..5 changes per round.
+				for i := 0; i < changes; i++ {
+					r := records[rng.Intn(len(records))]
+					w := choices[rng.Intn(len(choices))]
+					delta.Insert(r, w)
+				}
+				sequence = append(sequence, map[string]zset.ZSet{"in": delta})
+			}
+
+			verifyEquivalence(c, sequence)
 		})
 	})
 })

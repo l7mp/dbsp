@@ -76,6 +76,24 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 		incrID := incrementalID(id)
 		result.AddNode(Op(incrID, op))
 		return incrID, incrID
+	case op.Kind() == operator.KindDistinct:
+		prefix := incrementalID(id)
+		noOpNode := prefix + "_noop"
+		intNode := prefix + "_int"
+		delayNode := prefix + "_delay"
+		hNode := prefix + "_H_func"
+
+		result.AddNode(Op(noOpNode, operator.NewNoOp()))   // NoOp: represents a single input node
+		result.AddNode(Integrate(intNode))                 // I: accumulates full state
+		result.AddNode(Delay(delayNode))                   // z⁻¹: previous integrated state
+		result.AddNode(Op(hNode, operator.NewDistinctH())) // H(z⁻¹, δ)
+
+		result.AddEdge(NewEdge(noOpNode, intNode, 0))
+		result.AddEdge(NewEdge(intNode, delayNode, 0))
+		result.AddEdge(NewEdge(delayNode, hNode, 0)) // i = previous state
+		result.AddEdge(NewEdge(noOpNode, hNode, 1))
+
+		return noOpNode, hNode
 	case op.Linearity() == operator.NonLinear:
 		prefix := incrementalID(id)
 		intNode := prefix + "_int"
