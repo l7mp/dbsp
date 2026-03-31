@@ -395,6 +395,44 @@ var _ = Describe("Operators", func() {
 			Expect(op.Arity()).To(Equal(1))
 			Expect(op.Linearity()).To(Equal(Primitive))
 		})
+
+		It("matches old/new bucket materialization diff invariant", func() {
+			incr := NewGroupByIncremental(nil, dbspexpr.NewGet("value"))
+			sotw := NewGroupBy(nil, dbspexpr.NewGet("value"))
+
+			r1 := testutils.Record{ID: "ns-a", Value: 1}
+			r2 := testutils.Record{ID: "ns-a", Value: 2}
+
+			seq := []zset.ZSet{
+				zset.New().WithElems(zset.Elem{Document: r1, Weight: 1}),
+				zset.New().WithElems(zset.Elem{Document: r1, Weight: -1}),
+				zset.New().WithElems(zset.Elem{Document: r1, Weight: -1}),
+				zset.New().WithElems(zset.Elem{Document: r1, Weight: 2}),
+				zset.New().WithElems(
+					zset.Elem{Document: r1, Weight: -1},
+					zset.Elem{Document: r2, Weight: 1},
+				),
+				zset.New().WithElems(zset.Elem{Document: r2, Weight: -1}),
+			}
+
+			acc := zset.New()
+			prev := zset.New()
+			for i, delta := range seq {
+				acc = acc.Add(delta)
+
+				snap, err := sotw.Apply(acc)
+				Expect(err).NotTo(HaveOccurred())
+
+				out, err := incr.Apply(delta)
+				Expect(err).NotTo(HaveOccurred())
+
+				expected := snap.Subtract(prev)
+				Expect(out.Equal(expected)).To(BeTrue(),
+					"step %d: delta=%v acc=%v got=%v expected=%v", i, delta, acc, out, expected)
+
+				prev = snap.Clone()
+			}
+		})
 	})
 
 	Describe("Distinct", func() {
@@ -555,20 +593,20 @@ var _ = Describe("Operators", func() {
 				// Add 1 doc
 				{
 					prev:  zset.New(),
-					delta: zset.New().WithElems(zset.Elem{recordA, 2}), //nolint:composites
-					res:   zset.New().WithElems(zset.Elem{recordA, 1}), //nolint:composites
+					delta: zset.New().WithElems(zset.Elem{Document: recordA, Weight: 2}),
+					res:   zset.New().WithElems(zset.Elem{Document: recordA, Weight: 1}),
 				},
 				// Remove 1 doc
 				{
-					prev:  zset.New().WithElems(zset.Elem{recordA, 2}),  //nolint:composites
-					delta: zset.New().WithElems(zset.Elem{recordA, -3}), //nolint:composites
-					res:   zset.New().WithElems(zset.Elem{recordA, -1}), //nolint:composites
+					prev:  zset.New().WithElems(zset.Elem{Document: recordA, Weight: 2}),
+					delta: zset.New().WithElems(zset.Elem{Document: recordA, Weight: -3}),
+					res:   zset.New().WithElems(zset.Elem{Document: recordA, Weight: -1}),
 				},
 				// Change 2 docs
 				{
-					prev:  zset.New().WithElems(zset.Elem{recordA, 2}),                         //nolint:composites
-					delta: zset.New().WithElems(zset.Elem{recordA, -2}, zset.Elem{recordB, 3}), //nolint:composites
-					res:   zset.New().WithElems(zset.Elem{recordA, -1}, zset.Elem{recordB, 1}), //nolint:composites
+					prev:  zset.New().WithElems(zset.Elem{Document: recordA, Weight: 2}),
+					delta: zset.New().WithElems(zset.Elem{Document: recordA, Weight: -2}, zset.Elem{Document: recordB, Weight: 3}),
+					res:   zset.New().WithElems(zset.Elem{Document: recordA, Weight: -1}, zset.Elem{Document: recordB, Weight: 1}),
 				},
 			} {
 				result, err := op.Apply(testCase.prev, testCase.delta)

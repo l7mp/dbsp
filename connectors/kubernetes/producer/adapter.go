@@ -59,7 +59,10 @@ func (p *baseProducer) convertDeltaToZSet(delta kobject.Delta) (zset.ZSet, error
 		if old == nil {
 			return zset.New(), fmt.Errorf("delete for non-existent object %s", objectKey(deltaObj))
 		}
-		zs.Insert(toDocument(deltaObj), -1)
+		// Use cached old object for delete tombstones. Kubernetes delete events can
+		// carry a final object variant (for example with a newer resourceVersion),
+		// which would not cancel the previously added/updated document by hash.
+		zs.Insert(toDocument(old), -1)
 		if err := p.sourceCache[gvk].Delete(old); err != nil {
 			return zset.New(), fmt.Errorf("delete object %s from source cache: %w", objectKey(deltaObj), err)
 		}

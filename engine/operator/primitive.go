@@ -297,7 +297,7 @@ func (o *DistinctH) Arity() int           { return 2 }
 func (o *DistinctH) Linearity() Linearity { return Primitive }
 
 // Set re-arms the operator (resets fired .
-func (o *DistinctH) Set(_ zset.ZSet) { return }
+func (o *DistinctH) Set(_ zset.ZSet) {}
 
 // Apply implements Operator.
 func (o *DistinctH) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {

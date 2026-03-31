@@ -77,4 +77,47 @@ var _ = Describe("Producer adapters", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(zs.IsZero()).To(BeTrue())
 	})
+
+	It("uses cached object on delete tombstones", func() {
+		p := &baseProducer{sourceCache: map[schema.GroupVersionKind]*store.Store{}}
+
+		obj := kobject.New()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+		obj.SetGroupVersionKind(gvk)
+		obj.SetNamespace("default")
+		obj.SetName("cfg")
+		kobject.SetContent(obj, map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":            "cfg",
+				"namespace":       "default",
+				"resourceVersion": "10",
+			},
+			"data": map[string]any{"a": "1"},
+		})
+
+		zsAdd, err := p.convertDeltaToZSet(kobject.Delta{Type: kobject.Added, Object: obj})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(zsAdd.Size()).To(Equal(1))
+
+		tombstone := kobject.DeepCopy(obj)
+		kobject.SetContent(tombstone, map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":            "cfg",
+				"namespace":       "default",
+				"resourceVersion": "11",
+			},
+			"data": map[string]any{"a": "1"},
+		})
+
+		zsDel, err := p.convertDeltaToZSet(kobject.Delta{Type: kobject.Deleted, Object: tombstone})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(zsDel.Size()).To(Equal(1))
+
+		combined := zsAdd.Add(zsDel)
+		Expect(combined.IsZero()).To(BeTrue())
+	})
 })
