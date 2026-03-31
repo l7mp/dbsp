@@ -1,6 +1,8 @@
 package transform
 
 import (
+	"math/rand"
+
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -161,5 +163,109 @@ var _ = Describe("Regularizer", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out2["output_x"].Size()).To(Equal(1))
 		Expect(out2["output_x"].Lookup(r.Hash())).To(Equal(zset.Weight(-1)))
+	})
+
+	It("matches incrementalized regularizer against snapshot-delta semantics", func() {
+		base := circuit.New("regularizer-equivalence")
+		Expect(base.AddNode(circuit.Input("input_x"))).To(Succeed())
+		Expect(base.AddNode(circuit.Op("a", operator.NewNoOp()))).To(Succeed())
+		Expect(base.AddNode(circuit.Op("b", operator.NewNoOp()))).To(Succeed())
+		Expect(base.AddNode(circuit.Output("output_x"))).To(Succeed())
+		Expect(base.AddEdge(circuit.NewEdge("input_x", "a", 0))).To(Succeed())
+		Expect(base.AddEdge(circuit.NewEdge("input_x", "b", 0))).To(Succeed())
+		Expect(base.AddEdge(circuit.NewEdge("a", "output_x", 0))).To(Succeed())
+		Expect(base.AddEdge(circuit.NewEdge("b", "output_x", 1))).To(Succeed())
+
+		reg, err := NewRegularizer().Transform(base)
+		Expect(err).NotTo(HaveOccurred())
+		incr, err := NewIncrementalizer().Transform(reg)
+		Expect(err).NotTo(HaveOccurred())
+
+		normalExec, err := executor.New(reg, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		incrExec, err := executor.New(incr, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+
+		seq := []zset.ZSet{
+			zset.New().WithElems(zset.Elem{Document: testutils.Record{ID: "a", Value: 1}, Weight: 1}),
+			zset.New().WithElems(zset.Elem{Document: testutils.Record{ID: "a", Value: 1}, Weight: -1}),
+			zset.New().WithElems(zset.Elem{Document: testutils.Record{ID: "a", Value: 1}, Weight: 1}),
+			zset.New().WithElems(zset.Elem{Document: testutils.Record{ID: "a", Value: 2}, Weight: 1}),
+			zset.New().WithElems(
+				zset.Elem{Document: testutils.Record{ID: "a", Value: 2}, Weight: -1},
+				zset.Elem{Document: testutils.Record{ID: "a", Value: 1}, Weight: 1},
+			),
+			zset.New().WithElems(zset.Elem{Document: testutils.Record{ID: "a", Value: 1}, Weight: -1}),
+		}
+
+		acc := zset.New()
+		prev := zset.New()
+		for i, delta := range seq {
+			acc = acc.Add(delta)
+			normalOut, err := normalExec.Execute(map[string]zset.ZSet{"input_x": acc})
+			Expect(err).NotTo(HaveOccurred())
+			incrOut, err := incrExec.Execute(map[string]zset.ZSet{"input_x": delta})
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := normalOut["output_x"].Subtract(prev)
+			Expect(incrOut["output_x"].Equal(expected)).To(BeTrue(),
+				"round %d: delta=%v acc=%v got=%v expected=%v", i, delta, acc, incrOut["output_x"], expected)
+
+			prev = normalOut["output_x"].Clone()
+		}
+	})
+
+	It("handles randomized threshold transitions in incrementalized regularizer", func() {
+		base := circuit.New("regularizer-rand")
+		Expect(base.AddNode(circuit.Input("input_x"))).To(Succeed())
+		Expect(base.AddNode(circuit.Op("a", operator.NewNoOp()))).To(Succeed())
+		Expect(base.AddNode(circuit.Op("b", operator.NewNoOp()))).To(Succeed())
+		Expect(base.AddNode(circuit.Output("output_x"))).To(Succeed())
+		Expect(base.AddEdge(circuit.NewEdge("input_x", "a", 0))).To(Succeed())
+		Expect(base.AddEdge(circuit.NewEdge("input_x", "b", 0))).To(Succeed())
+		Expect(base.AddEdge(circuit.NewEdge("a", "output_x", 0))).To(Succeed())
+		Expect(base.AddEdge(circuit.NewEdge("b", "output_x", 1))).To(Succeed())
+
+		reg, err := NewRegularizer().Transform(base)
+		Expect(err).NotTo(HaveOccurred())
+		incr, err := NewIncrementalizer().Transform(reg)
+		Expect(err).NotTo(HaveOccurred())
+
+		normalExec, err := executor.New(reg, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		incrExec, err := executor.New(incr, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+
+		records := []testutils.Record{
+			{ID: "a", Value: 1},
+			{ID: "b", Value: 2},
+			{ID: "c", Value: 3},
+		}
+		weights := []zset.Weight{-1, 1, -1, 1, -2, 2}
+		rng := rand.New(rand.NewSource(20260331))
+
+		acc := zset.New()
+		prev := zset.New()
+		for round := 0; round < 96; round++ {
+			delta := zset.New()
+			changes := 2 + rng.Intn(4)
+			for i := 0; i < changes; i++ {
+				r := records[rng.Intn(len(records))]
+				w := weights[rng.Intn(len(weights))]
+				delta.Insert(r, w)
+			}
+
+			acc = acc.Add(delta)
+			normalOut, err := normalExec.Execute(map[string]zset.ZSet{"input_x": acc})
+			Expect(err).NotTo(HaveOccurred())
+			incrOut, err := incrExec.Execute(map[string]zset.ZSet{"input_x": delta})
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := normalOut["output_x"].Subtract(prev)
+			Expect(incrOut["output_x"].Equal(expected)).To(BeTrue(),
+				"round %d: delta=%v acc=%v got=%v expected=%v", round, delta, acc, incrOut["output_x"], expected)
+
+			prev = normalOut["output_x"].Clone()
+		}
 	})
 })

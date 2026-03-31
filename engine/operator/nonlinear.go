@@ -279,19 +279,19 @@ func (s *groupState) applyDelta(delta zset.ZSet, keyExpr, valueExpr expression.E
 		newW := oldW + weight
 
 		switch {
-		case oldW <= 0 && newW > 0:
+		case newW > 0:
 			bucket.docs[h] = elem
 			bucket.weights[h] = newW
-		case oldW > 0 && newW <= 0:
+		case newW < 0:
 			delete(bucket.docs, h)
-			delete(bucket.weights, h)
-		case newW > 0:
 			bucket.weights[h] = newW
 		default:
+			// newW == 0
+			delete(bucket.docs, h)
 			delete(bucket.weights, h)
 		}
 
-		if len(bucket.docs) == 0 {
+		if len(bucket.weights) == 0 {
 			delete(s.groups, id)
 		}
 		return true
