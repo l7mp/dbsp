@@ -85,8 +85,9 @@ const (
 	KindCartesian // CartesianProduct: A × B.
 
 	// Non-linear operators (D ∘ O ∘ ∫ wrapping).
-	KindDistinct // Distinct: set conversion.
-	KindGroupBy  // GroupBy: generic incremental grouping.
+	KindDistinct           // Distinct: set conversion.
+	KindGroupBy            // GroupBy: stateless grouping.
+	KindGroupByIncremental // GroupByIncremental: stateful delta grouping.
 )
 
 // String returns a human-readable name for the operator kind.
@@ -126,6 +127,8 @@ func (k Kind) String() string {
 		return "distinct"
 	case KindGroupBy:
 		return "group_by"
+	case KindGroupByIncremental:
+		return "group_by_incremental"
 	default:
 		return "unknown"
 	}

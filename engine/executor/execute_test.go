@@ -560,7 +560,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 		BeforeEach(func() {
 			incrCircuit := circuit.New("dk-incr")
 			incrCircuit.AddNode(circuit.Input("delta"))
-			incrCircuit.AddNode(circuit.Op("A", operator.NewGroupBy(nil, expression.Func(func(ctx *expression.EvalContext) (any, error) {
+			incrCircuit.AddNode(circuit.Op("A", operator.NewGroupByIncremental(nil, expression.Func(func(ctx *expression.EvalContext) (any, error) {
 				return ctx.Subject(), nil
 			}))))
 			incrCircuit.AddNode(circuit.Op("B", operator.NewProject(dbspexpr.NewLexMin(dbspexpr.NewGet("values")))))

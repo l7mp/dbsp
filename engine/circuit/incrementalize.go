@@ -73,8 +73,16 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 
 		return "", sumAll
 	case op.Kind() == operator.KindGroupBy:
+		gb, ok := op.(*operator.GroupBy)
+		if !ok {
+			return "", ""
+		}
+		incrOp := operator.NewGroupByIncremental(gb.KeyExpr(), gb.ValueExpr())
+		if gb.IsDistinct() {
+			incrOp = incrOp.WithDistinct(true)
+		}
 		incrID := incrementalID(id)
-		result.AddNode(Op(incrID, op))
+		result.AddNode(Op(incrID, incrOp))
 		return incrID, incrID
 	case op.Kind() == operator.KindDistinct:
 		prefix := incrementalID(id)

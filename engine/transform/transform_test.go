@@ -115,7 +115,7 @@ var _ = Describe("Incrementalize", func() {
 			Expect(outEdges[0].From).To(Equal("nlin^Δ_diff"))
 		})
 
-		It("uses self-contained operator for group_by", func() {
+		It("substitutes group_by with incremental operator", func() {
 			// in -> group_by -> out.
 			c := circuit.New("distinct-pi-test")
 			c.AddNode(circuit.Input("in"))
@@ -135,8 +135,8 @@ var _ = Describe("Incrementalize", func() {
 			Expect(incr.Node("dpi^Δ_op")).To(BeNil())
 			Expect(incr.Node("dpi^Δ_diff")).To(BeNil())
 
-			// Should have a single group_by operator node.
-			Expect(incr.Node("dpi^Δ").Kind()).To(Equal(operator.KindGroupBy))
+			// Should have a single incremental group_by operator node.
+			Expect(incr.Node("dpi^Δ").Kind()).To(Equal(operator.KindGroupByIncremental))
 
 			// group_by receives one input: delta (port 0).
 			aEdges := incr.EdgesTo("dpi^Δ")

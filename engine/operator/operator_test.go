@@ -349,6 +349,52 @@ var _ = Describe("Operators", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(v.([]any)).To(Equal([]any{2}))
 		})
+
+		It("is idempotent on full-state inputs", func() {
+			op := NewGroupBy(nil, dbspexpr.NewGet("value"))
+
+			r1 := testutils.Record{ID: "ns-a", Value: 1}
+			r2 := testutils.Record{ID: "ns-a", Value: 2}
+			full := zset.New()
+			full.Insert(r1, 1)
+			full.Insert(r2, 1)
+
+			result1, err := op.Apply(full)
+			Expect(err).NotTo(HaveOccurred())
+			result2, err := op.Apply(full)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result1.Equal(result2)).To(BeTrue())
+		})
+	})
+
+	Describe("GroupByIncremental", func() {
+		It("emits differential updates", func() {
+			op := NewGroupByIncremental(nil, dbspexpr.NewGet("value"))
+
+			r1 := testutils.Record{ID: "ns-a", Value: 1}
+			r2 := testutils.Record{ID: "ns-a", Value: 2}
+
+			d1 := zset.New()
+			d1.Insert(r1, 1)
+			out1, err := op.Apply(d1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out1.Size()).To(Equal(1))
+
+			d2 := zset.New()
+			d2.Insert(r2, 1)
+			out2, err := op.Apply(d2)
+			Expect(err).NotTo(HaveOccurred())
+			// Old row removed and new row added for the affected key.
+			Expect(out2.Size()).To(Equal(2))
+		})
+
+		It("has primitive linearity", func() {
+			op := NewGroupByIncremental(nil, dbspexpr.NewGet("value"))
+			Expect(op.Kind()).To(Equal(KindGroupByIncremental))
+			Expect(op.Arity()).To(Equal(1))
+			Expect(op.Linearity()).To(Equal(Primitive))
+		})
 	})
 
 	Describe("Distinct", func() {

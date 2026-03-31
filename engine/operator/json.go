@@ -178,6 +178,19 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 			return nil, fmt.Errorf("group_by operator: compile valueExpr: %w", err)
 		}
 		return NewGroupBy(keyExpr, valueExpr).WithDistinct(p.Distinct), nil
+	case "group_by_incremental":
+		if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 {
+			return nil, fmt.Errorf("group_by_incremental operator: keyExpr and valueExpr are required")
+		}
+		keyExpr, err := dbspexpr.Compile(p.KeyExpr)
+		if err != nil {
+			return nil, fmt.Errorf("group_by_incremental operator: compile keyExpr: %w", err)
+		}
+		valueExpr, err := dbspexpr.Compile(p.ValueExpr)
+		if err != nil {
+			return nil, fmt.Errorf("group_by_incremental operator: compile valueExpr: %w", err)
+		}
+		return NewGroupByIncremental(keyExpr, valueExpr).WithDistinct(p.Distinct), nil
 	case "select":
 		if len(p.Predicate) == 0 {
 			return nil, fmt.Errorf("select operator: predicate required")
@@ -242,6 +255,47 @@ func (o *GroupBy) UnmarshalJSON(data []byte) error {
 	valueExpr, err := dbspexpr.Compile(p.ValueExpr)
 	if err != nil {
 		return fmt.Errorf("group_by: compile valueExpr: %w", err)
+	}
+	o.keyExpr = keyExpr
+	o.valueExpr = valueExpr
+	o.distinct = p.Distinct
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler.
+func (o *GroupByIncremental) MarshalJSON() ([]byte, error) {
+	keyJSON, err := json.Marshal(o.keyExpr)
+	if err != nil {
+		return nil, fmt.Errorf("marshal group_by_incremental keyExpr: %w", err)
+	}
+	valueJSON, err := json.Marshal(o.valueExpr)
+	if err != nil {
+		return nil, fmt.Errorf("marshal group_by_incremental valueExpr: %w", err)
+	}
+	wire := jsonOp{Type: "group_by_incremental", KeyExpr: keyJSON, ValueExpr: valueJSON, Distinct: o.distinct}
+	return json.Marshal(wire)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (o *GroupByIncremental) UnmarshalJSON(data []byte) error {
+	var p jsonOp
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	if len(p.KeyExpr) == 0 || len(p.ValueExpr) == 0 {
+		return fmt.Errorf("group_by_incremental: keyExpr and valueExpr are required")
+	}
+	var keyExpr expression.Expression
+	if string(p.KeyExpr) != "null" {
+		k, err := dbspexpr.Compile(p.KeyExpr)
+		if err != nil {
+			return fmt.Errorf("group_by_incremental: compile keyExpr: %w", err)
+		}
+		keyExpr = k
+	}
+	valueExpr, err := dbspexpr.Compile(p.ValueExpr)
+	if err != nil {
+		return fmt.Errorf("group_by_incremental: compile valueExpr: %w", err)
 	}
 	o.keyExpr = keyExpr
 	o.valueExpr = valueExpr

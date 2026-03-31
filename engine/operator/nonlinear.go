@@ -32,10 +32,10 @@ func (o *Distinct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	return result, nil
 }
 
-// GroupBy is a self-contained incremental grouping operator.
+// GroupBy is a stateless grouping operator for snapshot (SotW) evaluation.
 //
-// For each affected key it emits at most two row-level deltas: remove old row
-// with weight -1 and add new row with weight +1.
+// It consumes a full input Z-set and emits one row per resulting group with
+// weight +1.
 //
 // Output row schema:
 //   - key: grouping key value.
@@ -47,7 +47,6 @@ func (o *Distinct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 // documents.
 type GroupBy struct {
 	nonLinearOp
-	state     groupState
 	keyExpr   expression.Expression
 	valueExpr expression.Expression
 	distinct  bool
@@ -65,13 +64,19 @@ func NewGroupBy(keyExpr, valueExpr expression.Expression, opts ...Option) *Group
 	}
 	return &GroupBy{
 		nonLinearOp: newNonLinearOp(KindGroupBy, 1, "GroupBy", opts),
-		state: groupState{
-			groups: map[string]*groupBucket{},
-		},
-		keyExpr:   keyExpr,
-		valueExpr: valueExpr,
+		keyExpr:     keyExpr,
+		valueExpr:   valueExpr,
 	}
 }
+
+// KeyExpr returns the key expression used by the operator.
+func (o *GroupBy) KeyExpr() expression.Expression { return o.keyExpr }
+
+// ValueExpr returns the value expression used by the operator.
+func (o *GroupBy) ValueExpr() expression.Expression { return o.valueExpr }
+
+// IsDistinct reports whether duplicate elimination is enabled.
+func (o *GroupBy) IsDistinct() bool { return o.distinct }
 
 // WithDistinct toggles duplicate elimination in output lists.
 func (o *GroupBy) WithDistinct(distinct bool) *GroupBy {
@@ -84,14 +89,68 @@ func (o *GroupBy) WithDistinct(distinct bool) *GroupBy {
 	return o
 }
 
-// Set initializes GroupBy state from a full input snapshot.
-func (o *GroupBy) Set(v zset.ZSet) {
+// Set is a no-op for stateless GroupBy.
+func (o *GroupBy) Set(_ zset.ZSet) {}
+
+// Apply implements Operator.
+func (o *GroupBy) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+	state := groupState{groups: map[string]*groupBucket{}}
+	result, err := state.applyDelta(inputs[0], o.keyExpr, o.valueExpr, o.distinct)
+	if err != nil {
+		return zset.New(), err
+	}
+	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	return result, nil
+}
+
+// GroupByIncremental is a stateful delta processor emitted by incrementalization.
+//
+// For each affected key it emits at most two row-level deltas: remove old row
+// with weight -1 and add new row with weight +1.
+type GroupByIncremental struct {
+	baseOp
+	state     groupState
+	keyExpr   expression.Expression
+	valueExpr expression.Expression
+	distinct  bool
+}
+
+// NewGroupByIncremental creates an incremental GROUP BY operator.
+func NewGroupByIncremental(keyExpr, valueExpr expression.Expression, opts ...Option) *GroupByIncremental {
+	if valueExpr == nil {
+		valueExpr = expression.Func(func(ctx *expression.EvalContext) (any, error) {
+			return ctx.Subject(), nil
+		})
+	}
+	return &GroupByIncremental{
+		baseOp: newBaseOp("group_by_incremental", opts),
+		state: groupState{
+			groups: map[string]*groupBucket{},
+		},
+		keyExpr:   keyExpr,
+		valueExpr: valueExpr,
+	}
+}
+
+func (o *GroupByIncremental) Kind() Kind           { return KindGroupByIncremental }
+func (o *GroupByIncremental) String() string       { return "GroupByIncremental" }
+func (o *GroupByIncremental) Arity() int           { return 1 }
+func (o *GroupByIncremental) Linearity() Linearity { return Primitive }
+
+// WithDistinct toggles duplicate elimination in output lists.
+func (o *GroupByIncremental) WithDistinct(distinct bool) *GroupByIncremental {
+	o.distinct = distinct
+	return o
+}
+
+// Set initializes GroupByIncremental state from a full input snapshot.
+func (o *GroupByIncremental) Set(v zset.ZSet) {
 	o.state = groupState{groups: map[string]*groupBucket{}}
 	_, _ = o.state.applyDelta(v, o.keyExpr, o.valueExpr, o.distinct)
 }
 
 // Apply implements Operator.
-func (o *GroupBy) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *GroupByIncremental) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 	if o.logger.V(2).Enabled() {
 		o.logger.V(2).Info("dbsp runtime state",
 			"event_type", "group_by.state.before",
