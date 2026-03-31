@@ -32,8 +32,7 @@ var _ = Describe("Regularizer", func() {
 		Expect(reg.Node("_grp_output_x").Kind()).To(Equal(operator.KindGroupBy))
 		Expect(reg.Node("_reg_output_x")).NotTo(BeNil())
 		Expect(reg.Node("_reg_output_x").Kind()).To(Equal(operator.KindProject))
-		Expect(reg.Node("_dst_output_x")).NotTo(BeNil())
-		Expect(reg.Node("_dst_output_x").Kind()).To(Equal(operator.KindDistinct))
+		Expect(reg.Node("_dst_output_x")).To(BeNil())
 
 		Expect(len(reg.EdgesTo("_sum_output_x"))).To(Equal(len(reg.EdgesTo("output_x"))))
 		Expect(reg.EdgesTo("_grp_output_x")).To(HaveLen(1))
@@ -41,9 +40,8 @@ var _ = Describe("Regularizer", func() {
 
 		Expect(reg.EdgesTo("_reg_output_x")).To(HaveLen(1))
 		Expect(reg.EdgesTo("_reg_output_x")[0].From).To(Equal("_grp_output_x"))
-		Expect(reg.EdgesTo("_dst_output_x")).To(HaveLen(1))
-		Expect(reg.EdgesTo("_dst_output_x")[0].From).To(Equal("_reg_output_x"))
-		Expect(reg.EdgesTo("output_x")[0].From).To(Equal("_dst_output_x"))
+		Expect(reg.EdgesTo("output_x")).To(HaveLen(1))
+		Expect(reg.EdgesTo("output_x")[0].From).To(Equal("_reg_output_x"))
 
 		exec, err := executor.New(reg, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
@@ -95,7 +93,6 @@ var _ = Describe("Regularizer", func() {
 			sumID := "_sum_" + out
 			grpID := "_grp_" + out
 			regID := "_reg_" + out
-			dstID := "_dst_" + out
 
 			Expect(reg.Node(sumID)).NotTo(BeNil())
 			Expect(reg.Node(sumID).Kind()).To(Equal(operator.KindLinearCombination))
@@ -103,12 +100,11 @@ var _ = Describe("Regularizer", func() {
 			Expect(reg.Node(grpID).Kind()).To(Equal(operator.KindGroupBy))
 			Expect(reg.Node(regID)).NotTo(BeNil())
 			Expect(reg.Node(regID).Kind()).To(Equal(operator.KindProject))
-			Expect(reg.Node(dstID)).NotTo(BeNil())
-			Expect(reg.Node(dstID).Kind()).To(Equal(operator.KindDistinct))
+			Expect(reg.Node("_dst_" + out)).To(BeNil())
 
 			outIn := reg.EdgesTo(out)
 			Expect(outIn).To(HaveLen(1))
-			Expect(outIn[0].From).To(Equal(dstID))
+			Expect(outIn[0].From).To(Equal(regID))
 		}
 
 		Expect(reg.Validate()).To(BeEmpty())
@@ -138,7 +134,7 @@ var _ = Describe("Regularizer", func() {
 		Expect(out["output_x"].Lookup(r.Hash())).To(Equal(zset.Weight(1)))
 	})
 
-	It("preserves delete deltas after incrementalization via trailing distinct", func() {
+	It("preserves delete deltas after incrementalization", func() {
 		c := circuit.New("regularizer-inc")
 		Expect(c.AddNode(circuit.Input("input_x"))).To(Succeed())
 		Expect(c.AddNode(circuit.Op("noop", operator.NewNoOp()))).To(Succeed())
