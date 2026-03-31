@@ -263,7 +263,7 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 	start := 0
 	current := currentInputs[0]
 	if hasJoin {
-		nsNodes := make([]string, 0, len(currentInputs))
+		nsNodes := make(map[string]string, len(currentInputs))
 		for i, sourceNode := range currentInputs {
 			nsID := fmt.Sprintf("b%d_ns_%d_%s", b.Index, i, circuit.SanitizeNodeID(b.Inputs[i]))
 			src := b.Inputs[i]
@@ -280,11 +280,16 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 			if err := compiled.AddEdge(circuit.NewEdge(sourceNode, nsID, 0)); err != nil {
 				return "", err
 			}
-			nsNodes = append(nsNodes, nsID)
+			nsNodes[src] = nsID
 		}
 
-		current = nsNodes[0]
-		for i := 1; i < len(nsNodes); i++ {
+		hardInputs, softInputs := partitionJoinInputs(b.Inputs, nsNodes, b.Stages[0].SoftInputs)
+		if len(hardInputs) == 0 {
+			return "", fmt.Errorf("branch[%d]: @join must include at least one hard input", b.Index)
+		}
+
+		current = hardInputs[0].nodeID
+		for i := 1; i < len(hardInputs); i++ {
 			cartID := fmt.Sprintf("b%d_join_cart_%d", b.Index, i)
 			if err := compiled.AddNode(circuit.Op(cartID, operator.NewCartesianProduct())); err != nil {
 				return "", err
@@ -292,24 +297,36 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 			if err := compiled.AddEdge(circuit.NewEdge(current, cartID, 0)); err != nil {
 				return "", err
 			}
-			if err := compiled.AddEdge(circuit.NewEdge(nsNodes[i], cartID, 1)); err != nil {
+			if err := compiled.AddEdge(circuit.NewEdge(hardInputs[i].nodeID, cartID, 1)); err != nil {
 				return "", err
 			}
 			current = cartID
 		}
 
-		predExpr := b.Stages[0].Predicate
-		if predExpr == nil {
-			return "", wrapStageErr(b.Stages[0].Index, b.Stages[0].Op, "predicate", b.Stages[0].RawArgs, fmt.Errorf("missing parsed predicate"))
+		predExpr := wrapPredicateFieldNotFoundAsFalse(b.Stages[0].Predicate)
+		if len(hardInputs) > 1 && len(softInputs) == 0 {
+			joinSelID := fmt.Sprintf("b%d_join_select", b.Index)
+			if err := compiled.AddNode(circuit.Op(joinSelID, operator.NewSelect(predExpr))); err != nil {
+				return "", err
+			}
+			if err := compiled.AddEdge(circuit.NewEdge(current, joinSelID, 0)); err != nil {
+				return "", err
+			}
+			current = joinSelID
 		}
-		joinSelID := fmt.Sprintf("b%d_join_select", b.Index)
-		if err := compiled.AddNode(circuit.Op(joinSelID, operator.NewSelect(predExpr))); err != nil {
-			return "", err
+
+		leftNames := make([]string, 0, len(hardInputs)+len(softInputs))
+		for _, in := range hardInputs {
+			leftNames = append(leftNames, in.name)
 		}
-		if err := compiled.AddEdge(circuit.NewEdge(current, joinSelID, 0)); err != nil {
-			return "", err
+		for i, soft := range softInputs {
+			resultID, updatedNames, err := c.compileLeftJoinFold(compiled, b.Index, i, current, leftNames, soft.name, soft.nodeID, predExpr)
+			if err != nil {
+				return "", err
+			}
+			current = resultID
+			leftNames = updatedNames
 		}
-		current = joinSelID
 		start = 1
 	}
 
@@ -369,6 +386,199 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 	}
 
 	return current, nil
+}
+
+type joinInputRef struct {
+	name   string
+	nodeID string
+}
+
+func partitionJoinInputs(all []string, nsNodes map[string]string, soft []string) ([]joinInputRef, []joinInputRef) {
+	softSet := make(map[string]bool, len(soft))
+	for _, in := range soft {
+		softSet[in] = true
+	}
+
+	hard := make([]joinInputRef, 0, len(all))
+	for _, in := range all {
+		if softSet[in] {
+			continue
+		}
+		hard = append(hard, joinInputRef{name: in, nodeID: nsNodes[in]})
+	}
+
+	softRefs := make([]joinInputRef, 0, len(soft))
+	for _, in := range soft {
+		softRefs = append(softRefs, joinInputRef{name: in, nodeID: nsNodes[in]})
+	}
+
+	return hard, softRefs
+}
+
+func wrapPredicateFieldNotFoundAsFalse(expr expression.Expression) expression.Expression {
+	if expr == nil {
+		return nil
+	}
+	return expression.NewCompiled(func(ctx *expression.EvalContext) (any, error) {
+		v, err := expr.Evaluate(ctx)
+		if errors.Is(err, datamodel.ErrFieldNotFound) {
+			return false, nil
+		}
+		return v, err
+	}, expr)
+}
+
+func buildNamespaceProjection(names []string) expression.Expression {
+	originalEntries := make(map[string]expression.Expression, len(names))
+	for _, name := range names {
+		originalEntries[name] = dbspexpr.NewGet(name)
+	}
+	original := dbspexpr.NewDict(originalEntries)
+
+	return expression.NewCompiled(func(ctx *expression.EvalContext) (any, error) {
+		parts, err := extractNamespaceParts(ctx.Document(), names)
+		if err != nil {
+			return nil, err
+		}
+		return product.New(parts), nil
+	}, original)
+}
+
+func buildNamespaceProjectionWithNull(names []string, softName string) expression.Expression {
+	originalEntries := make(map[string]expression.Expression, len(names)+1)
+	for _, name := range names {
+		originalEntries[name] = dbspexpr.NewGet(name)
+	}
+	originalEntries[softName] = dbspexpr.NewNil()
+	original := dbspexpr.NewDict(originalEntries)
+
+	return expression.NewCompiled(func(ctx *expression.EvalContext) (any, error) {
+		parts, err := extractNamespaceParts(ctx.Document(), names)
+		if err != nil {
+			return nil, err
+		}
+		parts[softName] = nil
+		return product.New(parts), nil
+	}, original)
+}
+
+func extractNamespaceParts(doc datamodel.Document, names []string) (map[string]datamodel.Document, error) {
+	if doc == nil {
+		return nil, fmt.Errorf("@join projection: missing document")
+	}
+	parts := make(map[string]datamodel.Document, len(names))
+	for _, name := range names {
+		v, err := doc.GetField(name)
+		if err != nil {
+			if errors.Is(err, datamodel.ErrFieldNotFound) {
+				parts[name] = nil
+				continue
+			}
+			return nil, err
+		}
+		if v == nil {
+			parts[name] = nil
+			continue
+		}
+		switch vv := v.(type) {
+		case datamodel.Document:
+			parts[name] = vv
+		case map[string]any:
+			parts[name] = unstructured.New(vv, nil)
+		default:
+			return nil, fmt.Errorf("@join projection: namespace %q must be document/map/null, got %T", name, v)
+		}
+	}
+	return parts, nil
+}
+
+func (c *Compiler) compileLeftJoinFold(
+	compiled *circuit.Circuit,
+	branchIdx int,
+	foldIdx int,
+	leftNodeID string,
+	leftNames []string,
+	softName string,
+	softNodeID string,
+	predicate expression.Expression,
+) (string, []string, error) {
+	prefix := fmt.Sprintf("b%d_lj%d", branchIdx, foldIdx)
+
+	cartID := prefix + "_cart"
+	if err := compiled.AddNode(circuit.Op(cartID, operator.NewCartesianProduct())); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(leftNodeID, cartID, 0)); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(softNodeID, cartID, 1)); err != nil {
+		return "", nil, err
+	}
+
+	selID := prefix + "_sel"
+	if err := compiled.AddNode(circuit.Op(selID, operator.NewSelect(predicate))); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(cartID, selID, 0)); err != nil {
+		return "", nil, err
+	}
+
+	stripID := prefix + "_strip"
+	if err := compiled.AddNode(circuit.Op(stripID, operator.NewProject(buildNamespaceProjection(leftNames)))); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(selID, stripID, 0)); err != nil {
+		return "", nil, err
+	}
+
+	distinctID := prefix + "_distinct"
+	if err := compiled.AddNode(circuit.Op(distinctID, operator.NewDistinct())); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(stripID, distinctID, 0)); err != nil {
+		return "", nil, err
+	}
+
+	negateID := prefix + "_negate"
+	if err := compiled.AddNode(circuit.Op(negateID, operator.NewNegate())); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(distinctID, negateID, 0)); err != nil {
+		return "", nil, err
+	}
+
+	antiSumID := prefix + "_anti_sum"
+	if err := compiled.AddNode(circuit.Op(antiSumID, operator.NewSum())); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(leftNodeID, antiSumID, 0)); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(negateID, antiSumID, 1)); err != nil {
+		return "", nil, err
+	}
+
+	padID := prefix + "_pad"
+	if err := compiled.AddNode(circuit.Op(padID, operator.NewProject(buildNamespaceProjectionWithNull(leftNames, softName)))); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(antiSumID, padID, 0)); err != nil {
+		return "", nil, err
+	}
+
+	resultID := prefix + "_result"
+	if err := compiled.AddNode(circuit.Op(resultID, operator.NewSum())); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(selID, resultID, 0)); err != nil {
+		return "", nil, err
+	}
+	if err := compiled.AddEdge(circuit.NewEdge(padID, resultID, 1)); err != nil {
+		return "", nil, err
+	}
+
+	updatedNames := append(append([]string(nil), leftNames...), softName)
+	return resultID, updatedNames, nil
 }
 
 func ensureMergedStream(compiled *circuit.Circuit, name string, producers []string, scope string) (string, error) {

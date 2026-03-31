@@ -23,6 +23,7 @@ func New(parts map[string]datamodel.Document) *Product {
 	cp := make(map[string]datamodel.Document, len(parts))
 	for k, v := range parts {
 		if v == nil {
+			cp[k] = nil
 			continue
 		}
 		cp[k] = v.Copy()
@@ -38,6 +39,10 @@ func (p *Product) Hash() string {
 	sort.Strings(keys)
 	chunks := make([]string, 0, len(keys))
 	for _, k := range keys {
+		if p.parts[k] == nil {
+			chunks = append(chunks, fmt.Sprintf("%s=null", k))
+			continue
+		}
 		chunks = append(chunks, fmt.Sprintf("%s=%s", k, p.parts[k].Hash()))
 	}
 	return strings.Join(chunks, "|")
@@ -60,6 +65,10 @@ func (p *Product) primaryKeyParts() ([]string, error) {
 
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
+		if p.parts[k] == nil {
+			parts = append(parts, "null")
+			continue
+		}
 		pk, err := p.parts[k].PrimaryKey()
 		if err != nil {
 			return nil, fmt.Errorf("product: primary key for part %q: %w", k, err)
@@ -82,9 +91,17 @@ func (p *Product) Merge(other datamodel.Document) datamodel.Document {
 	}
 	parts := make(map[string]datamodel.Document, len(p.parts)+len(op.parts))
 	for k, v := range p.parts {
+		if v == nil {
+			parts[k] = nil
+			continue
+		}
 		parts[k] = v.Copy()
 	}
 	for k, v := range op.parts {
+		if v == nil {
+			parts[k] = nil
+			continue
+		}
 		parts[k] = v.Copy()
 	}
 	return &Product{parts: parts}
@@ -112,6 +129,9 @@ func (p *Product) GetField(key string) (any, error) {
 	}
 	if len(parts) == 1 {
 		return d, nil
+	}
+	if d == nil {
+		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
 	}
 	return d.GetField(parts[1])
 }

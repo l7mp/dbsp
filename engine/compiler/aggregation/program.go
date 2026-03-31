@@ -33,6 +33,7 @@ type stageSpec struct {
 	Op         string
 	RawArgs    json.RawMessage
 	Predicate  expression.Expression
+	SoftInputs []string
 	Projection expression.Expression
 	UnwindPath string
 	GroupBy    operator.Operator
@@ -167,13 +168,43 @@ func parseBranch(index int, pipeline Pipeline, sources, outputs []string, explic
 		return b, fmt.Errorf("branch[%d]: @inputs cannot be empty", index)
 	}
 
+	if len(b.Stages) > 0 && b.Stages[0].Op == "@join" {
+		soft := b.Stages[0].SoftInputs
+		if len(soft) > 0 {
+			inputSet := make(map[string]bool, len(b.Inputs))
+			for _, in := range b.Inputs {
+				inputSet[in] = true
+			}
+			seenSoft := make(map[string]bool, len(soft))
+			for _, in := range soft {
+				if seenSoft[in] {
+					return b, fmt.Errorf("branch[%d]: @join soft input %q declared more than once", index, in)
+				}
+				seenSoft[in] = true
+				if !inputSet[in] {
+					return b, fmt.Errorf("branch[%d]: @join soft input %q is not listed in @inputs", index, in)
+				}
+			}
+			if len(b.Inputs)-len(seenSoft) < 1 {
+				return b, fmt.Errorf("branch[%d]: @join must include at least one hard input", index)
+			}
+		}
+	}
+
 	return b, nil
 }
 
 func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 	s := stageSpec{Index: i, Op: stage.Op, RawArgs: stage.Args}
 	switch stage.Op {
-	case "@join", "@select":
+	case "@join":
+		pred, soft, err := parseJoinArgs(stage.Args)
+		if err != nil {
+			return s, wrapStageErr(i, stage.Op, "predicate", stage.Args, err)
+		}
+		s.Predicate = pred
+		s.SoftInputs = soft
+	case "@select":
 		expr, err := dbspexpr.NewParser().Parse(stage.Args)
 		if err != nil {
 			return s, wrapStageErr(i, stage.Op, "predicate", stage.Args, err)
@@ -206,6 +237,32 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 		return s, wrapStageErr(i, stage.Op, "stage", stage.Args, fmt.Errorf("unsupported pipeline operation: %s", stage.Op))
 	}
 	return s, nil
+}
+
+func parseJoinArgs(args json.RawMessage) (expression.Expression, []string, error) {
+	var list []json.RawMessage
+	if err := json.Unmarshal(args, &list); err == nil {
+		if len(list) != 2 {
+			return nil, nil, fmt.Errorf("@join array form expects [predicate, options]")
+		}
+		pred, err := dbspexpr.NewParser().Parse(list[0])
+		if err != nil {
+			return nil, nil, err
+		}
+		opts := struct {
+			Soft []string `json:"soft"`
+		}{}
+		if err := json.Unmarshal(list[1], &opts); err != nil {
+			return nil, nil, fmt.Errorf("@join options must be an object")
+		}
+		return pred, append([]string(nil), opts.Soft...), nil
+	}
+
+	pred, err := dbspexpr.NewParser().Parse(args)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pred, nil, nil
 }
 
 func firstOutput(outputs []string) string {

@@ -295,6 +295,134 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(outs[outID].Size()).To(Equal(1))
 	})
 
+	It("parses @join array form with soft inputs", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep", "svc"}), toIdentityBindings([]string{"output"}))
+		ir, err := c.ParseString(`[
+			{"@inputs":["pod","dep","svc"]},
+			{"@join":[{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]},{"soft":["svc"]}]},
+			{"@output":"output"}
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		p, ok := ir.(*program)
+		Expect(ok).To(BeTrue())
+		Expect(p.Branches).To(HaveLen(1))
+		Expect(p.Branches[0].Stages).To(HaveLen(1))
+		Expect(p.Branches[0].Stages[0].Op).To(Equal("@join"))
+		Expect(p.Branches[0].Stages[0].SoftInputs).To(Equal([]string{"svc"}))
+	})
+
+	It("parses legacy @join form with nil soft inputs", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep"}), toIdentityBindings([]string{"output"}))
+		ir, err := c.ParseString(`[
+			{"@join":{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]}}
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		p, ok := ir.(*program)
+		Expect(ok).To(BeTrue())
+		Expect(p.Branches[0].Stages).To(HaveLen(1))
+		Expect(p.Branches[0].Stages[0].SoftInputs).To(BeNil())
+	})
+
+	It("rejects @join soft inputs that are not listed in @inputs", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep"}), toIdentityBindings([]string{"output"}))
+		_, err := c.CompileString(`[
+			{"@inputs":["pod","dep"]},
+			{"@join":[{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]},{"soft":["svc"]}]}
+		]`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("soft input \"svc\" is not listed in @inputs"))
+	})
+
+	It("rejects @join with all inputs marked soft", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep"}), toIdentityBindings([]string{"output"}))
+		_, err := c.CompileString(`[
+			{"@inputs":["pod","dep"]},
+			{"@join":[{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]},{"soft":["pod","dep"]}]}
+		]`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("must include at least one hard input"))
+	})
+
+	It("emits left-join fold subgraph for soft inputs", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep", "svc"}), toIdentityBindings([]string{"output"}))
+		q, err := c.CompileString(`[
+			{"@inputs":["pod","dep","svc"]},
+			{"@join":[{"@and":[
+				{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]},
+				{"@eq":["$.pod.metadata.namespace","$.svc.metadata.namespace"]}
+			]},{"soft":["svc"]}]},
+			{"@project":{"$.":"$."}}
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(q.Circuit.Node("b0_lj0_cart")).NotTo(BeNil())
+		Expect(q.Circuit.Node("b0_lj0_sel")).NotTo(BeNil())
+		Expect(q.Circuit.Node("b0_lj0_strip")).NotTo(BeNil())
+		Expect(q.Circuit.Node("b0_lj0_distinct")).NotTo(BeNil())
+		Expect(q.Circuit.Node("b0_lj0_negate")).NotTo(BeNil())
+		Expect(q.Circuit.Node("b0_lj0_anti_sum")).NotTo(BeNil())
+		Expect(q.Circuit.Node("b0_lj0_pad")).NotTo(BeNil())
+		Expect(q.Circuit.Node("b0_lj0_result")).NotTo(BeNil())
+	})
+
+	It("executes left-join and pads unmatched soft namespace with nil", func() {
+		exec, outID := makeExec([]string{"pod", "svc"}, `[
+			{"@join":[{"@eq":["$.pod.metadata.namespace","$.svc.metadata.namespace"]},{"soft":["svc"]}]},
+			{"@project":{"pod":"$.pod","svc":"$.svc"}}
+		]`)
+
+		pods := zset.New()
+		services := zset.New()
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1", "namespace": "default"}}, nil), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod2", "namespace": "other"}}, nil), 1)
+		services.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "svc1", "namespace": "default"}}, nil), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": pods, "input_svc": services})
+		Expect(err).NotTo(HaveOccurred())
+
+		docs := collectDocs(outs[outID])
+		Expect(docs).To(HaveLen(2))
+
+		matched := 0
+		unmatched := 0
+		for _, d := range docs {
+			podVal, err := d.GetField("pod")
+			Expect(err).NotTo(HaveOccurred())
+			podDoc, ok := podVal.(datamodel.Document)
+			Expect(ok).To(BeTrue())
+			ns, err := podDoc.GetField("metadata.namespace")
+			Expect(err).NotTo(HaveOccurred())
+			svc, err := d.GetField("svc")
+			Expect(err).NotTo(HaveOccurred())
+			if ns == "default" {
+				Expect(svc).NotTo(BeNil())
+				matched++
+				continue
+			}
+			Expect(ns).To(Equal("other"))
+			Expect(svc).To(BeNil())
+			unmatched++
+		}
+		Expect(matched).To(Equal(1))
+		Expect(unmatched).To(Equal(1))
+	})
+
+	It("chains multiple left-join folds", func() {
+		c := New(toIdentityBindings([]string{"pod", "svc", "cfg"}), toIdentityBindings([]string{"output"}))
+		q, err := c.CompileString(`[
+			{"@inputs":["pod","svc","cfg"]},
+			{"@join":[{"@and":[
+				{"@eq":["$.pod.metadata.namespace","$.svc.metadata.namespace"]},
+				{"@eq":["$.pod.metadata.namespace","$.cfg.metadata.namespace"]}
+			]},{"soft":["svc","cfg"]}]},
+			{"@project":{"$.":"$."}}
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(q.Circuit.Node("b0_lj0_result")).NotTo(BeNil())
+		Expect(q.Circuit.Node("b0_lj1_result")).NotTo(BeNil())
+	})
+
 	It("evaluates join predicate with bracketed JSONPath", func() {
 		exec, outID := makeExec([]string{"ServiceView", "EndpointSlice"}, `[
 			{"@join":{"@and":[{"@eq":["$.ServiceView.spec.serviceName","$[\"EndpointSlice\"][\"metadata\"][\"labels\"][\"kubernetes.io/service-name\"]"]},{"@eq":["$.ServiceView.metadata.namespace","$.EndpointSlice.metadata.namespace"]}]}},

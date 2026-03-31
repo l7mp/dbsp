@@ -147,4 +147,19 @@ var _ = Describe("Product", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring(`part "bad"`))
 	})
+
+	It("preserves nil namespaces", func() {
+		p := product.New(map[string]datamodel.Document{
+			"pod": unstructured.New(map[string]any{"metadata": map[string]any{"name": "p1"}}, nil),
+			"svc": nil,
+		})
+
+		svc, err := p.GetField("svc")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(svc).To(BeNil())
+
+		_, err = p.GetField("svc.metadata.name")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("field not found"))
+	})
 })
