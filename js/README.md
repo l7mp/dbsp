@@ -23,3 +23,34 @@ Run one of the bundled examples:
 ./bin/dbsp -v examples/observer-demo.js
 ```
 
+## Script arguments
+
+The CLI forwards positional arguments after the script path into JavaScript as `process.argv`.
+
+```bash
+./bin/dbsp examples/gwapi/index.js test gwclass
+```
+
+In JS, this is visible as:
+
+- `process.argv[0]`: dbsp binary path
+- `process.argv[1]`: script path
+- `process.argv[2...]`: user script arguments
+
+## Vendored JS modules
+
+The runtime supports loading vendored JavaScript modules from:
+
+- `js/stdlib/vendor`
+
+The `minimist` package is vendored and available via:
+
+```js
+const minimist = require("minimist");
+```
+
+An alias is also provided:
+
+```js
+const minimist = require("@dbsp/minimist");
+```

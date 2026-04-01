@@ -452,6 +452,25 @@ t.assert.strictEqual(1 + 1, 2);
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("exposes minimist parse helper", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `
+const assert = require("assert");
+const minimist = require("minimist");
+const parsed = minimist(["test", "gwclass", "--suite=gwclass", "--verbose", "-vf"]);
+assert.strictEqual(parsed._[0], "test");
+assert.strictEqual(parsed._[1], "gwclass");
+assert.strictEqual(parsed.suite, "gwclass");
+assert.strictEqual(parsed.verbose, true);
+assert.strictEqual(parsed.v, true);
+assert.strictEqual(parsed.f, true);
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("exposes goja_nodejs process env", func() {
 		Expect(os.Setenv("DBSP_JS_TEST_ENV", "present")).To(Succeed())
 		DeferCleanup(func() {
