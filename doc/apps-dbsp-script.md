@@ -40,6 +40,42 @@ The current implementation runs one script file at a time. There is no interacti
 The CLI supports `--loglevel debug|info|warn|error` and the shorthand `-v`, which enables debug
 logging.
 
+## Node-style runtime compatibility
+
+The DBSP JS runtime now enables a CommonJS module system (`require`) with a curated Node-compatible
+module set from `goja_nodejs`.
+
+Available modules and globals include:
+
+- `console` (`log`, `info`, `debug`, `warn`, `error`)
+- `Buffer`
+- `URL` and `URLSearchParams`
+- `process.env`
+- `util` (`util.format`)
+- `assert` (built-in helper module)
+- `fs` and `fs.promises` (read/write filesystem access)
+- `timers/promises` (`setTimeout(ms, value)`)
+- `@dbsp/test` (lightweight testing helpers, including `sleep`)
+
+`node:` aliases are also available for these modules, for example:
+
+- `require("node:assert")`
+- `require("node:fs")`
+- `require("node:fs/promises")`
+- `require("node:timers/promises")`
+
+Example:
+
+```js
+const assert = require("node:assert");
+const fs = require("node:fs");
+const { setTimeout } = require("node:timers/promises");
+
+fs.writeFileSync("result.json", JSON.stringify({ ok: true }), "utf8");
+await setTimeout(10);
+assert.strictEqual(fs.existsSync("result.json"), true);
+```
+
 ## The execution model
 
 The runtime data model is the same as in the rest of DBSP: every topic carries a Z-set, and in the

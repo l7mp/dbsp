@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -283,6 +284,252 @@ publish("iter-out", [[{total: count}, 1]]);
 		err = runScriptAsModule(vm, `import "./lib.js";`)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("ES module import/export is not supported"))
+	})
+
+	It("supports commonjs require for local scripts", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		tmpDir, err := os.MkdirTemp("", "dbsp-js-require-")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			Expect(os.RemoveAll(tmpDir)).To(Succeed())
+		})
+
+		libPath := filepath.Join(tmpDir, "lib.js")
+		Expect(os.WriteFile(libPath, []byte("module.exports = { value: 42, add: (a, b) => a + b };\n"), 0o600)).To(Succeed())
+
+		err = vm.runOnLoopSync(func(rt *goja.Runtime) error {
+			modV, callErr := rt.RunString(fmt.Sprintf(`require(%q)`, libPath))
+			if callErr != nil {
+				return callErr
+			}
+			modObj := modV.ToObject(rt)
+			if got := modObj.Get("value"); !got.StrictEquals(rt.ToValue(42)) {
+				return fmt.Errorf("unexpected module value: %v", got)
+			}
+			addFn, ok := goja.AssertFunction(modObj.Get("add"))
+			if !ok {
+				return fmt.Errorf("module add export is not a function")
+			}
+			res, callErr := addFn(modObj, rt.ToValue(2), rt.ToValue(3))
+			if callErr != nil {
+				return callErr
+			}
+			if !res.StrictEquals(rt.ToValue(5)) {
+				return fmt.Errorf("unexpected add result: %v", res)
+			}
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("provides require('assert') helpers", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `
+const assert = require("assert");
+assert.ok(true);
+assert.strictEqual(2 + 2, 4);
+assert.notStrictEqual(2 + 2, 5);
+assert.deepStrictEqual({ a: 1, b: [2, 3] }, { a: 1, b: [2, 3] });
+assert.throws(() => { throw new Error("boom"); });
+await assert.rejects(Promise.reject(new Error("boom")));
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("supports node:-prefixed core module aliases", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `
+const assertA = require("assert");
+const assertB = require("node:assert");
+assertA.strictEqual(assertA, assertB);
+
+const fsA = require("fs");
+const fsB = require("node:fs");
+assertA.strictEqual(fsA, fsB);
+
+const fsp = require("node:fs/promises");
+assertA.strictEqual(typeof fsp.readFile, "function");
+
+const tp = require("node:timers/promises");
+assertA.strictEqual(typeof tp.setTimeout, "function");
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("supports fs sync and promises APIs", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		tmpDir, err := os.MkdirTemp("", "dbsp-js-fs-")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			Expect(os.RemoveAll(tmpDir)).To(Succeed())
+		})
+
+		script := fmt.Sprintf(`
+const assert = require("assert");
+const fs = require("fs");
+const fsp = require("node:fs/promises");
+
+const dir = %q;
+const p = dir + "/out.txt";
+
+fs.writeFileSync(p, "alpha", "utf8");
+assert.strictEqual(fs.readFileSync(p, "utf8"), "alpha");
+fs.appendFileSync(p, "-beta", "utf8");
+assert.strictEqual(fs.readFileSync(p, "utf8"), "alpha-beta");
+
+const entries = fs.readdirSync(dir);
+assert.ok(entries.includes("out.txt"));
+
+const st = fs.statSync(p);
+assert.ok(st.isFile());
+assert.strictEqual(fs.existsSync(p), true);
+
+await fsp.writeFile(p, "gamma", "utf8");
+assert.strictEqual(await fsp.readFile(p, "utf8"), "gamma");
+await fsp.rm(p);
+assert.strictEqual(fs.existsSync(p), false);
+`, tmpDir)
+
+		err = runScriptAsModule(vm, script)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("exposes timers/promises setTimeout", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `
+const assert = require("assert");
+const timers = require("timers/promises");
+const started = performance.now();
+const v = await timers.setTimeout(5, 42);
+assert.strictEqual(v, 42);
+assert.ok(performance.now() >= started);
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("exposes TextEncoder and TextDecoder globals", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `
+const assert = require("assert");
+const enc = new TextEncoder();
+const bytes = enc.encode("hello");
+assert.strictEqual(Buffer.from(bytes).toString("utf8"), "hello");
+const dec = new TextDecoder("utf8");
+assert.strictEqual(dec.decode(bytes), "hello");
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("exposes @dbsp/test helpers", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `
+const t = require("@dbsp/test");
+t.assert.ok(true);
+await t.sleep(2);
+t.assert.strictEqual(1 + 1, 2);
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("exposes goja_nodejs process env", func() {
+		Expect(os.Setenv("DBSP_JS_TEST_ENV", "present")).To(Succeed())
+		DeferCleanup(func() {
+			Expect(os.Unsetenv("DBSP_JS_TEST_ENV")).To(Succeed())
+		})
+
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = vm.runOnLoopSync(func(rt *goja.Runtime) error {
+			process := rt.Get("process")
+			if process == nil || goja.IsUndefined(process) || goja.IsNull(process) {
+				return fmt.Errorf("process is not defined")
+			}
+			env := process.ToObject(rt).Get("env")
+			if env == nil || goja.IsUndefined(env) || goja.IsNull(env) {
+				return fmt.Errorf("process.env is not defined")
+			}
+			got := env.ToObject(rt).Get("DBSP_JS_TEST_ENV")
+			if got == nil {
+				return fmt.Errorf("process.env.DBSP_JS_TEST_ENV is missing")
+			}
+			if !got.StrictEquals(rt.ToValue("present")) {
+				return fmt.Errorf("unexpected process.env value: %v", got)
+			}
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("exposes goja_nodejs Buffer and URL globals", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = vm.runOnLoopSync(func(rt *goja.Runtime) error {
+			bufferCtor := rt.Get("Buffer")
+			if goja.IsUndefined(bufferCtor) || goja.IsNull(bufferCtor) {
+				return fmt.Errorf("Buffer is not defined")
+			}
+
+			bufferObj := bufferCtor.ToObject(rt)
+			fromFn, ok := goja.AssertFunction(bufferObj.Get("from"))
+			if !ok {
+				return fmt.Errorf("Buffer.from is not a function")
+			}
+			bufV, callErr := fromFn(bufferObj, rt.ToValue("hello"))
+			if callErr != nil {
+				return callErr
+			}
+			toStringFn, ok := goja.AssertFunction(bufV.ToObject(rt).Get("toString"))
+			if !ok {
+				return fmt.Errorf("Buffer#toString is not a function")
+			}
+			strV, callErr := toStringFn(bufV, rt.ToValue("utf8"))
+			if callErr != nil {
+				return callErr
+			}
+			if !strV.StrictEquals(rt.ToValue("hello")) {
+				return fmt.Errorf("unexpected Buffer decode: %v", strV)
+			}
+
+			urlCtor := rt.Get("URL")
+			if goja.IsUndefined(urlCtor) || goja.IsNull(urlCtor) {
+				return fmt.Errorf("URL is not defined")
+			}
+			urlObj, callErr := rt.New(urlCtor.ToObject(rt), rt.ToValue("https://example.com/path?a=1"))
+			if callErr != nil {
+				return callErr
+			}
+			if href := urlObj.Get("href"); !href.StrictEquals(rt.ToValue("https://example.com/path?a=1")) {
+				return fmt.Errorf("unexpected URL href: %v", href)
+			}
+
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("rejects for-await-of with fallback guidance", func() {
@@ -735,6 +982,17 @@ publish("console-in", [[{id: 77, name: "json"}, 1]]);
 
 		rows := zsetRowsByField(first, "id")
 		Expect(rows).To(Equal([]string{"1:77"}))
+	})
+
+	It("exposes console.error without throwing", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		script := `
+console.error("test-error", { code: 42 });
+`
+		Expect(runScript(vm, script)).To(Succeed())
 	})
 
 	It("runs without kubeconfig until kubernetes plumbing is requested", func() {
