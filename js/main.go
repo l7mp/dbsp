@@ -43,14 +43,12 @@ func run(args []string) error {
 	}
 
 	positionals := fs.Args()
-	if len(positionals) > 1 {
-		return fmt.Errorf("only one script path is allowed")
+	if len(positionals) < 1 {
+		return fmt.Errorf("repl is not implemented yet; pass a .js script path")
 	}
 
-	var script string
-	if len(positionals) == 1 {
-		script = positionals[0]
-	}
+	script := positionals[0]
+	scriptArgs := positionals[1:]
 
 	level, err := parseLogLevel(logLevel)
 	if err != nil {
@@ -76,8 +74,11 @@ func run(args []string) error {
 		vm.Close()
 	}()
 
-	if script == "" {
-		return fmt.Errorf("repl is not implemented yet; pass a .js script path")
+	processArgv := make([]string, 0, 2+len(scriptArgs))
+	processArgv = append(processArgv, os.Args[0], script)
+	processArgv = append(processArgv, scriptArgs...)
+	if err := vm.SetProcessArgv(processArgv); err != nil {
+		return fmt.Errorf("set process argv: %w", err)
 	}
 
 	err = vm.RunFile(script)

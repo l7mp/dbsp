@@ -483,6 +483,41 @@ t.assert.strictEqual(1 + 1, 2);
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("allows overriding process.argv for script arguments", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = vm.SetProcessArgv([]string{"dbsp", "examples/gwapi/index.js", "test", "gwclass"})
+		Expect(err).NotTo(HaveOccurred())
+
+		err = vm.runOnLoopSync(func(rt *goja.Runtime) error {
+			process := rt.Get("process")
+			if process == nil || goja.IsUndefined(process) || goja.IsNull(process) {
+				return fmt.Errorf("process is not defined")
+			}
+			argv := process.ToObject(rt).Get("argv")
+			if argv == nil || goja.IsUndefined(argv) || goja.IsNull(argv) {
+				return fmt.Errorf("process.argv is not defined")
+			}
+			arr := argv.ToObject(rt)
+			if got := arr.Get("0"); !got.StrictEquals(rt.ToValue("dbsp")) {
+				return fmt.Errorf("unexpected argv[0]: %v", got)
+			}
+			if got := arr.Get("1"); !got.StrictEquals(rt.ToValue("examples/gwapi/index.js")) {
+				return fmt.Errorf("unexpected argv[1]: %v", got)
+			}
+			if got := arr.Get("2"); !got.StrictEquals(rt.ToValue("test")) {
+				return fmt.Errorf("unexpected argv[2]: %v", got)
+			}
+			if got := arr.Get("3"); !got.StrictEquals(rt.ToValue("gwclass")) {
+				return fmt.Errorf("unexpected argv[3]: %v", got)
+			}
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("exposes goja_nodejs Buffer and URL globals", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

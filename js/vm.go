@@ -36,6 +36,7 @@ type VM struct {
 	rt       *goja.Runtime
 	loop     *eventloop.EventLoop
 	require  *require.RequireModule
+	process  processState
 	runtime  *dbspruntime.Runtime
 	db       *relation.Database
 	logger   logr.Logger
@@ -60,6 +61,11 @@ type VM struct {
 	k8sMu              sync.Mutex
 	k8sRuntime         *k8sruntime.Runtime
 	k8sNativeAvailable bool
+}
+
+type processState struct {
+	mu   sync.RWMutex
+	argv []string
 }
 
 type cancelContext interface {
@@ -97,6 +103,9 @@ func NewVM(logger logr.Logger) (*VM, error) {
 		cancelVM:     cancel,
 		runtimeDone:  make(chan error, 1),
 		runtimeErrCh: make(chan dbspruntime.Error, dbspruntime.EventBufferSize),
+		process: processState{
+			argv: []string{"dbsp"},
+		},
 	}
 	v.runtime.SetErrorChannel(v.runtimeErrCh)
 	v.drainOnIdle.Store(true)
@@ -159,6 +168,36 @@ func (v *VM) RunFile(path string) error {
 	v.logger.V(1).Info("module loaded, entering event loop", "path", absPath)
 
 	return v.runEventLoop()
+}
+
+func (v *VM) SetProcessArgv(argv []string) error {
+	if len(argv) == 0 {
+		argv = []string{"dbsp"}
+	}
+
+	cpy := append([]string(nil), argv...)
+
+	v.process.mu.Lock()
+	v.process.argv = cpy
+	v.process.mu.Unlock()
+
+	if v.rt == nil {
+		return nil
+	}
+
+	return v.runOnLoopSync(func(rt *goja.Runtime) error {
+		proc := rt.Get("process")
+		if proc == nil || goja.IsUndefined(proc) || goja.IsNull(proc) {
+			return nil
+		}
+		return proc.ToObject(rt).Set("argv", cpy)
+	})
+}
+
+func (v *VM) currentProcessArgv() []string {
+	v.process.mu.RLock()
+	defer v.process.mu.RUnlock()
+	return append([]string(nil), v.process.argv...)
 }
 
 func (v *VM) runSourceAsModule(name, src string) error {
@@ -469,7 +508,7 @@ func (v *VM) injectGlobals() error {
 	}
 	requireRegistry := require.NewRegistry(require.WithLoader(requireSourceLoader))
 	registerAssertModule(requireRegistry)
-	registerProcessModule(requireRegistry)
+	registerProcessModule(v, requireRegistry)
 	registerFSModule(v, requireRegistry)
 	registerNodeAliases(requireRegistry)
 	registerTimersPromisesModule(v, requireRegistry)
@@ -601,7 +640,7 @@ func (v *VM) injectGlobals() error {
 	return nil
 }
 
-func registerProcessModule(reg *require.Registry) {
+func registerProcessModule(v *VM, reg *require.Registry) {
 	reg.RegisterNativeModule("process", func(rt *goja.Runtime, module *goja.Object) {
 		env := map[string]string{}
 		for _, entry := range os.Environ() {
@@ -613,6 +652,9 @@ func registerProcessModule(reg *require.Registry) {
 			env[key] = value
 		}
 		if err := module.Get("exports").ToObject(rt).Set("env", env); err != nil {
+			panic(rt.NewGoError(err))
+		}
+		if err := module.Get("exports").ToObject(rt).Set("argv", v.currentProcessArgv()); err != nil {
 			panic(rt.NewGoError(err))
 		}
 	})
