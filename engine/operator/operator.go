@@ -31,7 +31,22 @@ type Operator interface {
 	Set(v zset.ZSet)
 
 	// Apply executes the operator on the given inputs.
-	Apply(inputs ...zset.ZSet) (zset.ZSet, error)
+	Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error)
+}
+
+// ExecContext carries per-round execution state for operators.
+type ExecContext struct {
+	RoundID uint64
+	Now     string
+	Vars    map[string]any
+	Values  map[string]any
+}
+
+func execNow(ctx *ExecContext) string {
+	if ctx == nil {
+		return ""
+	}
+	return ctx.Now
 }
 
 // loggerSetter is implemented by operators that accept a logger.

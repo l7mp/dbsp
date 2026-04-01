@@ -29,7 +29,7 @@ func NewLinearCombination(coeffs []int, opts ...Option) *LinearCombination {
 }
 
 // Apply implements Operator.
-func (o *LinearCombination) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *LinearCombination) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 	for i, z := range inputs {
 		c := o.coeffs[i]
@@ -55,7 +55,7 @@ func NewNoOp(opts ...Option) *NoOp {
 }
 
 // Apply implements Operator.
-func (o *NoOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *NoOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	return inputs[0], nil
 }
 
@@ -68,7 +68,7 @@ func NewNegate(opts ...Option) *Negate {
 }
 
 // Apply implements Operator.
-func (o *Negate) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *Negate) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := inputs[0].Negate()
 	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
 	return result, nil
@@ -106,15 +106,16 @@ func NewSelect(predicate expression.Expression, opts ...Option) *Select {
 }
 
 // Apply implements Operator.
-func (o *Select) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *Select) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 	var evalErr error
+	now := execNow(ctx)
 
 	inputs[0].Iter(func(elem datamodel.Document, weight zset.Weight) bool {
 		if o.weightFn != nil && !o.weightFn(weight) {
 			return true
 		}
-		val, err := o.predicate.Evaluate(expression.NewContext(elem.Copy()))
+		val, err := o.predicate.Evaluate(expression.NewContext(elem.Copy()).WithNow(now))
 		if err != nil {
 			evalErr = err
 			return false
@@ -148,12 +149,13 @@ func NewProject(projection expression.Expression, opts ...Option) *Project {
 }
 
 // Apply implements Operator.
-func (o *Project) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *Project) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 	var evalErr error
+	now := execNow(ctx)
 
 	inputs[0].Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-		val, err := o.projection.Evaluate(expression.NewContext(elem.Copy()))
+		val, err := o.projection.Evaluate(expression.NewContext(elem.Copy()).WithNow(now))
 		if err != nil {
 			evalErr = err
 			return false
@@ -240,7 +242,7 @@ func (o *Unwind) String() string {
 }
 
 // Apply implements Operator.
-func (o *Unwind) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 
 	var err error

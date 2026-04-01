@@ -20,7 +20,7 @@ func NewDistinct(opts ...Option) *Distinct {
 }
 
 // Apply implements Operator.
-func (o *Distinct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *Distinct) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 	inputs[0].Iter(func(elem datamodel.Document, weight zset.Weight) bool {
 		if weight > 0 {
@@ -93,9 +93,10 @@ func (o *GroupBy) WithDistinct(distinct bool) *GroupBy {
 func (o *GroupBy) Set(_ zset.ZSet) {}
 
 // Apply implements Operator.
-func (o *GroupBy) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *GroupBy) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	state := groupState{groups: map[string]*groupBucket{}}
-	result, err := state.applyDelta(inputs[0], o.keyExpr, o.valueExpr, o.distinct)
+	now := execNow(ctx)
+	result, err := state.applyDelta(inputs[0], o.keyExpr, o.valueExpr, o.distinct, now)
 	if err != nil {
 		return zset.New(), err
 	}
@@ -146,11 +147,12 @@ func (o *GroupByIncremental) WithDistinct(distinct bool) *GroupByIncremental {
 // Set initializes GroupByIncremental state from a full input snapshot.
 func (o *GroupByIncremental) Set(v zset.ZSet) {
 	o.state = groupState{groups: map[string]*groupBucket{}}
-	_, _ = o.state.applyDelta(v, o.keyExpr, o.valueExpr, o.distinct)
+	_, _ = o.state.applyDelta(v, o.keyExpr, o.valueExpr, o.distinct, "")
 }
 
 // Apply implements Operator.
-func (o *GroupByIncremental) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *GroupByIncremental) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
+	now := execNow(ctx)
 	if o.logger.V(2).Enabled() {
 		o.logger.V(2).Info("dbsp runtime state",
 			"event_type", "group_by.state.before",
@@ -160,7 +162,7 @@ func (o *GroupByIncremental) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
 		)
 	}
 
-	result, err := o.state.applyDelta(inputs[0], o.keyExpr, o.valueExpr, o.distinct)
+	result, err := o.state.applyDelta(inputs[0], o.keyExpr, o.valueExpr, o.distinct, now)
 	if err != nil {
 		return zset.New(), err
 	}
@@ -223,14 +225,19 @@ func (s *groupState) snapshot() []string {
 	return out
 }
 
-func (s *groupState) applyDelta(delta zset.ZSet, keyExpr, valueExpr expression.Expression, distinct bool) (zset.ZSet, error) {
+func (s *groupState) applyDelta(
+	delta zset.ZSet,
+	keyExpr, valueExpr expression.Expression,
+	distinct bool,
+	now string,
+) (zset.ZSet, error) {
 	s.ensure()
 
 	affected := map[string]struct{}{}
 	var iterErr error
 
 	delta.Iter(func(elem datamodel.Document, _ zset.Weight) bool {
-		id, _, err := evaluateGroupKey(elem, keyExpr)
+		id, _, err := evaluateGroupKey(elem, keyExpr, now)
 		if err != nil {
 			iterErr = err
 			return false
@@ -250,7 +257,7 @@ func (s *groupState) applyDelta(delta zset.ZSet, keyExpr, valueExpr expression.E
 	sort.Strings(ids)
 
 	for _, id := range ids {
-		row, err := buildGroupRow(s.groups[id], valueExpr, distinct)
+		row, err := buildGroupRow(s.groups[id], valueExpr, distinct, now)
 		if err != nil {
 			return zset.New(), err
 		}
@@ -258,7 +265,7 @@ func (s *groupState) applyDelta(delta zset.ZSet, keyExpr, valueExpr expression.E
 	}
 
 	delta.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-		id, key, err := evaluateGroupKey(elem, keyExpr)
+		id, key, err := evaluateGroupKey(elem, keyExpr, now)
 		if err != nil {
 			iterErr = err
 			return false
@@ -302,7 +309,7 @@ func (s *groupState) applyDelta(delta zset.ZSet, keyExpr, valueExpr expression.E
 
 	out := zset.New()
 	for _, id := range ids {
-		newRow, err := buildGroupRow(s.groups[id], valueExpr, distinct)
+		newRow, err := buildGroupRow(s.groups[id], valueExpr, distinct, now)
 		if err != nil {
 			return zset.New(), err
 		}
@@ -319,7 +326,11 @@ func (s *groupState) applyDelta(delta zset.ZSet, keyExpr, valueExpr expression.E
 	return out, nil
 }
 
-func evaluateGroupKey(doc datamodel.Document, keyExpr expression.Expression) (string, any, error) {
+func evaluateGroupKey(
+	doc datamodel.Document,
+	keyExpr expression.Expression,
+	now string,
+) (string, any, error) {
 	var key any
 	if keyExpr == nil {
 		pk, err := doc.PrimaryKey()
@@ -328,7 +339,7 @@ func evaluateGroupKey(doc datamodel.Document, keyExpr expression.Expression) (st
 		}
 		key = pk
 	} else {
-		v, err := keyExpr.Evaluate(expression.NewContext(doc).WithSubject(doc))
+		v, err := keyExpr.Evaluate(expression.NewContext(doc).WithNow(now).WithSubject(doc))
 		if err != nil {
 			return "", nil, fmt.Errorf("group_by: key expr: %w", err)
 		}
@@ -343,7 +354,12 @@ func evaluateGroupKey(doc datamodel.Document, keyExpr expression.Expression) (st
 	return id, key, nil
 }
 
-func buildGroupRow(bucket *groupBucket, valueExpr expression.Expression, distinct bool) (datamodel.Document, error) {
+func buildGroupRow(
+	bucket *groupBucket,
+	valueExpr expression.Expression,
+	distinct bool,
+	now string,
+) (datamodel.Document, error) {
 	if bucket == nil || len(bucket.docs) == 0 {
 		return nil, nil
 	}
@@ -366,7 +382,7 @@ func buildGroupRow(bucket *groupBucket, valueExpr expression.Expression, distinc
 			continue
 		}
 
-		value, err := valueExpr.Evaluate(expression.NewContext(doc).WithSubject(doc))
+		value, err := valueExpr.Evaluate(expression.NewContext(doc).WithNow(now).WithSubject(doc))
 		if err != nil {
 			return nil, fmt.Errorf("group_by: value expr: %w", err)
 		}

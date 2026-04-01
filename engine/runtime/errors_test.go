@@ -27,7 +27,7 @@ func (f *failOp) Kind() operator.Kind           { return operator.KindSelect }
 func (f *failOp) Arity() int                    { return 1 }
 func (f *failOp) Linearity() operator.Linearity { return operator.Linear }
 func (f *failOp) Set(zset.ZSet)                 {}
-func (f *failOp) Apply(...zset.ZSet) (zset.ZSet, error) {
+func (f *failOp) Apply(*operator.ExecContext, ...zset.ZSet) (zset.ZSet, error) {
 	return zset.New(), errors.New("intentional operator failure")
 }
 

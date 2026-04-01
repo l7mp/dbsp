@@ -44,7 +44,7 @@ var _ = Describe("Operators", func() {
 			input.Insert(record1, 3)
 			input.Insert(record2, -2)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(2))
 			Expect(result.Lookup(record1.Hash())).To(Equal(zset.Weight(-3)))
@@ -63,7 +63,7 @@ var _ = Describe("Operators", func() {
 			recordA := testutils.Record{ID: "a", Value: 3}
 			input.Insert(recordA, 2)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Equal(input)).To(BeTrue())
 		})
@@ -82,7 +82,7 @@ var _ = Describe("Operators", func() {
 			b.Insert(testutils.Record{ID: "x", Value: 1}, 2)
 			b.Insert(testutils.Record{ID: "y", Value: 2}, 3)
 
-			result, err := op.Apply(a, b)
+			result, err := op.Apply(nil, a, b)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(testutils.Record{ID: "x", Value: 1}.Hash())).To(Equal(zset.Weight(3)))
 			Expect(result.Lookup(testutils.Record{ID: "y", Value: 2}.Hash())).To(Equal(zset.Weight(3)))
@@ -113,7 +113,7 @@ var _ = Describe("Operators", func() {
 
 		It("computes X + Y with coefficients [+1, +1]", func() {
 			op := NewLinearCombination([]int{1, 1})
-			result, err := op.Apply(x, y)
+			result, err := op.Apply(nil, x, y)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(3)))
 			Expect(result.Lookup(ry.Hash())).To(Equal(zset.Weight(4)))
@@ -121,7 +121,7 @@ var _ = Describe("Operators", func() {
 
 		It("computes X - Y with coefficients [+1, -1]", func() {
 			op := NewLinearCombination([]int{1, -1})
-			result, err := op.Apply(x, x)
+			result, err := op.Apply(nil, x, x)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(0)))
 		})
@@ -129,7 +129,7 @@ var _ = Describe("Operators", func() {
 		It("computes X + Y - Z with coefficients [+1, +1, -1]", func() {
 			op := NewLinearCombination([]int{1, 1, -1})
 			Expect(op.Arity()).To(Equal(3))
-			result, err := op.Apply(x, y, z)
+			result, err := op.Apply(nil, x, y, z)
 			Expect(err).NotTo(HaveOccurred())
 			// rx: weight 3 + 0 - 1 = 2
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(2)))
@@ -139,14 +139,14 @@ var _ = Describe("Operators", func() {
 
 		It("scales with coefficient 2", func() {
 			op := NewLinearCombination([]int{2})
-			result, err := op.Apply(x)
+			result, err := op.Apply(nil, x)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(6)))
 		})
 
 		It("drops inputs with coefficient 0", func() {
 			op := NewLinearCombination([]int{0, 1})
-			result, err := op.Apply(x, y)
+			result, err := op.Apply(nil, x, y)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(rx.Hash())).To(Equal(zset.Weight(0)))
 			Expect(result.Lookup(ry.Hash())).To(Equal(zset.Weight(4)))
@@ -171,7 +171,7 @@ var _ = Describe("Operators", func() {
 			input.Insert(recordB, 2)
 			input.Insert(recordC, 3)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(2))
 			Expect(result.Lookup(recordB.Hash())).To(Equal(zset.Weight(2)))
@@ -188,7 +188,7 @@ var _ = Describe("Operators", func() {
 			input := zset.New()
 			input.Insert(recordA, 5)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Lookup(recordA.Hash())).To(Equal(zset.Weight(5)))
 		})
@@ -207,7 +207,7 @@ var _ = Describe("Operators", func() {
 			input := zset.New()
 			input.Insert(testutils.Record{ID: "a", Value: 5}, 1)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(1))
 
@@ -235,7 +235,7 @@ var _ = Describe("Operators", func() {
 			input.Insert(recordA, 1)
 			input.Insert(recordB, 1)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(1))
 			Expect(result.Lookup(recordB.Hash())).To(Equal(zset.Weight(1)))
@@ -256,7 +256,7 @@ var _ = Describe("Operators", func() {
 			right.Insert(testutils.StringElem("x"), 1)
 			right.Insert(testutils.StringElem("y"), 3)
 
-			result, err := op.Apply(left, right)
+			result, err := op.Apply(nil, left, right)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(4))
 		})
@@ -267,7 +267,7 @@ var _ = Describe("Operators", func() {
 			left := zset.New().WithElems(zset.Elem{Document: testutils.StringElem("a"), Weight: 2})
 			right := zset.New().WithElems(zset.Elem{Document: testutils.StringElem("x"), Weight: 3})
 
-			result, err := op.Apply(left, right)
+			result, err := op.Apply(nil, left, right)
 			Expect(err).NotTo(HaveOccurred())
 
 			var weight zset.Weight
@@ -284,7 +284,7 @@ var _ = Describe("Operators", func() {
 			left := zset.New().WithElems(zset.Elem{Document: testutils.StringElem("a"), Weight: 1})
 			right := zset.New().WithElems(zset.Elem{Document: testutils.StringElem("b"), Weight: 1})
 
-			result, err := op.Apply(left, right)
+			result, err := op.Apply(nil, left, right)
 			Expect(err).NotTo(HaveOccurred())
 
 			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
@@ -306,7 +306,7 @@ var _ = Describe("Operators", func() {
 			delta.Insert(r1, 1)
 			delta.Insert(r2, 1)
 
-			result, err := op.Apply(delta)
+			result, err := op.Apply(nil, delta)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(1))
 
@@ -334,7 +334,7 @@ var _ = Describe("Operators", func() {
 			delta.Insert(r1, 1)
 			delta.Insert(r2, 1)
 
-			result, err := op.Apply(delta)
+			result, err := op.Apply(nil, delta)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(1))
 
@@ -359,9 +359,9 @@ var _ = Describe("Operators", func() {
 			full.Insert(r1, 1)
 			full.Insert(r2, 1)
 
-			result1, err := op.Apply(full)
+			result1, err := op.Apply(nil, full)
 			Expect(err).NotTo(HaveOccurred())
-			result2, err := op.Apply(full)
+			result2, err := op.Apply(nil, full)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result1.Equal(result2)).To(BeTrue())
@@ -377,13 +377,13 @@ var _ = Describe("Operators", func() {
 
 			d1 := zset.New()
 			d1.Insert(r1, 1)
-			out1, err := op.Apply(d1)
+			out1, err := op.Apply(nil, d1)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(out1.Size()).To(Equal(1))
 
 			d2 := zset.New()
 			d2.Insert(r2, 1)
-			out2, err := op.Apply(d2)
+			out2, err := op.Apply(nil, d2)
 			Expect(err).NotTo(HaveOccurred())
 			// Old row removed and new row added for the affected key.
 			Expect(out2.Size()).To(Equal(2))
@@ -420,10 +420,10 @@ var _ = Describe("Operators", func() {
 			for i, delta := range seq {
 				acc = acc.Add(delta)
 
-				snap, err := sotw.Apply(acc)
+				snap, err := sotw.Apply(nil, acc)
 				Expect(err).NotTo(HaveOccurred())
 
-				out, err := incr.Apply(delta)
+				out, err := incr.Apply(nil, delta)
 				Expect(err).NotTo(HaveOccurred())
 
 				expected := snap.Subtract(prev)
@@ -449,7 +449,7 @@ var _ = Describe("Operators", func() {
 			input.Insert(recordB, 1)
 			input.Insert(recordC, -2) // Negative, should be excluded.
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(2))
 			Expect(result.Lookup(recordA.Hash())).To(Equal(zset.Weight(1)))
@@ -470,7 +470,7 @@ var _ = Describe("Operators", func() {
 				"values": []any{1, 2, 3},
 			}), 1)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(3))
 
@@ -494,7 +494,7 @@ var _ = Describe("Operators", func() {
 				"values": []any{1},
 			}), 5)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 
 			var weight zset.Weight
@@ -515,7 +515,7 @@ var _ = Describe("Operators", func() {
 				"tags": []any{"a", "b"},
 			}), 1)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(2))
 
@@ -537,7 +537,7 @@ var _ = Describe("Operators", func() {
 				"values": []any{"x", "y", "z"},
 			}), 1)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Size()).To(Equal(3))
 
@@ -558,7 +558,7 @@ var _ = Describe("Operators", func() {
 				"id": "no_values",
 			}), 1)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.IsZero()).To(BeTrue())
 		})
@@ -572,7 +572,7 @@ var _ = Describe("Operators", func() {
 				"values": nil,
 			}), 1)
 
-			result, err := op.Apply(input)
+			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.IsZero()).To(BeTrue())
 		})
@@ -609,7 +609,7 @@ var _ = Describe("Operators", func() {
 					res:   zset.New().WithElems(zset.Elem{Document: recordA, Weight: -1}, zset.Elem{Document: recordB, Weight: 1}),
 				},
 			} {
-				result, err := op.Apply(testCase.prev, testCase.delta)
+				result, err := op.Apply(nil, testCase.prev, testCase.delta)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Size()).To(Equal(testCase.res.Size()))
 				Expect(result.Equal(testCase.res)).To(BeTrue())

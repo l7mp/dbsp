@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"time"
 
 	"github.com/go-logr/logr"
 
@@ -18,6 +19,7 @@ type Executor struct {
 	circuit  *circuit.Circuit
 	schedule []string
 	logger   logr.Logger
+	round    uint64
 }
 
 // ObserverFunc receives callbacks during execution.
@@ -51,6 +53,12 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 
 // ExecuteWithObserver runs one step of the circuit with optional callbacks.
 func (e *Executor) ExecuteWithObserver(inputs map[string]zset.ZSet, observer ObserverFunc) (map[string]zset.ZSet, error) {
+	e.round++
+	execCtx := &operator.ExecContext{
+		RoundID: e.round,
+		Now:     time.Now().UTC().Format(time.RFC3339),
+	}
+
 	// Inject inputs: set each input node's stored value before execution.
 	for id, v := range inputs {
 		node := e.circuit.Node(id)
@@ -97,7 +105,7 @@ func (e *Executor) ExecuteWithObserver(inputs map[string]zset.ZSet, observer Obs
 			}
 		}
 
-		result, err := node.Operator.Apply(opInputs...)
+		result, err := node.Operator.Apply(execCtx, opInputs...)
 		if err != nil {
 			e.logger.Error(err, "operator apply failed", "node", nodeID)
 			return nil, fmt.Errorf("node %s: %w", nodeID, err)

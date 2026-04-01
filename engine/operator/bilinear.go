@@ -14,7 +14,7 @@ func NewCartesianProduct(opts ...Option) *CartesianProduct {
 }
 
 // Apply implements Operator.
-func (o *CartesianProduct) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *CartesianProduct) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	left, right := inputs[0], inputs[1]
 	result := zset.New()
 

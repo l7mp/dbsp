@@ -11,6 +11,8 @@ type EvalContext struct {
 	document datamodel.Document
 	subject  any
 	logger   logr.Logger
+	now      string
+	nowSet   bool
 }
 
 // NewContext creates a root evaluation context.
@@ -27,6 +29,8 @@ func (c *EvalContext) WithLogger(logger logr.Logger) *EvalContext {
 		document: c.document,
 		subject:  c.subject,
 		logger:   logger,
+		now:      c.now,
+		nowSet:   c.nowSet,
 	}
 }
 
@@ -37,6 +41,19 @@ func (c *EvalContext) WithSubject(subject any) *EvalContext {
 		document: c.document,
 		subject:  subject,
 		logger:   c.logger,
+		now:      c.now,
+		nowSet:   c.nowSet,
+	}
+}
+
+// WithNow returns a new context with a frozen timestamp.
+func (c *EvalContext) WithNow(now string) *EvalContext {
+	return &EvalContext{
+		document: c.document,
+		subject:  c.subject,
+		logger:   c.logger,
+		now:      now,
+		nowSet:   true,
 	}
 }
 
@@ -53,4 +70,9 @@ func (c *EvalContext) Subject() any {
 // Logger returns the logger.
 func (c *EvalContext) Logger() logr.Logger {
 	return c.logger
+}
+
+// Now returns the frozen timestamp, if one is set.
+func (c *EvalContext) Now() (string, bool) {
+	return c.now, c.nowSet
 }

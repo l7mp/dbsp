@@ -3,6 +3,7 @@ package executor
 import (
 	"math/rand"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -67,6 +68,32 @@ var _ = Describe("Executor", func() {
 			output, err := exec.Execute(map[string]zset.ZSet{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output["out"].IsZero()).To(BeTrue())
+		})
+
+		It("freezes @now within a single execution round", func() {
+			c := circuit.New("frozen-now")
+			c.AddNode(circuit.Input("in"))
+			c.AddNode(circuit.Op("proj", operator.NewProject(expression.Func(func(ctx *expression.EvalContext) (any, error) {
+				now, ok := ctx.Now()
+				if !ok {
+					now = time.Now().UTC().Format(time.RFC3339Nano)
+				}
+				return map[string]any{"now": now}, nil
+			}))))
+			c.AddNode(circuit.Output("out"))
+			c.AddEdge(circuit.NewEdge("in", "proj", 0))
+			c.AddEdge(circuit.NewEdge("proj", "out", 0))
+
+			exec, err := New(c, logger.NewZapLogger(logLevel))
+			Expect(err).NotTo(HaveOccurred())
+
+			in := zset.New()
+			in.Insert(testutils.Record{ID: "a", Value: 1}, 1)
+			in.Insert(testutils.Record{ID: "b", Value: 2}, -1)
+
+			out, err := exec.Execute(map[string]zset.ZSet{"in": in})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out["out"].IsZero()).To(BeTrue())
 		})
 	})
 

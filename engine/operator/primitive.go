@@ -40,7 +40,7 @@ func (o *InputOp) Set(v zset.ZSet) {
 }
 
 // Apply returns the stored value.
-func (o *InputOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *InputOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	return o.val, nil
@@ -69,7 +69,7 @@ func (o *OutputOp) Arity() int           { return 1 }
 func (o *OutputOp) Linearity() Linearity { return Primitive }
 
 // Apply returns the sum of all inputs.
-func (o *OutputOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *OutputOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	if len(inputs) == 0 {
 		return zset.New(), nil
 	}
@@ -119,7 +119,7 @@ func (o *DelayOp) Set(v zset.ZSet) {
 }
 
 // Apply returns the value stored by the previous timestep's DelayAbsorbOp.
-func (o *DelayOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *DelayOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	o.s.mu.RLock()
 	defer o.s.mu.RUnlock()
 	return o.s.val, nil
@@ -141,7 +141,7 @@ func (o *DelayAbsorbOp) Arity() int           { return 1 }
 func (o *DelayAbsorbOp) Linearity() Linearity { return Primitive }
 
 // Apply stores in for the next timestep's DelayOp and returns in unchanged.
-func (o *DelayAbsorbOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *DelayAbsorbOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	in := inputs[0]
 	o.s.mu.Lock()
 	defer o.s.mu.Unlock()
@@ -186,7 +186,7 @@ func (o *IntegrateOp) Set(v zset.ZSet) {
 }
 
 // Apply adds in to the accumulator and returns the running sum.
-func (o *IntegrateOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *IntegrateOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	in := inputs[0]
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -229,7 +229,7 @@ func (o *DifferentiateOp) Set(v zset.ZSet) {
 }
 
 // Apply returns in - prev, then stores in as the new prev.
-func (o *DifferentiateOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *DifferentiateOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	in := inputs[0]
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -272,7 +272,7 @@ func (o *Delta0Op) Set(_ zset.ZSet) {
 }
 
 // Apply returns inputs[0] on the first call, then zset.New() on subsequent calls.
-func (o *Delta0Op) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *Delta0Op) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.fired {
@@ -300,7 +300,7 @@ func (o *DistinctH) Linearity() Linearity { return Primitive }
 func (o *DistinctH) Set(_ zset.ZSet) {}
 
 // Apply implements Operator.
-func (o *DistinctH) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *DistinctH) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	prev := inputs[0] // z⁻¹(I(δ)) = integrated state before this step
 	delta := inputs[1]
 	result := zset.New()

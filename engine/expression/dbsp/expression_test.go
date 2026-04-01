@@ -826,6 +826,15 @@ var _ = Describe("Time Operators", func() {
 		_, err = time.Parse(time.RFC3339, ts)
 		Expect(err).NotTo(HaveOccurred())
 	})
+
+	It("should honor frozen @now from eval context", func() {
+		expr, err := dbsp.Compile([]byte(`{"@now": null}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil).WithNow("2026-01-02T03:04:05Z"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal("2026-01-02T03:04:05Z"))
+	})
 })
 
 var _ = Describe("String Operators", func() {

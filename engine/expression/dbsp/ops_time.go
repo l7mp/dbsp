@@ -10,6 +10,11 @@ import (
 type nowExpr struct{ nullaryOp }
 
 func (e *nowExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	if now, ok := ctx.Now(); ok {
+		ctx.Logger().V(8).Info("eval", "op", "@now", "result", now)
+		return now, nil
+	}
+
 	result := time.Now().UTC().Format(time.RFC3339)
 	ctx.Logger().V(8).Info("eval", "op", "@now", "result", result)
 	return result, nil

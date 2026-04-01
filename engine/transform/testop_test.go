@@ -34,7 +34,7 @@ func (o *testNonLinearOp) Linearity() operator.Linearity {
 
 func (o *testNonLinearOp) Set(_ zset.ZSet) {}
 
-func (o *testNonLinearOp) Apply(inputs ...zset.ZSet) (zset.ZSet, error) {
+func (o *testNonLinearOp) Apply(_ *operator.ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	if len(inputs) == 0 {
 		return zset.New(), nil
 	}
