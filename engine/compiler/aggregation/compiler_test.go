@@ -627,6 +627,69 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(outs[q.OutputMap["final"]].Size()).To(Equal(1))
 	})
 
+	It("supports fan-out from one internal output to multiple branch inputs", func() {
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"final"}))
+		q, err := c.CompileString(`[
+			[
+				{"@inputs":["Pod"]},
+				{"@project":{"name":"$.metadata.name"}},
+				{"@output":"base"}
+			],
+			[
+				{"@inputs":["base"]},
+				{"@project":{"left":"$.name"}},
+				{"@output":"left"}
+			],
+			[
+				{"@inputs":["base"]},
+				{"@project":{"right":"$.name"}},
+				{"@output":"right"}
+			],
+			[
+				{"@inputs":["left","right"]},
+				{"@join":{"@eq":["$.left.left","$.right.right"]}},
+				{"@project":{"name":"$.left.left"}},
+				{"@output":"final"}
+			]
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		exec, err := executor.New(q.Circuit, logger.DiscardLogger())
+		Expect(err).NotTo(HaveOccurred())
+
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "p1"}}, nil), 1)
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
+		Expect(err).NotTo(HaveOccurred())
+
+		out := outs[q.OutputMap["final"]]
+		Expect(out.Size()).To(Equal(1))
+		Expect(out.Lookup(unstructured.New(map[string]any{"name": "p1"}, nil).Hash())).To(Equal(zset.Weight(1)))
+	})
+
+	It("rejects duplicate internal output producers", func() {
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"final"}))
+		_, err := c.CompileString(`[
+			[
+				{"@inputs":["Pod"]},
+				{"@project":{"name":"$.metadata.name"}},
+				{"@output":"base"}
+			],
+			[
+				{"@inputs":["Pod"]},
+				{"@project":{"name":"$.metadata.name"}},
+				{"@output":"base"}
+			],
+			[
+				{"@inputs":["base"]},
+				{"@project":{"name":"$.name"}},
+				{"@output":"final"}
+			]
+		]`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("duplicate producer for \"base\""))
+	})
+
 	It("round-trips compiled circuits with wrapped expressions", func() {
 		c := New(toIdentityBindings([]string{"pod", "dep"}), toIdentityBindings([]string{"output"}))
 		q, err := c.CompileString(`[
