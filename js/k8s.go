@@ -10,6 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	k8sconsumer "github.com/l7mp/dbsp/connectors/kubernetes/consumer"
@@ -19,16 +21,18 @@ import (
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
+func newKubernetesClientset(cfg *rest.Config) (kubernetes.Interface, error) {
+	return kubernetes.NewForConfig(cfg)
+}
+
 type k8sWatchOptions struct {
 	GVK       string            `json:"gvk"`
 	Namespace string            `json:"namespace"`
 	Labels    map[string]string `json:"labels"`
-	Topic     string            `json:"topic"`
 }
 
 type k8sConsumerOptions struct {
-	GVK   string `json:"gvk"`
-	Topic string `json:"topic"`
+	GVK string `json:"gvk"`
 }
 
 const k8sRuntimeComponentName = "kubernetes-runtime"
@@ -51,57 +55,50 @@ func (v *VM) k8sList(call goja.FunctionCall) (goja.Value, error) {
 	return v.installK8sWatchProducer(call, true)
 }
 
+// installK8sWatchProducer implements kubernetes.watch(topic, opts[, callback]) and
+// kubernetes.list(topic, opts[, callback]).  The optional callback has producer
+// semantics: its return value is published to topic; returning nothing publishes
+// an empty Z-set.
 func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goja.Value, error) {
-	if len(call.Arguments) < 1 {
-		if listMode {
-			return nil, fmt.Errorf("producer.kubernetes.list({ ... }) requires options")
-		}
-		return nil, fmt.Errorf("producer.kubernetes.watch({ ... }) requires options")
+	kind := "kubernetes.watch"
+	if listMode {
+		kind = "kubernetes.list"
+	}
+
+	if len(call.Arguments) < 2 {
+		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels}[, callback]) requires topic and options", kind)
+	}
+
+	topic := call.Argument(0).String()
+	if topic == "" {
+		return nil, fmt.Errorf("%s: empty topic", kind)
+	}
+
+	var opts k8sWatchOptions
+	if err := decodeOptionValue(call.Argument(1), &opts); err != nil {
+		return nil, fmt.Errorf("%s options: %w", kind, err)
 	}
 
 	var callback goja.Callable
-	if len(call.Arguments) > 1 {
-		arg := call.Argument(1)
+	if len(call.Arguments) > 2 {
+		arg := call.Argument(2)
 		if !goja.IsUndefined(arg) && !goja.IsNull(arg) {
 			cb, ok := goja.AssertFunction(arg)
 			if !ok {
-				if listMode {
-					return nil, fmt.Errorf("producer.kubernetes.list callback must be a function")
-				}
-				return nil, fmt.Errorf("producer.kubernetes.watch callback must be a function")
+				return nil, fmt.Errorf("%s callback must be a function", kind)
 			}
 			callback = cb
 		}
 	}
 
-	var opts k8sWatchOptions
-	if err := decodeOptionValue(call.Argument(0), &opts); err != nil {
-		if listMode {
-			return nil, fmt.Errorf("producer.kubernetes.list options: %w", err)
-		}
-		return nil, fmt.Errorf("producer.kubernetes.watch options: %w", err)
-	}
-	if opts.Topic == "" {
-		if listMode {
-			return nil, fmt.Errorf("producer.kubernetes.list: missing topic")
-		}
-		return nil, fmt.Errorf("producer.kubernetes.watch: missing topic")
-	}
-
 	krt, err := v.ensureK8sRuntime()
 	if err != nil {
-		if listMode {
-			return nil, fmt.Errorf("producer.kubernetes.list: %w", err)
-		}
-		return nil, fmt.Errorf("producer.kubernetes.watch: %w", err)
+		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
 	gvk, err := v.parseGVK(opts.GVK)
 	if err != nil {
-		if listMode {
-			return nil, fmt.Errorf("producer.kubernetes.list: %w", err)
-		}
-		return nil, fmt.Errorf("producer.kubernetes.watch: %w", err)
+		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
 	var selector *v1.LabelSelector
@@ -109,14 +106,14 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 		selector = &v1.LabelSelector{MatchLabels: opts.Labels}
 	}
 
-	publishTopic := opts.Topic
+	publishTopic := topic
 	if callback != nil {
-		kind := "kubernetes-watch"
+		internalKind := "kubernetes-watch"
 		if listMode {
-			kind = "kubernetes-list"
+			internalKind = "kubernetes-list"
 		}
-		publishTopic = v.nextInternalTopic(kind, opts.Topic)
-		v.registerTransformCallback(publishTopic, opts.Topic, kind+"-callback", callback)
+		publishTopic = v.nextInternalTopic(internalKind, topic)
+		v.registerProducerCallback(publishTopic, topic, internalKind+"-callback", callback)
 	}
 
 	producerKind := "watcher"
@@ -124,7 +121,7 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 		producerKind = "lister"
 	}
 
-	name := fmt.Sprintf("kubernetes-producer-%s-%s-%s", producerKind, opts.Topic, strings.ToLower(gvk.String()))
+	name := fmt.Sprintf("kubernetes-producer-%s-%s-%s", producerKind, topic, strings.ToLower(gvk.String()))
 	baseCfg := k8sproducer.Config{
 		Client:        krt.GetClient(),
 		SourceGVK:     gvk,
@@ -139,86 +136,74 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 	if listMode {
 		p, err := k8sproducer.NewLister(baseCfg)
 		if err != nil {
-			return nil, fmt.Errorf("producer.kubernetes.list: %w", err)
+			return nil, fmt.Errorf("%s: %w", kind, err)
 		}
 		if err := v.runtime.Add(p); err != nil {
-			return nil, fmt.Errorf("producer.kubernetes.list: register lister: %w", err)
+			return nil, fmt.Errorf("%s: register lister: %w", kind, err)
 		}
 	} else {
 		p, err := k8sproducer.NewWatcher(baseCfg)
 		if err != nil {
-			return nil, fmt.Errorf("producer.kubernetes.watch: %w", err)
+			return nil, fmt.Errorf("%s: %w", kind, err)
 		}
 		if err := v.runtime.Add(p); err != nil {
-			return nil, fmt.Errorf("producer.kubernetes.watch: register watcher: %w", err)
+			return nil, fmt.Errorf("%s: register watcher: %w", kind, err)
 		}
 	}
 
-	v.disableIdleDrain("kubernetes source producer")
 	return goja.Undefined(), nil
 }
 
-func (v *VM) k8sPatcher(call goja.FunctionCall) (goja.Value, error) {
+func (v *VM) k8sPatch(call goja.FunctionCall) (goja.Value, error) {
 	return v.installK8sConsumer(call, true)
 }
 
-func (v *VM) k8sUpdater(call goja.FunctionCall) (goja.Value, error) {
+func (v *VM) k8sUpdate(call goja.FunctionCall) (goja.Value, error) {
 	return v.installK8sConsumer(call, false)
 }
 
+// installK8sConsumer implements kubernetes.patch(topic, {gvk}) and
+// kubernetes.update(topic, {gvk}).
 func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Value, error) {
-	if len(call.Arguments) < 1 {
-		return nil, fmt.Errorf("consumer.kubernetes.*({ ... }) requires options")
+	kind := "kubernetes.update"
+	if patcher {
+		kind = "kubernetes.patch"
 	}
 
-	var callback goja.Callable
-	if len(call.Arguments) > 1 {
-		arg := call.Argument(1)
-		if !goja.IsUndefined(arg) && !goja.IsNull(arg) {
-			cb, ok := goja.AssertFunction(arg)
-			if !ok {
-				if patcher {
-					return nil, fmt.Errorf("consumer.kubernetes.patcher callback must be a function")
-				}
-				return nil, fmt.Errorf("consumer.kubernetes.updater callback must be a function")
-			}
-			callback = cb
-		}
+	if len(call.Arguments) < 2 {
+		return nil, fmt.Errorf("%s(topic, {gvk}) requires topic and options", kind)
+	}
+
+	topic := call.Argument(0).String()
+	if topic == "" {
+		return nil, fmt.Errorf("%s: empty topic", kind)
 	}
 
 	var opts k8sConsumerOptions
-	if err := decodeOptionValue(call.Argument(0), &opts); err != nil {
-		return nil, fmt.Errorf("consumer.kubernetes options: %w", err)
-	}
-	if opts.Topic == "" {
-		return nil, fmt.Errorf("consumer.kubernetes: missing topic")
+	if err := decodeOptionValue(call.Argument(1), &opts); err != nil {
+		return nil, fmt.Errorf("%s options: %w", kind, err)
 	}
 
 	krt, err := v.ensureK8sRuntime()
 	if err != nil {
-		return nil, fmt.Errorf("consumer.kubernetes: %w", err)
+		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
 	gvk, err := v.parseGVK(opts.GVK)
 	if err != nil {
-		return nil, fmt.Errorf("consumer.kubernetes: %w", err)
+		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
 	consumerKind := "updater"
 	if patcher {
 		consumerKind = "patcher"
 	}
-	consumeTopic := opts.Topic
-	if callback != nil {
-		consumeTopic = v.nextInternalTopic("kubernetes-consumer-"+consumerKind, opts.Topic)
-		v.registerTransformCallback(opts.Topic, consumeTopic, "kubernetes-consumer-"+consumerKind+"-callback", callback)
-	}
 
-	name := fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, opts.Topic, strings.ToLower(gvk.String()))
+	name := fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, topic, strings.ToLower(gvk.String()))
 	baseCfg := k8sconsumer.Config{
 		Client:     krt.GetClient(),
 		Name:       name,
-		OutputName: consumeTopic,
+		OutputName: topic,
 		TargetGVK:  gvk,
 		Runtime:    v.runtime,
 		Logger:     v.logger,
@@ -227,18 +212,18 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 	if patcher {
 		p, err := k8sconsumer.NewPatcher(baseCfg)
 		if err != nil {
-			return nil, fmt.Errorf("consumer.kubernetes.patcher: %w", err)
+			return nil, fmt.Errorf("%s: %w", kind, err)
 		}
 		if err := v.runtime.Add(p); err != nil {
-			return nil, fmt.Errorf("consumer.kubernetes.patcher: register consumer: %w", err)
+			return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
 		}
 	} else {
 		u, err := k8sconsumer.NewUpdater(baseCfg)
 		if err != nil {
-			return nil, fmt.Errorf("consumer.kubernetes.updater: %w", err)
+			return nil, fmt.Errorf("%s: %w", kind, err)
 		}
 		if err := v.runtime.Add(u); err != nil {
-			return nil, fmt.Errorf("consumer.kubernetes.updater: register consumer: %w", err)
+			return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
 		}
 	}
 
