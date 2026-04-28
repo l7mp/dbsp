@@ -21,19 +21,20 @@ func lineZSet(s string) zset.ZSet {
 // fieldOf returns the named string field from the first entry of the Z-set,
 // or "" if not found.
 func fieldOf(z zset.ZSet, field string) string {
-	for _, e := range z.Entries() {
-		u, ok := e.Document.(*dbspunstructured.Unstructured)
-		if !ok {
-			return ""
-		}
-		v, ok := u.Fields()[field]
-		if !ok {
-			return ""
-		}
-		s, _ := v.(string)
-		return s
+	entries := z.Entries()
+	if len(entries) == 0 {
+		return ""
 	}
-	return ""
+	u, ok := entries[0].Document.(*dbspunstructured.Unstructured)
+	if !ok {
+		return ""
+	}
+	v, ok := u.Fields()[field]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
 }
 
 var _ = Describe("ParseFunc", func() {

@@ -141,7 +141,3 @@ func (v *VM) registerProducerCallback(sourceTopic, targetTopic, errorOrigin stri
 		}
 	}()
 }
-
-func (v *VM) redisConsumer(call goja.FunctionCall) (goja.Value, error) {
-	return nil, fmt.Errorf("consumer.redis is not implemented yet")
-}

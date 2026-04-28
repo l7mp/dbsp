@@ -141,23 +141,23 @@ func (c *Circuit) Start(ctx context.Context) error {
 			return nil
 		}
 		logical, ok := c.topicToInput[in.Name]
-			if !ok {
-				continue
+		if !ok {
+			continue
+		}
+		in.Name = logical
+		outs, err := c.Execute(in)
+		if err != nil {
+			c.rt.ReportError(c.name, err)
+			continue
+		}
+		for _, out := range outs {
+			var docs []string
+			if c.docsFormatter != nil && c.logger.V(2).Enabled() {
+				docs = c.docsFormatter(out)
 			}
-			in.Name = logical
-			outs, err := c.Execute(in)
-			if err != nil {
+			LogFlowEvent(c.logger, "processor.send", "processor", c.String(), "output", out.Name, "", out.Data, docs)
+			if err := c.Publish(out); err != nil {
 				c.rt.ReportError(c.name, err)
-				continue
-			}
-			for _, out := range outs {
-				var docs []string
-				if c.docsFormatter != nil && c.logger.V(2).Enabled() {
-					docs = c.docsFormatter(out)
-				}
-				LogFlowEvent(c.logger, "processor.send", "processor", c.String(), "output", out.Name, "", out.Data, docs)
-				if err := c.Publish(out); err != nil {
-					c.rt.ReportError(c.name, err)
 			}
 		}
 	}

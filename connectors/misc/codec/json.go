@@ -117,6 +117,9 @@ func autoParseFunc(errFn func(error)) ZSetFunc {
 			format := sniffFormat(trimmed)
 			var fields map[string]any
 			switch format {
+			case FormatAuto:
+				// sniffFormat never returns FormatAuto; skip unrecognizable input.
+				continue
 			case FormatJSONL, FormatJSON:
 				if err := json.Unmarshal([]byte(trimmed), &fields); err != nil {
 					reportErr(errFn, fmt.Errorf("codec/auto parse json: %w", err))

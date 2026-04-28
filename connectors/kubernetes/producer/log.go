@@ -131,13 +131,12 @@ func (p *LogProducer) Start(ctx context.Context) error {
 	const maxBackoff = 30 * time.Second
 
 	for {
-		if err := p.stream(ctx); err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
+		err := p.stream(ctx)
+		if ctx.Err() != nil {
+			return nil //nolint:nilerr
+		}
+		if err != nil {
 			p.HandleError(fmt.Errorf("log stream: %w", err))
-		} else if ctx.Err() != nil {
-			return nil
 		}
 
 		select {
