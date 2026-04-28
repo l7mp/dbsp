@@ -93,7 +93,14 @@ func (p *publisher) Publish(event Event) error {
 type Subscriber interface {
 	Subscribe(topic string)
 	Unsubscribe(topic string)
-	GetChannel() <-chan Event
+	// UnsubscribeAll unsubscribes from every registered topic, closing the
+	// internal delivery channel. Use with context.AfterFunc to unblock Next
+	// when a context is cancelled.
+	UnsubscribeAll()
+	// Next blocks until the next event arrives or all topics have been
+	// unsubscribed. Returns (event, true) on success and (zero, false) when
+	// the subscriber is done.
+	Next() (Event, bool)
 }
 
 type subscriber struct {
@@ -157,8 +164,30 @@ func (s *subscriber) Unsubscribe(topic string) {
 	}
 }
 
-func (s *subscriber) GetChannel() <-chan Event {
-	return s.ch
+// Next blocks until the next event arrives or the delivery channel is closed.
+func (s *subscriber) Next() (Event, bool) {
+	event, ok := <-s.ch
+	return event, ok
+}
+
+// GetChannel returns the underlying delivery channel. This is a low-level
+// escape hatch for callers that need to select on the channel directly (e.g.
+// test helpers). Prefer Next() for all normal consumption.
+func (s *subscriber) GetChannel() <-chan Event { return s.ch }
+
+// UnsubscribeAll unsubscribes from every registered topic. The last
+// Unsubscribe call closes the delivery channel, unblocking any pending Next.
+func (s *subscriber) UnsubscribeAll() {
+	s.mu.Lock()
+	topics := make([]string, 0, len(s.topics))
+	for t := range s.topics {
+		topics = append(topics, t)
+	}
+	s.mu.Unlock()
+
+	for _, t := range topics {
+		s.Unsubscribe(t)
+	}
 }
 
 // PubSub is a topic-indexed subscription registry.

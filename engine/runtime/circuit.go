@@ -132,22 +132,15 @@ func (c *Circuit) SetObserver(observer executor.ObserverFunc) {
 // runtime error channel and the circuit continues processing subsequent events.
 // Start only returns a non-nil error on context cancellation-related issues.
 func (c *Circuit) Start(ctx context.Context) error {
-	defer func() {
-		for _, in := range c.inputNames {
-			c.Unsubscribe(in)
-		}
-	}()
-	inCh := c.GetChannel()
+	stop := context.AfterFunc(ctx, c.Subscriber.UnsubscribeAll)
+	defer stop()
 
 	for {
-		select {
-		case <-ctx.Done():
+		in, ok := c.Subscriber.Next()
+		if !ok {
 			return nil
-		case in, ok := <-inCh:
-			if !ok {
-				return nil
-			}
-			logical, ok := c.topicToInput[in.Name]
+		}
+		logical, ok := c.topicToInput[in.Name]
 			if !ok {
 				continue
 			}
@@ -165,7 +158,6 @@ func (c *Circuit) Start(ctx context.Context) error {
 				LogFlowEvent(c.logger, "processor.send", "processor", c.String(), "output", out.Name, "", out.Data, docs)
 				if err := c.Publish(out); err != nil {
 					c.rt.ReportError(c.name, err)
-				}
 			}
 		}
 	}

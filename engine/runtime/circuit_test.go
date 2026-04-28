@@ -391,20 +391,17 @@ func (c *countingConsumer) Name() string { return c.name }
 func (c *countingConsumer) Start(ctx context.Context) error {
 	for _, t := range c.topics {
 		c.Subscribe(t)
-		defer c.Unsubscribe(t)
 	}
+	stop := context.AfterFunc(ctx, c.UnsubscribeAll)
+	defer stop()
 	for {
-		select {
-		case <-ctx.Done():
+		e, ok := c.Next()
+		if !ok {
 			return nil
-		case e, ok := <-c.GetChannel():
-			if !ok {
-				return nil
-			}
-			c.mu.Lock()
-			c.counts[e.Name]++
-			c.mu.Unlock()
 		}
+		c.mu.Lock()
+		c.counts[e.Name]++
+		c.mu.Unlock()
 	}
 }
 

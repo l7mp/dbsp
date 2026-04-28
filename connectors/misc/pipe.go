@@ -29,11 +29,13 @@ type pipeSubscriber struct {
 	ch chan dbspruntime.Event
 }
 
-func (s *pipeSubscriber) Subscribe(string) {}
-
+func (s *pipeSubscriber) Subscribe(string)   {}
 func (s *pipeSubscriber) Unsubscribe(string) {}
-
-func (s *pipeSubscriber) GetChannel() <-chan dbspruntime.Event { return s.ch }
+func (s *pipeSubscriber) UnsubscribeAll()    { close(s.ch) }
+func (s *pipeSubscriber) Next() (dbspruntime.Event, bool) {
+	e, ok := <-s.ch
+	return e, ok
+}
 
 var _ dbspruntime.Producer = (*PipeProducer)(nil)
 var _ dbspruntime.Consumer = (*PipeConsumer)(nil)

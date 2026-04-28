@@ -112,21 +112,21 @@ func (c *BaseConsumer) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// Run receives events from the embedded subscriber and calls h.Consume.
-// Handler errors are non-critical and are reported through ErrorReporter.
+// Run receives events from the embedded Subscriber and calls h.Consume.
+// Context cancellation is handled via context.AfterFunc: when ctx is done,
+// UnsubscribeAll closes the delivery channel and unblocks Next. Handler
+// errors are non-critical and are reported through ErrorReporter.
 func (c *BaseConsumer) Run(ctx context.Context, h ConsumeHandler) error {
-	ch := c.GetChannel()
+	stop := context.AfterFunc(ctx, c.Subscriber.UnsubscribeAll)
+	defer stop()
+
 	for {
-		select {
-		case <-ctx.Done():
+		evt, ok := c.Subscriber.Next()
+		if !ok {
 			return nil
-		case evt, ok := <-ch:
-			if !ok {
-				return nil
-			}
-			if err := h.Consume(ctx, evt); err != nil {
-				c.HandleError(err)
-			}
+		}
+		if err := h.Consume(ctx, evt); err != nil {
+			c.HandleError(err)
 		}
 	}
 }
@@ -161,6 +161,11 @@ func NewBaseProducer(cfg BaseProducerConfig) (*BaseProducer, error) {
 	}
 
 	return &BaseProducer{BaseComponent: b, Publisher: cfg.Publisher, topics: append([]string(nil), cfg.Topics...)}, nil
+}
+
+// SetPublisher replaces the current publisher. Must be called before Start.
+func (p *BaseProducer) SetPublisher(pub Publisher) {
+	p.Publisher = pub
 }
 
 // String implements fmt.Stringer.
@@ -243,21 +248,21 @@ func (p *BaseProcessor) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// Run receives events from the embedded subscriber and calls h.Consume.
-// Handler errors are non-critical and are reported through ErrorReporter.
+// Run receives events from the embedded Subscriber and calls h.Consume.
+// Context cancellation is handled via context.AfterFunc: when ctx is done,
+// UnsubscribeAll closes the delivery channel and unblocks Next. Handler
+// errors are non-critical and are reported through ErrorReporter.
 func (p *BaseProcessor) Run(ctx context.Context, h ConsumeHandler) error {
-	ch := p.GetChannel()
+	stop := context.AfterFunc(ctx, p.Subscriber.UnsubscribeAll)
+	defer stop()
+
 	for {
-		select {
-		case <-ctx.Done():
+		evt, ok := p.Subscriber.Next()
+		if !ok {
 			return nil
-		case evt, ok := <-ch:
-			if !ok {
-				return nil
-			}
-			if err := h.Consume(ctx, evt); err != nil {
-				p.HandleError(err)
-			}
+		}
+		if err := h.Consume(ctx, evt); err != nil {
+			p.HandleError(err)
 		}
 	}
 }

@@ -50,11 +50,13 @@ func (f *fakeProducer) MarshalJSON() ([]byte, error) {
 
 type fakeSubscriber struct{ ch chan runtime.Event }
 
-func (f *fakeSubscriber) Subscribe(topic string) {}
-
+func (f *fakeSubscriber) Subscribe(topic string)   {}
 func (f *fakeSubscriber) Unsubscribe(topic string) {}
-
-func (f *fakeSubscriber) GetChannel() <-chan runtime.Event { return f.ch }
+func (f *fakeSubscriber) UnsubscribeAll()          { close(f.ch) }
+func (f *fakeSubscriber) Next() (runtime.Event, bool) {
+	e, ok := <-f.ch
+	return e, ok
+}
 
 type fakeConsumer struct {
 	fakeRunnable
