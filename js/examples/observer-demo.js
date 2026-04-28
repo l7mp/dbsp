@@ -12,7 +12,7 @@ const c = aggregate.compile([
   { "@project": { "$.": "$." } }
 ], {
   inputs: "obs-input",
-  output: "obs-output"
+  outputs: ["obs-output"]
 });
 
 // Handle-scoped observer.

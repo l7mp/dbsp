@@ -24,8 +24,8 @@ func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 
 	if len(call.Arguments) > 1 {
 		var opts struct {
-			Inputs any `json:"inputs"`
-			Output any `json:"output"`
+			Inputs  any `json:"inputs"`
+			Outputs any `json:"outputs"`
 		}
 		if err := decodeOptionValue(call.Argument(1), &opts); err != nil {
 			return nil, fmt.Errorf("aggregate.compile options: %w", err)
@@ -35,8 +35,8 @@ func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 		} else if len(parsedInputs) > 0 {
 			inputs = parsedInputs
 		}
-		if parsedOutput, err := parseOutputBinding(opts.Output); err != nil {
-			return nil, fmt.Errorf("aggregate.compile options.output: %w", err)
+		if parsedOutput, err := parseOutputBinding(opts.Outputs); err != nil {
+			return nil, fmt.Errorf("aggregate.compile options.outputs: %w", err)
 		} else if parsedOutput.Name != "" {
 			output = parsedOutput
 		}
@@ -107,6 +107,13 @@ func parseInputBinding(raw any) (aggcompiler.Binding, error) {
 func parseOutputBinding(raw any) (aggcompiler.Binding, error) {
 	if raw == nil {
 		return aggcompiler.Binding{}, nil
+	}
+	// Unwrap a single-element array: outputs: ["name"] or outputs: [{...}].
+	if arr, ok := raw.([]any); ok {
+		if len(arr) == 0 {
+			return aggcompiler.Binding{}, nil
+		}
+		raw = arr[0]
 	}
 	b, err := parseBinding(raw, "output", true)
 	if err != nil {

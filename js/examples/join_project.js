@@ -51,7 +51,7 @@ aggregate.compile(
             qty:        "$.orders.qty",
         }},
     ],
-    { inputs: ["orders", "products"], output: "joined-orders-agg" }
+    { inputs: ["orders", "products"], outputs: ["joined-orders-agg"] }
 ).transform("Incrementalizer");
 
 subscribe("joined-orders-agg", (entries) => {

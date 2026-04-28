@@ -847,7 +847,7 @@ const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], {
   inputs: "obs-in",
-  output: "obs-out"
+  outputs: ["obs-out"]
 });
 
 c.observe((e) => {
@@ -913,7 +913,7 @@ const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], {
   inputs: "obs-runtime-in",
-  output: "obs-runtime-out"
+  outputs: ["obs-runtime-out"]
 });
 
 c.validate();
@@ -966,7 +966,7 @@ const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], {
   inputs: "console-in",
-  output: "console-out"
+  outputs: ["console-out"]
 });
 
 c.validate();
@@ -1053,7 +1053,7 @@ const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], {
   inputs: "agg-in",
-  output: "agg-out"
+  outputs: ["agg-out"]
 });
 c.validate();
 `
@@ -1088,7 +1088,7 @@ const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], {
   inputs: "agg-auto-in",
-  output: "agg-auto-out"
+  outputs: ["agg-auto-out"]
 });
 `
 		Expect(runScript(vm, script)).To(Succeed())
@@ -1126,7 +1126,7 @@ const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], {
   inputs: "agg-inc-in",
-  output: "agg-inc-out"
+  outputs: ["agg-inc-out"]
 });
 
 const ci = c.transform("Incrementalizer");
@@ -1166,7 +1166,7 @@ publish("agg-inc-in", [[{id: 222}, 1]]);
 		script := `
 const c = aggregate.compile([
   {"@project": {"$.": "$."}}
-], {inputs: "in", output: "out"});
+], {inputs: "in", outputs: ["out"]});
 c.transform(["Incrementalizer"]);
 `
 		err = runScript(vm, script)
@@ -1192,7 +1192,7 @@ const c = aggregate.compile([
   ]
 ], {
   inputs: [{name: "agg-bind-in", logicalName: "Foo"}],
-  output: {name: "agg-bind-out", logicalName: "Bar"}
+  outputs: [{name: "agg-bind-out", logicalName: "Bar"}]
 });
 c.validate();
 `
@@ -1364,7 +1364,7 @@ publish("users", [
 const c = aggregate.compile([
   {"@select": {"@eq": ["$.metadata.namespace", "default"]}},
   {"@project": {name: "$.metadata.name", status: "$.status"}}
-], {inputs: "pods", output: "result"});
+], {inputs: "pods", outputs: ["result"]});
 c.transform("Incrementalizer").validate();
 `
 		Expect(runScript(vm, script)).To(Succeed())
@@ -1430,7 +1430,7 @@ publish("my-topic", [[{ id: 1, name: "alice" }, 1]]);
 		script := `
 const c = aggregate.compile([
   {"@project": {"$.": "$."}}
-], {inputs: "pods", output: "result-observed"});
+], {inputs: "pods", outputs: ["result-observed"]});
 
 c.observe((e) => {
   runtime.publish("obs-events", [[{via: "handle", node: e.node.id}, 1]]);
@@ -1534,7 +1534,7 @@ aggregate.compile(pipeline, {
     {name: "pods-topic", logical: "pods"},
     {name: "svc-topic", logical: "services"}
   ],
-  output: {name: "result-topic", logical: "output"}
+  outputs: [{name: "result-topic", logical: "output"}]
 }).transform("Incrementalizer").validate();
 
 publish("pods-topic", [[{metadata:{name:"shared"}}, 1]]);
