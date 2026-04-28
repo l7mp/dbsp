@@ -56,7 +56,7 @@ func run(args []string) error {
 	}
 
 	logger := newLogger(level)
-	logger.V(1).Info("starting dbsp", "loglevel", level.String())
+	logger.V(1).Info("starting dbsp", "loglevel", logLevel)
 
 	vm, err := NewVM(logger)
 	if err != nil {
@@ -102,7 +102,7 @@ func parseLogLevel(raw string) (zapcore.Level, error) {
 	case "error", "":
 		return zapcore.ErrorLevel, nil
 	default:
-		return zapcore.ErrorLevel, fmt.Errorf("invalid log level %q: use debug|info|warn|error", raw)
+		return zapcore.ErrorLevel, fmt.Errorf("invalid log level %q: use trace|debug|info|warn|error", raw)
 	}
 }
 
