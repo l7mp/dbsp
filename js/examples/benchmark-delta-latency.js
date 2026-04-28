@@ -55,3 +55,4 @@ console.log(`p95:     ${p95.toFixed(3)} ms`);
 console.log(`p99:     ${p99.toFixed(3)} ms`);
 console.log(`min:     ${latencies[0].toFixed(3)} ms`);
 console.log(`max:     ${latencies[latencies.length - 1].toFixed(3)} ms`);
+exit();

@@ -28,11 +28,14 @@ console.log("circuit:", c);
 
 // Fires once when products are published (join is empty — no orders yet),
 // then again when orders are published (with joined rows).
+let seenJoin = false, seenAgg = false;
 subscribe("joined-orders", (entries) => {
     console.log("=== sql join output ===");
     for (const [doc, weight] of entries) {
+        seenJoin = true;
         console.log(weight > 0 ? `+${weight}` : weight, doc);
     }
+    if (seenJoin && seenAgg) exit();
 });
 
 // === Aggregate incremental join circuit ===
@@ -54,8 +57,10 @@ aggregate.compile(
 subscribe("joined-orders-agg", (entries) => {
     console.log("=== aggregate join output ===");
     for (const [doc, weight] of entries) {
+        seenAgg = true;
         console.log(weight > 0 ? `+${weight}` : weight, doc);
     }
+    if (seenJoin && seenAgg) exit();
 });
 
 // === Publish inputs ===

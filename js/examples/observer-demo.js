@@ -34,7 +34,7 @@ subscribe("obs-output", (entries) => {
   for (const [doc, weight] of entries) {
     console.log(`[output ${weight}]`, doc);
   }
-  cancel();
+  exit();
 });
 
 publish("obs-input", [[{ id: 1, name: "alpha" }, 1]]);
