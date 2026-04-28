@@ -45,10 +45,8 @@ type VM struct {
 	runtimeDone      chan error
 	runtimeErrCh     chan dbspruntime.Error
 	closeOnce        sync.Once
-	drainOnIdle      atomic.Bool
+	userExitCh       chan struct{}
 	internalTopicSeq atomic.Uint64
-	pendingCallbacks atomic.Int64
-	lastActivityNS   atomic.Int64
 
 	errMu              sync.RWMutex
 	runtimeErrHandler  goja.Callable
@@ -76,8 +74,6 @@ type cancelContextFunc func() error
 func (f cancelContextFunc) Cancel() error { return f() }
 
 const (
-	idlePollInterval   = 25 * time.Millisecond
-	idleGracePeriod    = 200 * time.Millisecond
 	runtimeStopTimeout = 2 * time.Second
 )
 
@@ -102,13 +98,12 @@ func NewVM(logger logr.Logger) (*VM, error) {
 		cancelVM:     cancel,
 		runtimeDone:  make(chan error, 1),
 		runtimeErrCh: make(chan dbspruntime.Error, dbspruntime.EventBufferSize),
+		userExitCh:   make(chan struct{}),
 		process: processState{
 			argv: []string{"dbsp"},
 		},
 	}
 	v.runtime.SetErrorChannel(v.runtimeErrCh)
-	v.drainOnIdle.Store(true)
-	v.touchActivity()
 	v.logger.V(1).Info("vm created")
 
 	v.loop.Start()
@@ -149,7 +144,6 @@ func (v *VM) Close() {
 }
 
 func (v *VM) RunFile(path string) error {
-	v.touchActivity()
 	v.logger.Info("running script", "path", path)
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -163,7 +157,6 @@ func (v *VM) RunFile(path string) error {
 	if err := v.runSourceAsModule(absPath, string(src)); err != nil {
 		return fmt.Errorf("execute module %s: %w", absPath, err)
 	}
-	v.touchActivity()
 	v.logger.V(1).Info("module loaded, entering event loop", "path", absPath)
 
 	return v.runEventLoop()
@@ -205,7 +198,7 @@ func (v *VM) runSourceAsModule(name, src string) error {
 	}
 
 	if forAwaitRe.MatchString(src) {
-		return fmt.Errorf("for-await-of is not supported by this goja version; use subscribe(topic).next() in a loop")
+		return fmt.Errorf("for-await-of is not supported by this goja version; use subscribe(topic, fn) to register a callback")
 	}
 
 	wrapped := fmt.Sprintf("(async () => {\n%s\n})();", src)
@@ -268,31 +261,15 @@ func (v *VM) runSourceAsModule(name, src string) error {
 }
 
 func (v *VM) runEventLoop() error {
-	ticker := time.NewTicker(idlePollInterval)
-	defer ticker.Stop()
-	v.logger.V(1).Info("event loop started")
-
-	for {
-		select {
-		case <-ticker.C:
-			if !v.drainOnIdle.Load() {
-				continue
-			}
-			if v.isIdle(idleGracePeriod) {
-				v.logger.Info("queues drained, shutting down")
-				v.Close()
-			}
-		case <-v.ctx.Done():
-			v.logger.V(1).Info("event loop stopping")
-			return v.waitRuntimeStop(runtimeStopTimeout)
-		}
+	v.logger.V(1).Info("event loop started, waiting for exit() or signal")
+	select {
+	case <-v.userExitCh:
+		v.logger.Info("script called exit(), shutting down")
+		v.Close()
+	case <-v.ctx.Done():
+		v.logger.V(1).Info("event loop stopping")
 	}
-}
-
-func (v *VM) disableIdleDrain(reason string) {
-	if v.drainOnIdle.CompareAndSwap(true, false) {
-		v.logger.V(1).Info("disabling idle drain mode", "reason", reason)
-	}
+	return v.waitRuntimeStop(runtimeStopTimeout)
 }
 
 func (v *VM) nextInternalTopic(component, topic string) string {
@@ -302,31 +279,27 @@ func (v *VM) nextInternalTopic(component, topic string) string {
 }
 
 func (v *VM) schedule(fn func()) {
-	v.touchActivity()
-	v.pendingCallbacks.Add(1)
 	ok := v.loop.RunOnLoop(func(_ *goja.Runtime) {
-		defer v.pendingCallbacks.Add(-1)
 		defer func() {
 			if r := recover(); r != nil {
 				v.logger.Error(fmt.Errorf("%v", r), "js callback panic")
 			}
 		}()
-		v.touchActivity()
 		fn()
-		v.touchActivity()
 	})
 	if !ok {
-		v.pendingCallbacks.Add(-1)
 		v.logger.V(1).Info("dropping scheduled callback, event loop stopped")
 	}
 }
 
-func (v *VM) isIdle(idleFor time.Duration) bool {
-	if v.pendingCallbacks.Load() != 0 {
-		return false
+func (v *VM) exitVM(call goja.FunctionCall) (goja.Value, error) {
+	select {
+	case <-v.userExitCh:
+		// already signalled
+	default:
+		close(v.userExitCh)
 	}
-	last := time.Unix(0, v.lastActivityNS.Load())
-	return time.Since(last) >= idleFor
+	return goja.Undefined(), nil
 }
 
 func (v *VM) runOnLoopSync(fn func(*goja.Runtime) error) error {
@@ -343,10 +316,6 @@ func (v *VM) runOnLoopSync(fn func(*goja.Runtime) error) error {
 		return fmt.Errorf("event loop is not running")
 	}
 	return <-done
-}
-
-func (v *VM) touchActivity() {
-	v.lastActivityNS.Store(time.Now().UnixNano())
 }
 
 func (v *VM) waitRuntimeStop(timeout time.Duration) error {
@@ -551,39 +520,43 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 
-	producerObj := v.rt.NewObject()
-	k8sProd := v.rt.NewObject()
-	if err := k8sProd.Set("watch", v.wrap(v.k8sWatch)); err != nil {
+	kubeObj := v.rt.NewObject()
+	if err := kubeObj.Set("watch", v.wrap(v.k8sWatch)); err != nil {
 		return err
 	}
-	if err := k8sProd.Set("list", v.wrap(v.k8sList)); err != nil {
+	if err := kubeObj.Set("list", v.wrap(v.k8sList)); err != nil {
 		return err
 	}
-	if err := producerObj.Set("kubernetes", k8sProd); err != nil {
+	if err := kubeObj.Set("log", v.wrap(v.k8sLog)); err != nil {
 		return err
 	}
-	if err := producerObj.Set("jsonl", v.wrap(v.jsonlProducer)); err != nil {
+	if err := kubeObj.Set("patch", v.wrap(v.k8sPatch)); err != nil {
 		return err
 	}
-	if err := v.rt.Set("producer", producerObj); err != nil {
+	if err := kubeObj.Set("update", v.wrap(v.k8sUpdate)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("kubernetes", kubeObj); err != nil {
 		return err
 	}
 
-	consumerObj := v.rt.NewObject()
-	k8sCons := v.rt.NewObject()
-	if err := k8sCons.Set("patcher", v.wrap(v.k8sPatcher)); err != nil {
+	fmtObj := v.rt.NewObject()
+	if err := fmtObj.Set("jsonl", v.wrap(v.formatJSONL)); err != nil {
 		return err
 	}
-	if err := k8sCons.Set("updater", v.wrap(v.k8sUpdater)); err != nil {
+	if err := fmtObj.Set("json", v.wrap(v.formatJSON)); err != nil {
 		return err
 	}
-	if err := consumerObj.Set("kubernetes", k8sCons); err != nil {
+	if err := fmtObj.Set("yaml", v.wrap(v.formatYAML)); err != nil {
 		return err
 	}
-	if err := consumerObj.Set("redis", v.wrap(v.redisConsumer)); err != nil {
+	if err := fmtObj.Set("csv", v.wrap(v.formatCSV)); err != nil {
 		return err
 	}
-	if err := v.rt.Set("consumer", consumerObj); err != nil {
+	if err := fmtObj.Set("auto", v.wrap(v.formatAuto)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("format", fmtObj); err != nil {
 		return err
 	}
 
@@ -598,6 +571,9 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 	if err := v.rt.Set("cancel", v.wrap(v.cancel)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("exit", v.wrap(v.exitVM)); err != nil {
 		return err
 	}
 

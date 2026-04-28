@@ -17,7 +17,7 @@ var _ = Describe("CLI args", func() {
 		})
 
 		scriptPath := filepath.Join(tmpDir, "argv.js")
-		script := "\nconst args = (process && process.argv) ? process.argv.slice(2) : [];\nif (args.join(\",\") !== \"test,gwclass\") {\n  throw new Error(\"unexpected argv: \" + JSON.stringify(args));\n}\n"
+		script := "\nconst args = (process && process.argv) ? process.argv.slice(2) : [];\nif (args.join(\",\") !== \"test,gwclass\") {\n  throw new Error(\"unexpected argv: \" + JSON.stringify(args));\n}\nexit();\n"
 		Expect(os.WriteFile(scriptPath, []byte(script), 0o600)).To(Succeed())
 
 		err = run([]string{scriptPath, "test", "gwclass"})
