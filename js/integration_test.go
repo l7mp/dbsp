@@ -237,7 +237,7 @@ publish("once-out", first);
 		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
 	})
 
-	It("subscribe returns async iterable that breaks cleanly", func() {
+	It("subscribe.then receives events from topic", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -248,14 +248,12 @@ publish("once-out", first);
 
 		script := `
 let count = 0;
-const iter = subscribe("iter-in");
-while (count < 3) {
-  const step = await iter.next();
-  if (step.done) break;
-  count += step.value.length;
-}
-await iter.return();
-publish("iter-out", [[{total: count}, 1]]);
+subscribe("iter-in", (entries) => {
+  count += entries.length;
+  if (count >= 3) {
+    publish("iter-out", [[{total: count}, 1]]);
+  }
+});
 `
 		go func() {
 			time.Sleep(50 * time.Millisecond)
@@ -265,7 +263,7 @@ publish("iter-out", [[{total: count}, 1]]);
 			}
 		}()
 
-		Expect(runScriptAsModule(vm, script)).To(Succeed())
+		Expect(runScript(vm, script)).To(Succeed())
 		Eventually(func() bool {
 			events := collector.Snapshot()
 			if len(events) == 0 {
@@ -591,31 +589,32 @@ assert.strictEqual(parsed.f, true);
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
 
-		err = runScriptAsModule(vm, `for await (const e of subscribe("x")) { break; }`)
+		err = runScriptAsModule(vm, `for await (const e of subscribe("x", () => {})) { break; }`)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("for-await-of is not supported"))
-		Expect(err.Error()).To(ContainSubstring("subscribe(topic).next()"))
+		Expect(err.Error()).To(ContainSubstring("subscribe(topic, fn)"))
 	})
 
-	It("consumer(topic, fn) is no longer available as a function", func() {
+	It("subscribe requires two arguments", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
 
-		err = runScript(vm, `consumer("topic", (e) => {});`)
+		err = runScript(vm, `subscribe("topic");`)
 		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("subscribe(topic, fn) requires topic and callback"))
 	})
 
-	It("consumer.kubernetes.patcher is still available", func() {
+	It("kubernetes.patch is available", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
 
-		err = runScript(vm, `typeof consumer.kubernetes.patcher`)
+		err = runScript(vm, `typeof kubernetes.patch`)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("transforms forwarded events with registerTransformCallback", func() {
+	It("transforms forwarded events with registerProducerCallback", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -632,14 +631,14 @@ assert.strictEqual(parsed.f, true);
 			}
 			cb, ok := goja.AssertFunction(value)
 			if !ok {
-				return fmt.Errorf("transform callback is not a function")
+				return fmt.Errorf("producer callback is not a function")
 			}
 			fn = cb
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		vm.registerTransformCallback("transform-in", "transform-out", "test-transform", fn)
+		vm.registerProducerCallback("transform-in", "transform-out", "test-transform", fn)
 		Expect(runScript(vm, `publish("transform-in", [[{id: 1}, 1]]);`)).To(Succeed())
 
 		var first dbspruntime.Event
@@ -655,12 +654,12 @@ assert.strictEqual(parsed.f, true);
 		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:2"}))
 	})
 
-	It("passes through events when transform callback returns undefined", func() {
+	It("publishes empty Z-set when producer callback returns undefined", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
 
-		collector, err := newCollectingConsumer("transform-pass-collector", vm.runtime, "transform-pass-out")
+		collector, err := newCollectingConsumer("producer-undef-collector", vm.runtime, "producer-undef-out")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vm.runtime.Add(collector)).To(Succeed())
 
@@ -672,35 +671,29 @@ assert.strictEqual(parsed.f, true);
 			}
 			cb, ok := goja.AssertFunction(value)
 			if !ok {
-				return fmt.Errorf("transform callback is not a function")
+				return fmt.Errorf("producer callback is not a function")
 			}
 			fn = cb
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		vm.registerTransformCallback("transform-pass-in", "transform-pass-out", "test-transform", fn)
-		Expect(runScript(vm, `publish("transform-pass-in", [[{id: 7}, 1]]);`)).To(Succeed())
+		vm.registerProducerCallback("producer-undef-in", "producer-undef-out", "test-producer", fn)
+		Expect(runScript(vm, `publish("producer-undef-in", [[{id: 7}, 1]]);`)).To(Succeed())
 
-		var first dbspruntime.Event
-		Eventually(func() bool {
-			events := collector.Snapshot()
-			if len(events) == 0 {
-				return false
-			}
-			first = events[0]
-			return true
-		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
-
-		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:7"}))
+		// Undefined return → empty Z-set is published, so the collector receives one event.
+		Eventually(func() int {
+			return len(collector.Snapshot())
+		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+		Expect(collector.Snapshot()[0].Data.Size()).To(Equal(0))
 	})
 
-	It("drops events when transform callback returns null", func() {
+	It("publishes empty Z-set when producer callback returns null", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
 
-		collector, err := newCollectingConsumer("transform-drop-collector", vm.runtime, "transform-drop-out")
+		collector, err := newCollectingConsumer("producer-null-collector", vm.runtime, "producer-null-out")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vm.runtime.Add(collector)).To(Succeed())
 
@@ -712,81 +705,51 @@ assert.strictEqual(parsed.f, true);
 			}
 			cb, ok := goja.AssertFunction(value)
 			if !ok {
-				return fmt.Errorf("transform callback is not a function")
+				return fmt.Errorf("producer callback is not a function")
 			}
 			fn = cb
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		vm.registerTransformCallback("transform-drop-in", "transform-drop-out", "test-transform", fn)
-		Expect(runScript(vm, `publish("transform-drop-in", [[{id: 9}, 1]]);`)).To(Succeed())
+		vm.registerProducerCallback("producer-null-in", "producer-null-out", "test-producer", fn)
+		Expect(runScript(vm, `publish("producer-null-in", [[{id: 9}, 1]]);`)).To(Succeed())
 
-		Consistently(func() int {
+		// Null return → empty Z-set is published, so the collector receives one event.
+		Eventually(func() int {
 			return len(collector.Snapshot())
-		}, 200*time.Millisecond, 10*time.Millisecond).Should(Equal(0))
+		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+		Expect(collector.Snapshot()[0].Data.Size()).To(Equal(0))
 	})
 
-	It("validates kubernetes watch callback type before startup", func() {
+	It("validates kubernetes.watch callback type before startup", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
 
 		err = runScript(vm, `
-producer.kubernetes.watch({
+kubernetes.watch("services", {
   gvk: "v1/Service",
   namespace: "default",
-  topic: "services"
 }, 42);
 `)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("producer.kubernetes.watch callback must be a function"))
+		Expect(err.Error()).To(ContainSubstring("kubernetes.watch callback must be a function"))
 	})
 
-	It("validates kubernetes list callback type before startup", func() {
+	It("validates kubernetes.list callback type before startup", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
 
 		err = runScript(vm, `
-producer.kubernetes.list({
+kubernetes.list("services", {
   gvk: "v1/Service",
   namespace: "default",
-  topic: "services"
 }, 42);
 `)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("producer.kubernetes.list callback must be a function"))
-	})
-
-	It("validates kubernetes patcher callback type before startup", func() {
-		vm, err := NewVM(logr.Discard())
-		Expect(err).NotTo(HaveOccurred())
-		defer vm.Close()
-
-		err = runScript(vm, `
-consumer.kubernetes.patcher({
-  gvk: "v1/Service",
-  topic: "desired-services"
-}, 42);
-`)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("consumer.kubernetes.patcher callback must be a function"))
-	})
-
-	It("validates kubernetes updater callback type before startup", func() {
-		vm, err := NewVM(logr.Discard())
-		Expect(err).NotTo(HaveOccurred())
-		defer vm.Close()
-
-		err = runScript(vm, `
-consumer.kubernetes.updater({
-  gvk: "apps/v1/Deployment",
-  topic: "desired-deployments"
-}, 42);
-`)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("consumer.kubernetes.updater callback must be a function"))
+		Expect(err.Error()).To(ContainSubstring("kubernetes.list callback must be a function"))
 	})
 
 	It("invokes runtime.onError callback for async runtime errors", func() {
@@ -1009,7 +972,6 @@ const c = aggregate.compile([
 c.validate();
 
 console.log(c);
-console.log(producer);
 console.log(runtime);
 
 subscribe("console-out", (entries) => {

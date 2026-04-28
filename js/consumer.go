@@ -1,16 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"github.com/dop251/goja"
 
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
+	"github.com/l7mp/dbsp/engine/zset"
 )
 
+// registerCallbackConsumer subscribes to topic and calls jsFn with each batch.
+// jsFn is a sink: its return value is discarded.
 func (v *VM) registerCallbackConsumer(topic string, jsFn goja.Callable) {
-
 	sub := v.runtime.NewSubscriber()
 	sub.Subscribe(topic)
 	done := make(chan struct{})
@@ -25,45 +28,46 @@ func (v *VM) registerCallbackConsumer(topic string, jsFn goja.Callable) {
 
 	go func() {
 		defer stop()
-		ch := sub.GetChannel()
+		stopSub := context.AfterFunc(v.ctx, sub.UnsubscribeAll)
+		defer stopSub()
 		for {
+			event, ok := sub.Next()
+			if !ok {
+				return
+			}
 			select {
 			case <-done:
 				return
-			case event, ok := <-ch:
-				if !ok {
-					return
-				}
+			default:
+			}
+
+			entries, err := v.toJSEntries(event.Data)
+			if err != nil {
+				v.logger.Error(err, "subscribe callback: entries conversion failed", "topic", topic)
+				continue
+			}
+
+			v.schedule(func() {
 				select {
 				case <-done:
 					return
 				default:
 				}
-
-				entries, err := v.toJSEntries(event.Data)
-				if err != nil {
-					v.logger.Error(err, "consumer conversion failed", "topic", topic)
-					continue
-				}
-
-				v.schedule(func() {
-					select {
-					case <-done:
-						return
-					default:
+				v.withCancelContext(stop, func() {
+					if _, err := jsFn(goja.Undefined(), v.rt.ToValue(entries)); err != nil {
+						v.logger.Error(err, "subscribe callback failed", "topic", topic)
 					}
-					v.withCancelContext(stop, func() {
-						if _, err := jsFn(goja.Undefined(), v.rt.ToValue(entries)); err != nil {
-							v.logger.Error(err, "consumer callback failed", "topic", topic)
-						}
-					})
 				})
-			}
+			})
 		}
 	}()
 }
 
-func (v *VM) registerTransformCallback(sourceTopic, targetTopic, errorOrigin string, jsFn goja.Callable) {
+// registerProducerCallback subscribes to sourceTopic, calls jsFn with each
+// batch, and publishes the return value to targetTopic.  A JS return of
+// undefined or null publishes an empty Z-set (producer semantics: the callback
+// transforms raw data before it hits the bus).
+func (v *VM) registerProducerCallback(sourceTopic, targetTopic, errorOrigin string, jsFn goja.Callable) {
 	sub := v.runtime.NewSubscriber()
 	sub.Subscribe(sourceTopic)
 	pub := v.runtime.NewPublisher()
@@ -80,67 +84,60 @@ func (v *VM) registerTransformCallback(sourceTopic, targetTopic, errorOrigin str
 
 	go func() {
 		defer stop()
-		ch := sub.GetChannel()
+		stopSub := context.AfterFunc(v.ctx, sub.UnsubscribeAll)
+		defer stopSub()
 		for {
+			event, ok := sub.Next()
+			if !ok {
+				return
+			}
 			select {
 			case <-done:
 				return
-			case event, ok := <-ch:
-				if !ok {
-					return
-				}
+			default:
+			}
+
+			entries, err := v.toJSEntries(event.Data)
+			if err != nil {
+				v.logger.Error(err, "producer callback: entries conversion failed",
+					"source_topic", sourceTopic, "target_topic", targetTopic)
+				continue
+			}
+
+			v.schedule(func() {
 				select {
 				case <-done:
 					return
 				default:
 				}
 
-				input := event.Data.Clone()
-				entries, err := v.toJSEntries(input)
-				if err != nil {
-					v.logger.Error(err, "consumer transform conversion failed", "source_topic", sourceTopic, "target_topic", targetTopic)
-					continue
-				}
-
-				v.schedule(func() {
-					select {
-					case <-done:
+				v.withCancelContext(stop, func() {
+					result, err := jsFn(goja.Undefined(), v.rt.ToValue(entries))
+					if err != nil {
+						v.logger.Error(err, "producer callback failed",
+							"source_topic", sourceTopic, "target_topic", targetTopic)
 						return
-					default:
 					}
 
-					v.withCancelContext(stop, func() {
-						result, err := jsFn(goja.Undefined(), v.rt.ToValue(entries))
-						if err != nil {
-							v.logger.Error(err, "consumer transform callback failed", "source_topic", sourceTopic, "target_topic", targetTopic)
+					var outData zset.ZSet
+					if goja.IsNull(result) || goja.IsUndefined(result) {
+						outData = zset.New()
+					} else {
+						converted, convErr := v.fromJSEntries(result)
+						if convErr != nil {
+							v.logger.Error(convErr, "producer callback result decode failed",
+								"source_topic", sourceTopic, "target_topic", targetTopic)
 							return
 						}
+						outData = converted
+					}
 
-						var out dbspruntime.Event
-						switch {
-						case goja.IsNull(result):
-							return
-						case goja.IsUndefined(result):
-							out = dbspruntime.Event{Name: targetTopic, Data: input}
-						default:
-							converted, convErr := v.fromJSEntries(result)
-							if convErr != nil {
-								v.logger.Error(convErr, "consumer transform callback result decode failed", "source_topic", sourceTopic, "target_topic", targetTopic)
-								return
-							}
-							out = dbspruntime.Event{Name: targetTopic, Data: converted}
-						}
-
-						if out.Data.IsZero() {
-							return
-						}
-
-						if err := pub.Publish(out); err != nil {
-							v.runtime.ReportError(errorOrigin, fmt.Errorf("publish transformed event: %w", err))
-						}
-					})
+					out := dbspruntime.Event{Name: targetTopic, Data: outData}
+					if err := pub.Publish(out); err != nil {
+						v.runtime.ReportError(errorOrigin, fmt.Errorf("publish producer callback event: %w", err))
+					}
 				})
-			}
+			})
 		}
 	}()
 }
