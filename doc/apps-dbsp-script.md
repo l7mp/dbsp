@@ -42,7 +42,7 @@ logging.
 
 ## Node-style runtime compatibility
 
-The DBSP JS runtime now enables a CommonJS module system (`require`) with a curated Node-compatible
+The DBSP JS runtime enables a CommonJS module system (`require`) with a curated Node-compatible
 module set from `goja_nodejs`.
 
 Available modules and globals include:
@@ -112,9 +112,11 @@ publish("pods", [[{ metadata: { name: "pod-a", namespace: "default" }, status: "
 ## JavaScript environment
 
 The environment is intentionally small. It exposes `console.log`, the SQL compiler, the aggregation
-compiler, `publish`/`subscribe`, circuit observers, runtime observers, cancellation, and
-connectors. Most top-level APIs also exist under the `runtime` object, so `publish(...)` and
-`runtime.publish(...)` are equivalent.
+compiler, `publish`/`subscribe`, `format` codecs, Kubernetes connectors, circuit observers, runtime
+observers, and cancellation. Most top-level APIs also exist under the `runtime` object, so
+`publish(...)` and `runtime.publish(...)` are equivalent.
+
+All pub/sub and connector functions take the **topic name as the first argument**.
 
 ## Reference
 
@@ -268,7 +270,7 @@ Handle-scoped observation is usually the easiest way to inspect a single script-
 
 ### `publish(topic, entries)` and `runtime.publish(topic, entries)`
 
-These functions publish one Z-set delta batch to a topic.
+These functions publish one Z-set delta batch to a named topic.
 
 ```js
 publish("products", [
@@ -277,12 +279,12 @@ publish("products", [
 ]);
 ```
 
-### `subscribe(topic[, fn])`
+### `subscribe(topic, fn)`
 
-`subscribe` has two forms:
-
-- `subscribe(topic, fn)`: callback subscriber.
-- `subscribe(topic)`: async-iterator-like object with `.next()` and `.return()`.
+`subscribe(topic, fn)` registers a **sink** callback on a topic. `fn` receives a
+`[[document, weight], ...]` entries array on every delta batch. The return value of `fn` is
+**ignored** — it is a pure observer. To forward data, call `publish(...)` explicitly inside the
+callback.
 
 ```js
 subscribe("joined-orders", (entries) => {
@@ -292,55 +294,140 @@ subscribe("joined-orders", (entries) => {
 });
 
 subscribe("my-topic", (entries) => {
-  runtime.publish("my-topic-copy", entries);
+  publish("my-topic-copy", entries);
   cancel();
 });
 ```
 
-Single-event await is available via `subscribe.once(topic)`:
+Callbacks run on the VM event loop. Calling `cancel()` inside a callback stops that callback owner.
+
+### `subscribe.once(topic)`
+
+`subscribe.once(topic)` returns a `Promise` that resolves with the first `[[document, weight], ...]`
+batch published to the topic. Use this when you need a single event in an async script.
 
 ```js
 const first = await subscribe.once("output");
 publish("mirror", first);
 ```
 
-The current Goja runtime does not support `for await (... of ...)`, so consume iterables with
-`await iter.next()`:
-
 ```js
-const iter = subscribe("output");
-while (true) {
-  const step = await iter.next();
-  if (step.done) break;
-  console.log(step.value);
-}
-await iter.return();
+const t0 = performance.now();
+const batch = await subscribe.once("output");
+publish("input", [[{ id: 1 }, 1]]);
+console.log("elapsed", performance.now() - t0, "ms", batch);
 ```
 
-If you need deterministic batch capture, subscribe first, publish in a `for` loop, then drain the
-iterator:
+The runtime pub/sub delivers events only to subscribers registered at publish time, so subscribe
+before publishing when using `subscribe.once`.
+
+### `format.jsonl(entries)`, `format.json(entries)`, `format.yaml(entries)`, `format.csv(entries)`, `format.auto(entries)`
+
+The `format` object provides synchronous codec functions. Each function accepts a
+`[[document, weight], ...]` entries array, parses the `"line"` field of each document using the
+named codec, and returns a new entries array with the decoded fields merged in.
+
+`format.auto` detects the encoding of each line heuristically (JSON, YAML, or CSV).
+
+These functions are pure transforms — they have no side effects and do not interact with the
+pub/sub bus. They are most useful inside producer callbacks, where the return value is automatically
+published:
 
 ```js
-const expected = 500;
-let seen = 0;
-
-const iter = subscribe("output");
-for (let i = 0; i < expected; i++) {
-  publish("input", [[{ id: i }, 1]]);
-}
-
-while (seen < expected) {
-  const step = await iter.next();
-  if (step.done) break;
-  seen += step.value.length;
-}
-await iter.return();
+// Parse each raw pod-log line as JSONL before publishing to "pod-logs".
+kubernetes.log("pod-logs", { name: "my-pod", namespace: "default" },
+  (entries) => format.jsonl(entries));
 ```
 
-The runtime pub/sub currently delivers events only to subscribers registered at publish time.
-Publishing before subscribing can therefore drop events.
+### `kubernetes.watch(topic, { gvk, namespace, labels }[, callback])`
 
-Callbacks run on the VM event loop. Inside a callback, `cancel()` stops that callback owner.
+Starts a Kubernetes watcher and publishes object deltas into `topic` on every change.
+
+`gvk` may be written as `v1/Kind` for core resources or `group/version/kind` for CRDs.
+`namespace` and `labels` are optional filters.
+
+The optional `callback(entries)` has **producer semantics**: its return value is published to
+`topic`. Returning `undefined` or `null` publishes an empty Z-set (the batch is not passed through
+unchanged — use the callback to select, project, or enrich). If no callback is provided, the raw
+watch entries are published directly.
+
+```js
+// Publish raw Pod deltas to "pods".
+kubernetes.watch("pods", { gvk: "v1/Pod", namespace: "default" });
+
+// Filter out pods without a specific annotation before publishing.
+kubernetes.watch("annotated-pods", { gvk: "v1/Pod" }, (entries) => {
+  return entries.filter(([doc, _w]) => {
+    const anns = (doc.metadata && doc.metadata.annotations) || {};
+    return anns["dbsp-sentinel"] === "true";
+  });
+});
+```
+
+This works for native Kubernetes resources and, when the runtime can discover them, Δ-controller
+view resources as well.
+
+### `kubernetes.list(topic, { gvk, namespace, labels }[, callback])`
+
+Starts a Kubernetes state-of-the-world source.
+
+Like `kubernetes.watch`, but on each watch event it publishes the full filtered list of objects as
+one output batch instead of the incremental delta. Useful for naive snapshot reconciliation loops.
+
+Callback semantics are the same as for `kubernetes.watch`.
+
+```js
+kubernetes.list("services-sotw", { gvk: "v1/Service", namespace: "default" });
+```
+
+### `kubernetes.log(topic, { name, namespace, container }[, callback])`
+
+Starts a Kubernetes pod log stream. Each log line is published to `topic` as a document
+`{ "line": "<raw text>" }` at weight `+1`.
+
+The optional `callback(entries)` has **producer semantics**: its return value is published to
+`topic`. This is the natural place to apply a format codec:
+
+```js
+// Stream raw log lines.
+kubernetes.log("pod-logs-raw", { name: "my-pod", namespace: "default" });
+
+// Parse each line as JSONL before publishing.
+kubernetes.log("pod-logs", { name: "my-pod", namespace: "default" },
+  (entries) => format.jsonl(entries));
+```
+
+The producer reconnects with exponential backoff on stream errors and returns cleanly when the
+context is cancelled.
+
+### `kubernetes.patch(topic, { gvk })`
+
+Installs a Kubernetes sink that reads delta batches from `topic` and applies each document as a
+strategic merge patch to the matching existing object.
+
+```js
+kubernetes.patch("desired-services", { gvk: "v1/Service" });
+```
+
+Use this when the pipeline output is a partial object that should update an existing resource.
+
+### `kubernetes.update(topic, { gvk })`
+
+Installs a Kubernetes sink that reads delta batches from `topic` and writes each document as a
+full object replacement.
+
+```js
+kubernetes.update("deployments-full", { gvk: "apps/v1/Deployment" });
+```
+
+Use this when the pipeline emits the complete desired object rather than a patch.
+
+### Callback semantics summary
+
+| Context | What `fn` receives | Return value |
+|---|---|---|
+| `subscribe(topic, fn)` | `[[doc, weight], ...]` | **Ignored** — fn is a sink; call `publish(...)` to forward |
+| `kubernetes.watch/list/log` callback | `[[doc, weight], ...]` | **Published** to the declared topic; `undefined`/`null` → empty Z-set |
 
 ### `runtime.onError(fn)`
 
@@ -357,7 +444,8 @@ If no error handler is installed, runtime errors are logged and the process exit
 
 ### `runtime.observe(circuitName, fn)`
 
-`runtime.observe` attaches an observer to a runtime circuit by name. This is useful when you want to observe a circuit after validation or from code that only knows the runtime name.
+`runtime.observe` attaches an observer to a runtime circuit by name. This is useful when you want
+to observe a circuit after validation or from code that only knows the runtime name.
 
 ```js
 const c = aggregate.compile([
@@ -394,9 +482,9 @@ Returns high-resolution elapsed milliseconds since script start:
 
 ```js
 const t0 = performance.now();
-const done = subscribe.once("output");
+const batch = await subscribe.once("output");
 publish("input", [[{ id: 1 }, 1]]);
-await done;
+await batch;
 console.log(performance.now() - t0);
 ```
 
@@ -413,114 +501,66 @@ runtime.subscribe("users-out", (entries) => {
 });
 ```
 
-### `producer.kubernetes.watch({ gvk, namespace, labels, topic }[, fn])`
+## End-to-end example: pod log filter
 
-This starts a Kubernetes watcher and publishes object deltas into a runtime topic.
-
-`gvk` may be written as `v1/Kind` for core resources or `group/version/kind` for grouped APIs.
-`namespace` and `labels` are optional filters.
-
-An optional callback `fn(entries)` can transform each watched batch before it is published:
-
-- return a new entries array to publish transformed output;
-- return `undefined` to pass through the original entries unchanged;
-- return `null` to drop the batch.
-
-If provided, `fn` must be a function.
+The following script watches Pods by label selector, streams their logs, parses each line as JSONL,
+and prints any document whose `level` field equals `"error"`.
 
 ```js
-producer.kubernetes.watch({
-  gvk: "v1/Service",
-  namespace: "default",
-  topic: "services",
-});
+// Usage: dbsp pod-log-filter.js app:my-app
 
-producer.kubernetes.watch({
-  gvk: "v1/Service",
-  namespace: "default",
-  topic: "services-with-label",
-}, (entries) => {
-  const out = [];
-  for (const [doc, weight] of entries) {
-    const anns = (doc.metadata && doc.metadata.annotations) || {};
-    if (anns["dbsp-sentinel"] !== "true") {
-      out.push([doc, weight]);
+const args = (process && process.argv ? process.argv : []).slice(2);
+
+function parseLabels(s) {
+    const result = {};
+    for (const pair of (s || "").split(",")) {
+        const idx = pair.indexOf(":");
+        if (idx < 0) continue;
+        const k = pair.slice(0, idx).trim();
+        const v = pair.slice(idx + 1).trim();
+        if (k) result[k] = v;
     }
-  }
-  return out;
+    return result;
+}
+
+const labels = parseLabels(args[0]);
+if (Object.keys(labels).length === 0) {
+    throw new Error("Usage: dbsp pod-log-filter.js <label-key>:<label-value>[,...]");
+}
+
+// Watch Pods matching the label selector.
+kubernetes.watch("pods-raw", { gvk: "v1/Pod", labels });
+
+// Project to pod identity and deduplicate.
+aggregate.compile([
+    { "@project": { "name": "$.metadata.name", "namespace": "$.metadata.namespace" } },
+    { "@distinct": {} },
+], { inputs: "pods-raw", output: "pods" }).transform("Incrementalizer").validate();
+
+// Shared filter circuit: keep only error-level documents.
+aggregate.compile([
+    { "@select": { "@eq": ["$.level", "error"] } },
+], { inputs: "pod-logs-raw", output: "error-logs" }).transform("Incrementalizer").validate();
+
+// For each new pod, start a log stream with JSONL parsing.
+subscribe("pods", (entries) => {
+    for (const [pod, weight] of entries) {
+        if (weight > 0) {
+            kubernetes.log("pod-logs-raw", {
+                name:      pod.name,
+                namespace: pod.namespace || "default",
+            }, (entries) => format.jsonl(entries));
+        }
+    }
+});
+
+// Print every error-level document.
+subscribe("error-logs", (entries) => {
+    for (const [doc, weight] of entries) {
+        if (weight > 0) console.log("[ERROR]", JSON.stringify(doc));
+    }
 });
 ```
-
-This works for native Kubernetes resources and, when the runtime can discover them, Δ-controller
-view resources as well.
-
-### `producer.kubernetes.list({ gvk, namespace, labels, topic }[, fn])`
-
-This starts a Kubernetes state-of-the-world source.
-
-It subscribes to watch events as a trigger, but each trigger publishes the full filtered list of
-objects as one output batch. This is useful for naive snapshot reconciliation loops.
-
-Filtering and optional callback semantics are the same as for `producer.kubernetes.watch(...)`.
-
-```js
-producer.kubernetes.list({
-  gvk: "v1/Service",
-  namespace: "default",
-  topic: "services-sotw",
-});
-```
-
-### `consumer.kubernetes.patcher({ gvk, topic }[, fn])`
-
-This installs a Kubernetes consumer that applies merge-style patches from a topic onto existing
-objects.
-
-An optional callback `fn(entries)` can transform each batch before it is applied:
-
-- return a new entries array to apply transformed output;
-- return `undefined` to pass through the original entries unchanged;
-- return `null` to drop the batch.
-
-```js
-consumer.kubernetes.patcher({
-  gvk: "v1/Service",
-  topic: "desired-services",
-});
-
-consumer.kubernetes.patcher({
-  gvk: "v1/Service",
-  topic: "desired-services",
-}, (entries) => {
-  return entries.filter(([doc, _w]) => doc?.metadata?.name !== "kubernetes");
-});
-```
-
-Use this when the pipeline output is a partial object that should update an existing resource.
-
-### `consumer.kubernetes.updater({ gvk, topic }[, fn])`
-
-This installs a Kubernetes consumer that writes whole objects from a topic.
-
-Optional callback semantics are the same as for `consumer.kubernetes.patcher(...)`.
-
-```js
-consumer.kubernetes.updater({
-  gvk: "apps/v1/Deployment",
-  topic: "deployments-full",
-});
-```
-
-Use this when the pipeline emits the full desired object rather than a patch.
-
-In short: plain `subscribe(...)` callbacks are sink observers (return value is ignored), while
-connector callbacks (`producer.kubernetes.*`, `consumer.kubernetes.*`) are transform callbacks
-(return value controls the forwarded batch).
-
-### `producer.jsonl(...)` and `consumer.redis(...)`
-
-These entry points exist today but are placeholders. In the current implementation,
-`producer.jsonl(...)` and `consumer.redis(...)` return a not-implemented error.
 
 ## Current limitations
 
