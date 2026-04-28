@@ -743,4 +743,21 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("branch dependency graph must be a DAG"))
 	})
+
+	It("rejects nested branch arrays inside a branch", func() {
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"final"}))
+		_, err := c.CompileString(`[
+			[
+				{"@inputs":["Pod"]},
+				[
+					{"@inputs":["Pod"]},
+					{"@project":{"name":"$.metadata.name"}},
+					{"@output":"inner"}
+				],
+				{"@output":"final"}
+			]
+		]`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("parse branch[0]: expected pipeline array/object"))
+	})
 })
