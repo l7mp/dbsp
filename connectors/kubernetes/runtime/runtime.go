@@ -230,6 +230,10 @@ func (r *Runtime) GetRESTMapper() meta.RESTMapper { return r.restMapper }
 // GetAPIServer returns the embedded API server, or nil if it was not configured.
 func (r *Runtime) GetAPIServer() *apiserver.APIServer { return r.apiServer }
 
+// GetRESTConfig returns the REST config used to create this runtime, or nil when
+// created without native Kubernetes support.
+func (r *Runtime) GetRESTConfig() *rest.Config { return r.cfg.RESTConfig }
+
 // GenerateKubeconfig generates a kubeconfig for accessing the embedded API server with a JWT
 // token for the given username. Returns an error if no API server or auth was configured.
 func (r *Runtime) GenerateKubeconfig(username string, opts *kauth.KubeconfigOptions) (*clientcmdapi.Config, error) {
