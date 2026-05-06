@@ -7,6 +7,7 @@ import (
 
 	"github.com/l7mp/dbsp/engine/expression"
 	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
+	"github.com/l7mp/dbsp/engine/internal/utils"
 	"github.com/l7mp/dbsp/engine/operator"
 
 	"gonum.org/v1/gonum/graph"
@@ -37,6 +38,7 @@ type stageSpec struct {
 	Projection expression.Expression
 	UnwindPath string
 	GroupBy    operator.Operator
+	Distinct   bool
 }
 
 func parseProgram(source []byte, sources, outputs []string) (*program, error) {
@@ -231,6 +233,11 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 			return s, err
 		}
 		s.GroupBy = op
+	case "@distinct":
+		if err := utils.ValidateNullaryArgs(stage.Args, stage.Op); err != nil {
+			return s, wrapStageErr(i, stage.Op, "arguments", stage.Args, err)
+		}
+		s.Distinct = true
 	case "@aggregate", "@gather", "@mux":
 		return s, wrapStageErr(i, stage.Op, "stage", stage.Args, fmt.Errorf("%s is not supported; use @groupBy and @project", stage.Op))
 	default:
@@ -238,7 +245,6 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 	}
 	return s, nil
 }
-
 func parseJoinArgs(args json.RawMessage) (expression.Expression, []string, error) {
 	var list []json.RawMessage
 	if err := json.Unmarshal(args, &list); err == nil {

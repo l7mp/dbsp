@@ -74,7 +74,7 @@ After incrementalization, the join tracks what it has seen from each side so tha
 
 ## The aggregation compiler
 
-The aggregation compiler accepts JSON pipelines where each stage is an object with a single `@`-prefixed key. Stages execute in sequence, each transforming the Z-set produced by the previous stage. The [`@join`](reference-aggregations.md#multi-source-pipelines-join), [`@select`](reference-aggregations.md#filtering-select), [`@project`](reference-aggregations.md#reshaping-project), [`@unwind`](reference-aggregations.md#expanding-lists-unwind), and [`@groupBy`](reference-aggregations.md#grouping-groupby) stages are covered in the aggregation reference. This is the compiler used by the Kubernetes operator's declarative controller spec.
+The aggregation compiler accepts JSON pipelines where each stage is an object with a single `@`-prefixed key. Stages execute in sequence, each transforming the Z-set produced by the previous stage. The [`@join`](reference-aggregations.md#multi-source-pipelines-join), [`@select`](reference-aggregations.md#filtering-select), [`@project`](reference-aggregations.md#reshaping-project), [`@unwind`](reference-aggregations.md#expanding-lists-unwind), [`@distinct`](reference-aggregations.md#deduplication-distinct), and [`@groupBy`](reference-aggregations.md#grouping-groupby) stages are covered in the aggregation reference. This is the compiler used by the Kubernetes operator's declarative controller spec.
 
 ```js
 const c = aggregate.compile([

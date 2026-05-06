@@ -373,6 +373,13 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 			if err := compiled.AddNode(circuit.Op(id, stage.GroupBy)); err != nil {
 				return "", err
 			}
+		case "@distinct":
+			if !stage.Distinct {
+				return "", wrapStageErr(stage.Index, stage.Op, "arguments", stage.RawArgs, fmt.Errorf("missing parsed distinct op"))
+			}
+			if err := compiled.AddNode(circuit.Op(id, operator.NewDistinct())); err != nil {
+				return "", err
+			}
 		case "@aggregate", "@gather", "@mux":
 			return "", wrapStageErr(stage.Index, stage.Op, "stage", stage.RawArgs, fmt.Errorf("%s is not supported; use @groupBy and @project", stage.Op))
 		default:

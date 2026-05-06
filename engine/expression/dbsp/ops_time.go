@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/l7mp/dbsp/engine/expression"
+	"github.com/l7mp/dbsp/engine/internal/utils"
 )
 
 // nowExpr implements @now - returns the current UTC timestamp.
@@ -22,6 +23,9 @@ func (e *nowExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 
 func init() {
 	MustRegister("@now", func(args any) (Expression, error) {
+		if err := utils.ValidateNullaryArgs(args, "@now"); err != nil {
+			return nil, err
+		}
 		return &nowExpr{nullaryOp{"@now"}}, nil
 	})
 }

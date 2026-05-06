@@ -61,6 +61,7 @@ It helps to think of the pipeline as working on one document at a time.
 - `@select` decides whether the document stays in the stream.
 - `@project` reshapes it.
 - `@unwind` turns one document into many.
+- `@distinct` collapses duplicates into set membership.
 - `@groupBy` turns many documents into grouped summary documents.
 - `@join` combines several source streams into one stream of compound documents.
 
@@ -293,6 +294,38 @@ Nested unwind is also allowed:
 
 This first expands the top-level `endpoints` list, then expands the `addresses` list inside each
 endpoint.
+
+## Deduplication: `@distinct`
+
+`@distinct` converts a Z-set into set membership.
+
+Its argument must be nullary: either explicit `null` or an empty object `{}`:
+
+```yaml
+"@distinct": null
+```
+
+```yaml
+"@distinct": {}
+```
+
+For each document hash, `@distinct` emits weight `1` when the accumulated multiplicity is positive,
+and emits nothing otherwise. This is useful after projection when several inputs can map to the same
+output object.
+
+```yaml
+[
+  {"@project": {name: "$.metadata.name", namespace: "$.metadata.namespace"}},
+  {"@distinct": null}
+]
+```
+
+In incremental mode, membership transitions are emitted as deltas:
+
+- `0 -> 1` emits `+1`,
+- `1 -> 2` emits `0`,
+- `2 -> 1` emits `0`,
+- `1 -> 0` emits `-1`.
 
 ## Grouping: `@groupBy`
 

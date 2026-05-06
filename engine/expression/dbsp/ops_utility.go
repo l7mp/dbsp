@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 
 	"github.com/l7mp/dbsp/engine/expression"
+	"github.com/l7mp/dbsp/engine/internal/utils"
 )
 
 // noopExpr implements @noop - returns nil.
@@ -227,9 +228,15 @@ func (e *isNilExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 
 func init() {
 	MustRegister("@noop", func(args any) (Expression, error) {
+		if err := utils.ValidateNullaryArgs(args, "@noop"); err != nil {
+			return nil, err
+		}
 		return &noopExpr{nullaryOp{"@noop"}}, nil
 	})
 	MustRegister("@subject", func(args any) (Expression, error) {
+		if err := utils.ValidateNullaryArgs(args, "@subject"); err != nil {
+			return nil, err
+		}
 		return &subjectExpr{nullaryOp{"@subject"}}, nil
 	})
 	MustRegister("@hash", func(args any) (Expression, error) {

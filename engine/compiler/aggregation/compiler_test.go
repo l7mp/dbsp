@@ -10,6 +10,7 @@ import (
 	"github.com/l7mp/dbsp/engine/executor"
 	"github.com/l7mp/dbsp/engine/internal/logger"
 	"github.com/l7mp/dbsp/engine/operator"
+	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -561,6 +562,70 @@ var _ = Describe("Aggregation compiler parity", func() {
 		sort.Slice(items, func(i, j int) bool { return items[i].(int64) < items[j].(int64) })
 		Expect(key).To(Equal("default"))
 		Expect(items).To(Equal([]any{int64(1), int64(2)}))
+	})
+
+	It("supports @distinct with explicit null argument", func() {
+		exec, outID := makeExec([]string{"pod"}, `[{"@distinct":null}]`)
+
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		in := zset.New()
+		in.Insert(doc, 2)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": in})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(outs[outID].Size()).To(Equal(1))
+		Expect(outs[outID].Lookup(doc.Hash())).To(Equal(zset.Weight(1)))
+	})
+
+	It("supports @distinct with empty object argument", func() {
+		exec, outID := makeExec([]string{"pod"}, `[{"@distinct":{}}]`)
+
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		in := zset.New()
+		in.Insert(doc, 2)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": in})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(outs[outID].Size()).To(Equal(1))
+		Expect(outs[outID].Lookup(doc.Hash())).To(Equal(zset.Weight(1)))
+	})
+
+	It("rejects @distinct with non-empty object arguments", func() {
+		c := New(toIdentityBindings([]string{"pod"}), toIdentityBindings([]string{"output"}))
+		_, err := c.CompileString(`[{"@distinct":{"mode":"strict"}}]`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("pipeline parse error"))
+		Expect(err.Error()).To(ContainSubstring("argument must be null or empty object"))
+	})
+
+	It("incrementalizes @distinct with distinct-H lowering and correct deltas", func() {
+		c := New(toIdentityBindings([]string{"pod"}), toIdentityBindings([]string{"output"}))
+		q, err := c.CompileString(`[{"@distinct":null}]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		incr, err := transform.NewIncrementalizer().Transform(q.Circuit)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(incr.Node("b0_op_0^Δ_H_func")).NotTo(BeNil())
+
+		exec, err := executor.New(incr, logger.DiscardLogger())
+		Expect(err).NotTo(HaveOccurred())
+
+		inID := q.InputMap["pod"]
+		outID := q.OutputMap["output"]
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		steps := []zset.ZSet{
+			zset.New().WithElems(zset.Elem{Document: doc, Weight: 1}),
+			zset.New().WithElems(zset.Elem{Document: doc, Weight: 1}),
+			zset.New().WithElems(zset.Elem{Document: doc, Weight: -1}),
+			zset.New().WithElems(zset.Elem{Document: doc, Weight: -1}),
+		}
+		expected := []zset.Weight{1, 0, 0, -1}
+
+		for i, delta := range steps {
+			outs, err := exec.Execute(map[string]zset.ZSet{inID: delta})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(outs[outID].Lookup(doc.Hash())).To(Equal(expected[i]))
+		}
 	})
 
 	It("exposes unwind nameAppend flag in compiled operator", func() {

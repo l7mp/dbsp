@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/l7mp/dbsp/engine/expression"
+	"github.com/l7mp/dbsp/engine/internal/utils"
 )
 
 // nilExpr implements @nil.
@@ -161,6 +162,9 @@ func (e *constExpr) String() string { return fmt.Sprintf("%v", e.value) }
 
 func init() {
 	MustRegister("@nil", func(args any) (Expression, error) {
+		if err := utils.ValidateNullaryArgs(args, "@nil"); err != nil {
+			return nil, err
+		}
 		return &nilExpr{}, nil
 	})
 	MustRegister("@bool", func(args any) (Expression, error) {

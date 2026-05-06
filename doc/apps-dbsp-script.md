@@ -534,7 +534,7 @@ kubernetes.watch("pods-raw", { gvk: "v1/Pod", labels });
 // Project to pod identity and deduplicate.
 aggregate.compile([
     { "@project": { "name": "$.metadata.name", "namespace": "$.metadata.namespace" } },
-    { "@distinct": {} },
+    { "@distinct": null },
 ], { inputs: "pods-raw", output: "pods" }).transform("Incrementalizer").validate();
 
 // Shared filter circuit: keep only error-level documents.

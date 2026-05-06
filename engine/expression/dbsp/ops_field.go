@@ -7,6 +7,7 @@ import (
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/expression"
+	"github.com/l7mp/dbsp/engine/internal/utils"
 )
 
 // copyExpr implements @copy - returns document fields as map[string]any.
@@ -207,8 +208,8 @@ func evaluateFieldPath(ctx *expression.EvalContext, field Expression, opName str
 
 func init() {
 	MustRegister("@copy", func(args any) (Expression, error) {
-		if args != nil {
-			return nil, fmt.Errorf("@copy: expected null argument")
+		if err := utils.ValidateNullaryArgs(args, "@copy"); err != nil {
+			return nil, err
 		}
 		return &copyExpr{nullaryOp{"@copy"}}, nil
 	})

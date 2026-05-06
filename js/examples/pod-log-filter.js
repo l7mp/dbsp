@@ -35,7 +35,7 @@ kubernetes.watch("pods-raw", { gvk: "v1/Pod", labels });
 // stream replays existing pods or delivers update events for the same pod.
 aggregate.compile([
     { "@project": { "name": "$.metadata.name", "namespace": "$.metadata.namespace" } },
-    { "@distinct": {} },
+    { "@distinct": null },
 ], {
     inputs: "pods-raw",
     output: "pods",

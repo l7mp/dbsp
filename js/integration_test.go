@@ -1385,6 +1385,52 @@ c.transform("Incrementalizer").validate();
 		Expect(rows).To(Equal([]string{"1:pod-a"}))
 	})
 
+	It("doc snippet basics: aggregate distinct emits membership deltas", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("doc-basics-distinct", vm.runtime, "distinct-pods")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {name: "$.metadata.name"}},
+  {"@distinct": null}
+], {inputs: "pods", outputs: ["distinct-pods"]});
+c.transform("Incrementalizer").validate();
+
+publish("pods", [[{metadata:{name:"pod-a"}}, 1]]);
+publish("pods", [[{metadata:{name:"pod-a"}}, 1]]);
+publish("pods", [[{metadata:{name:"pod-a"}}, -1]]);
+publish("pods", [[{metadata:{name:"pod-a"}}, -1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+
+			hasAdd := false
+			hasDel := false
+			for _, ev := range events {
+				for _, row := range zsetRowsByField(ev, "name") {
+					if row == "1:pod-a" {
+						hasAdd = true
+					}
+					if row == "-1:pod-a" {
+						hasDel = true
+					}
+				}
+			}
+
+			return hasAdd && hasDel
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+	})
+
 	It("doc snippet runtime: publish and subscribe shorthands", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

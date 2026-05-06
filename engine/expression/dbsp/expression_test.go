@@ -526,6 +526,16 @@ var _ = Describe("Field Operators", func() {
 		Expect(result).To(Equal(subject))
 	})
 
+	It("should evaluate explicit @subject with empty object argument", func() {
+		subject := map[string]any{"name": "pod-a", "ready": true}
+		expr, err := dbsp.Compile([]byte(`{"@subject": {}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil).WithSubject(subject))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(subject))
+	})
+
 	It("should evaluate $$.field shorthand", func() {
 		expr, err := dbsp.Compile([]byte(`"$$.name"`))
 		Expect(err).NotTo(HaveOccurred())
@@ -549,6 +559,18 @@ var _ = Describe("Field Operators", func() {
 	It("should evaluate explicit @copy", func() {
 		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
 		expr, err := dbsp.Compile([]byte(`{"@copy": null}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		m, ok := result.(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(m).To(HaveKey("metadata"))
+	})
+
+	It("should evaluate explicit @copy with empty object argument", func() {
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		expr, err := dbsp.Compile([]byte(`{"@copy": {}}`))
 		Expect(err).NotTo(HaveOccurred())
 
 		result, err := expr.Evaluate(expression.NewContext(doc))
@@ -747,6 +769,15 @@ var _ = Describe("Utility Operators", func() {
 		Expect(result).To(BeNil())
 	})
 
+	It("should evaluate @noop with empty object argument", func() {
+		expr, err := dbsp.Compile([]byte(`{"@noop": {}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(BeNil())
+	})
+
 	It("should evaluate @hash", func() {
 		expr, err := dbsp.Compile([]byte(`{"@hash": "test"}`))
 		Expect(err).NotTo(HaveOccurred())
@@ -827,6 +858,19 @@ var _ = Describe("Time Operators", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("should evaluate @now with empty object argument", func() {
+		expr, err := dbsp.Compile([]byte(`{"@now": {}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+
+		ts, ok := result.(string)
+		Expect(ok).To(BeTrue())
+		_, err = time.Parse(time.RFC3339, ts)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("should honor frozen @now from eval context", func() {
 		expr, err := dbsp.Compile([]byte(`{"@now": null}`))
 		Expect(err).NotTo(HaveOccurred())
@@ -835,6 +879,20 @@ var _ = Describe("Time Operators", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("2026-01-02T03:04:05Z"))
 	})
+})
+
+var _ = Describe("Nullary Operator Arguments", func() {
+	DescribeTable("rejects non-empty object arguments", func(expr string) {
+		_, err := dbsp.CompileString(expr)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("argument must be null or empty object"))
+	},
+		Entry("@copy", `{"@copy":{"unexpected":1}}`),
+		Entry("@noop", `{"@noop":{"unexpected":1}}`),
+		Entry("@subject", `{"@subject":{"unexpected":1}}`),
+		Entry("@now", `{"@now":{"unexpected":1}}`),
+		Entry("@nil", `{"@nil":{"unexpected":1}}`),
+	)
 })
 
 var _ = Describe("String Operators", func() {
