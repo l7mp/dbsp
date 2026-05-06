@@ -6,6 +6,8 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
@@ -69,39 +71,66 @@ func (c *Updater) String() string {
 
 func (c *Updater) upsert(ctx context.Context, desired *unstructured.Unstructured) error {
 	key := client.ObjectKeyFromObject(desired)
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(desired.GroupVersionKind())
-	obj.SetName(desired.GetName())
-	obj.SetNamespace(desired.GetNamespace())
+	mainContent := runtime.DeepCopyJSON(desired.UnstructuredContent())
+	statusValue, hasStatus := mainContent["status"]
+	if hasStatus {
+		delete(mainContent, "status")
+	}
 
-	_, err := createOrUpdate(ctx, c.client, obj, func() error {
-		for k := range obj.UnstructuredContent() {
-			if k == "metadata" {
-				continue
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &unstructured.Unstructured{}
+		current.SetGroupVersionKind(desired.GroupVersionKind())
+		current.SetName(desired.GetName())
+		current.SetNamespace(desired.GetNamespace())
+
+		err := c.client.Get(ctx, key, current)
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
 			}
-			if _, ok, _ := unstructured.NestedFieldNoCopy(desired.UnstructuredContent(), k); !ok {
-				unstructured.RemoveNestedField(obj.UnstructuredContent(), k)
-			}
+
+			obj := &unstructured.Unstructured{}
+			obj.SetUnstructuredContent(runtime.DeepCopyJSON(mainContent))
+			obj.SetGroupVersionKind(desired.GroupVersionKind())
+			obj.SetName(desired.GetName())
+			obj.SetNamespace(desired.GetNamespace())
+			return c.client.Create(ctx, obj)
 		}
 
-		for k, v := range desired.UnstructuredContent() {
-			if k == "metadata" {
-				continue
-			}
-			if err := unstructured.SetNestedField(obj.UnstructuredContent(), v, k); err != nil {
-				c.log.Error(err, "update field failed", "key", key.String(), "field", k)
-			}
-		}
-
-		mergeMetadata(obj, desired)
+		obj := &unstructured.Unstructured{}
+		obj.SetUnstructuredContent(runtime.DeepCopyJSON(mainContent))
 		obj.SetGroupVersionKind(desired.GroupVersionKind())
 		obj.SetName(desired.GetName())
 		obj.SetNamespace(desired.GetNamespace())
-		return nil
+		obj.SetResourceVersion(current.GetResourceVersion())
+		return c.client.Update(ctx, obj)
 	})
-
-	if err != nil && !apierrors.IsNotFound(err) {
+	if err != nil {
 		return fmt.Errorf("consumer updater %s: %w", key.String(), err)
+	}
+
+	if hasStatus && !isViewObject(desired) {
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			latest := &unstructured.Unstructured{}
+			latest.SetGroupVersionKind(desired.GroupVersionKind())
+			latest.SetName(desired.GetName())
+			latest.SetNamespace(desired.GetNamespace())
+			if err := c.client.Get(ctx, key, latest); err != nil {
+				return err
+			}
+
+			statusObj := &unstructured.Unstructured{}
+			statusObj.SetUnstructuredContent(map[string]any{})
+			statusObj.SetGroupVersionKind(desired.GroupVersionKind())
+			statusObj.SetName(desired.GetName())
+			statusObj.SetNamespace(desired.GetNamespace())
+			statusObj.SetResourceVersion(latest.GetResourceVersion())
+			statusObj.Object["status"] = runtime.DeepCopyJSONValue(statusValue)
+
+			return c.client.Status().Update(ctx, statusObj)
+		}); err != nil {
+			return fmt.Errorf("consumer updater %s status: %w", key.String(), err)
+		}
 	}
 
 	return nil

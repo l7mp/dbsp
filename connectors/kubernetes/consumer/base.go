@@ -8,12 +8,8 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
@@ -359,110 +355,4 @@ func normalizeResultObject(obj kobject.Object, target schema.GroupVersionKind) k
 func isViewObject(obj client.Object) bool {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	return viewv1a1.IsViewKind(gvk)
-}
-
-func createOrUpdate(ctx context.Context, c client.Client, obj kobject.Object, f controllerutil.MutateFn) (controllerutil.OperationResult, error) {
-	key := client.ObjectKeyFromObject(obj)
-	if err := c.Get(ctx, key, obj); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return controllerutil.OperationResultNone, err
-		}
-		if err := mutate(f, key, obj); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
-		if err := c.Create(ctx, obj); err != nil {
-			goto update
-		}
-		return controllerutil.OperationResultCreated, nil
-	}
-
-update:
-	if err := mutate(f, key, obj); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	newStatus, hasStatus, _ := unstructured.NestedMap(obj.UnstructuredContent(), "status")
-	if err := c.Update(ctx, obj); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	if hasStatus && !isViewObject(obj) {
-		if err := unstructured.SetNestedMap(obj.UnstructuredContent(), newStatus, "status"); err == nil {
-			if err := c.Status().Update(ctx, obj); err != nil {
-				return controllerutil.OperationResultNone, err
-			}
-		}
-	}
-
-	return controllerutil.OperationResultUpdated, nil
-}
-
-func updateWithStatus(ctx context.Context, c client.Client, obj kobject.Object) error {
-	savedStatus, hasStatus, _ := unstructured.NestedMap(obj.UnstructuredContent(), "status")
-	key := client.ObjectKeyFromObject(obj)
-	firstAttempt := true
-
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		if !firstAttempt {
-			latest := kobject.New()
-			latest.SetGroupVersionKind(obj.GroupVersionKind())
-			latest.SetName(key.Name)
-			latest.SetNamespace(key.Namespace)
-			if err := c.Get(ctx, key, latest); err != nil {
-				return err
-			}
-			obj.SetResourceVersion(latest.GetResourceVersion())
-		}
-		firstAttempt = false
-
-		if err := c.Update(ctx, obj); err != nil {
-			return err
-		}
-
-		if hasStatus && !isViewObject(obj) {
-			if err := unstructured.SetNestedMap(obj.UnstructuredContent(), savedStatus, "status"); err == nil {
-				if err := c.Status().Update(ctx, obj); err != nil {
-					return err
-				}
-			}
-		}
-
-		return nil
-	})
-}
-
-func mutate(f controllerutil.MutateFn, key client.ObjectKey, obj client.Object) error {
-	if err := f(); err != nil {
-		return err
-	}
-	if newKey := client.ObjectKeyFromObject(obj); key != newKey {
-		return fmt.Errorf("MutateFn cannot mutate object name and/or object namespace")
-	}
-	return nil
-}
-
-func mergeMetadata(obj, newObj kobject.Object) {
-	labels := obj.GetLabels()
-	newLabels := newObj.GetLabels()
-	if newLabels != nil {
-		if labels == nil {
-			labels = map[string]string{}
-		}
-		for k, v := range newLabels {
-			labels[k] = v
-		}
-		obj.SetLabels(labels)
-	}
-
-	annotations := obj.GetAnnotations()
-	newAnnotations := newObj.GetAnnotations()
-	if newAnnotations != nil {
-		if annotations == nil {
-			annotations = map[string]string{}
-		}
-		for k, v := range newAnnotations {
-			annotations[k] = v
-		}
-		obj.SetAnnotations(annotations)
-	}
 }
