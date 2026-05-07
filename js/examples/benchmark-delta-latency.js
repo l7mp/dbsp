@@ -9,7 +9,7 @@ aggregate.compile([
   {"@project": {"$.": "$."}}
 ], {
   inputs: "Pod",
-  output: "output"
+  outputs: ["output"]
 }).transform("Incrementalizer").validate();
 
 let count = 0;

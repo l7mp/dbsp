@@ -16,10 +16,9 @@
 // and no patch is emitted for an annotation-removal disturbance.  
 
 // === Input: list Service snapshots on each watch tick ===
-producer.kubernetes.list({
+kubernetes.list("services", {
     gvk:       "v1/Service",
     namespace: "default",
-    topic:     "services",
 }, (entries) => {
     console.log("=== input service watcher === ", entries);
     return entries;
@@ -42,13 +41,12 @@ aggregate.compile(
             spec: "$.spec",
         }},
     ],
-    { inputs: ["services"], output: "desired-services" }
+    { inputs: ["services"], outputs: ["desired-services"] }
 );   // No .transform("Incrementalizer") — SotW: full desired state each tick.
 
 // === Output: apply U to the cluster via merge-patch ===
-consumer.kubernetes.patcher({
-    gvk:   "v1/Service",
-    topic: "desired-services",
+kubernetes.patch("desired-services", {
+    gvk: "v1/Service",
 }, (entries) => {
     console.log("=== desired service watcher === ", entries);
     return entries;

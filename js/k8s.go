@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/dop251/goja"
@@ -20,6 +21,63 @@ import (
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 )
+
+// describeCall summarises the arguments of a goja call, for use in error
+// messages when the JS call shape is wrong (e.g. caller passed an opts
+// object as the first positional argument). The output is short and
+// human-readable: '2 arguments: string "foo", object {gvk, namespace}'.
+func describeCall(call goja.FunctionCall) string {
+	n := len(call.Arguments)
+	if n == 0 {
+		return "0 arguments"
+	}
+	parts := make([]string, n)
+	for i, a := range call.Arguments {
+		parts[i] = describeArg(a)
+	}
+	return fmt.Sprintf("%d argument(s): %s", n, strings.Join(parts, ", "))
+}
+
+// describeArg returns a short human-readable description of a JS value's
+// shape (kind, plus a hint of the contents) for error messages.
+func describeArg(a goja.Value) string {
+	if a == nil || goja.IsUndefined(a) {
+		return "undefined"
+	}
+	if goja.IsNull(a) {
+		return "null"
+	}
+	if _, ok := goja.AssertFunction(a); ok {
+		return "function"
+	}
+	switch v := a.Export().(type) {
+	case string:
+		s := v
+		if len(s) > 32 {
+			s = s[:29] + "..."
+		}
+		return fmt.Sprintf("string %q", s)
+	case bool:
+		return fmt.Sprintf("bool %v", v)
+	case int64:
+		return fmt.Sprintf("number %d", v)
+	case float64:
+		return fmt.Sprintf("number %v", v)
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		if len(keys) > 5 {
+			keys = append(keys[:5:5], "...")
+		}
+		return fmt.Sprintf("object {%s}", strings.Join(keys, ", "))
+	case []any:
+		return fmt.Sprintf("array (length=%d)", len(v))
+	}
+	return a.ExportType().String()
+}
 
 func newKubernetesClientset(cfg *rest.Config) (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(cfg)
@@ -66,9 +124,12 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 	}
 
 	if len(call.Arguments) < 2 {
-		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels}[, callback]) requires topic and options", kind)
+		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels}[, callback]): expected (string topic, object opts), got %s", kind, describeCall(call))
 	}
 
+	if _, ok := call.Argument(0).Export().(string); !ok {
+		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels}[, callback]): expected (string topic, object opts), got %s", kind, describeCall(call))
+	}
 	topic := call.Argument(0).String()
 	if topic == "" {
 		return nil, fmt.Errorf("%s: empty topic", kind)
@@ -171,9 +232,12 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 	}
 
 	if len(call.Arguments) < 2 {
-		return nil, fmt.Errorf("%s(topic, {gvk}) requires topic and options", kind)
+		return nil, fmt.Errorf("%s(topic, {gvk}): expected (string topic, object opts), got %s", kind, describeCall(call))
 	}
 
+	if _, ok := call.Argument(0).Export().(string); !ok {
+		return nil, fmt.Errorf("%s(topic, {gvk}): expected (string topic, object opts), got %s", kind, describeCall(call))
+	}
 	topic := call.Argument(0).String()
 	if topic == "" {
 		return nil, fmt.Errorf("%s: empty topic", kind)

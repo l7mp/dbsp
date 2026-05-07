@@ -23,10 +23,9 @@
 // with a @select stage that distinguishes "annotation present" from "absent".
 
 // === Input: watch Service default/iperf-server ===
-producer.kubernetes.watch({
+kubernetes.watch("services", {
     gvk:       "v1/Service",
     namespace: "default",
-    topic:     "services",
 }, (entries) => {
     console.log("=== input service watcher === ", entries);
     return entries;
@@ -48,16 +47,15 @@ aggregate.compile(
             { "$.metadata.annotations.dbsp-sentinel": "true" },
         ]},
     ],
-    { inputs: ["services"], output: "desired-services" }
+    { inputs: ["services"], outputs: ["desired-services"] }
 ).transform("Optimizer", {
     // Explicit pair using topic names; runtime maps them to input_*/output_* node IDs.
     pairs: [["services", "desired-services"]],
 }).validate();
 
 // === Output: apply U to the cluster via full-object update ===
-consumer.kubernetes.updater({
-    gvk:   "v1/Service",
-    topic: "desired-services",
+kubernetes.update("desired-services", {
+    gvk: "v1/Service",
 }, (entries) => {
     console.log("=== desired service watcher === ", entries);
     return entries;

@@ -1,13 +1,14 @@
 // Hypothetical JS rewrite of join_project.dbsp.
 //
 // Globals injected by the Go/goja host:
-//   sql, aggregate                   - compilers
-//   publish(topic, entries)          - generic Z-set publisher
-//   producer.kubernetes.watch(opts)  - K8s watch producer
-//   subscribe(topic, fn)             - generic callback subscriber
-//   consumer.kubernetes.patcher(opts)
-//   consumer.kubernetes.updater(opts)
-//   runtime.* aliases for all calls + runtime.onError(fn)
+//   sql, aggregate                          - compilers
+//   publish(topic, entries)                 - generic Z-set publisher
+//   subscribe(topic, fn)                    - generic callback subscriber
+//   kubernetes.watch(topic, opts[, cb])     - K8s watch producer
+//   kubernetes.list(topic, opts[, cb])      - K8s list producer
+//   kubernetes.patch(topic, opts[, cb])     - K8s merge-patch consumer
+//   kubernetes.update(topic, opts[, cb])    - K8s full-object update consumer
+//   runtime.onError(fn)                     - subscribe to runtime errors
 
 runtime.onError((e) => {
     console.error(`[runtime:${e.origin}] ${e.message}`);

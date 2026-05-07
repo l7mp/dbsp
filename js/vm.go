@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -202,6 +203,7 @@ func (v *VM) runSourceAsModule(name, src string) error {
 	}
 
 	wrapped := fmt.Sprintf("(async () => {\n%s\n})();", src)
+	userLines := strings.Count(src, "\n") + 1
 	done := make(chan error, 1)
 	var settleOnce sync.Once
 	settle := func(err error) {
@@ -227,7 +229,7 @@ func (v *VM) runSourceAsModule(name, src string) error {
 			settle(nil)
 			return nil
 		case goja.PromiseStateRejected:
-			settle(fmt.Errorf("top-level await rejected: %v", promise.Result()))
+			settle(fmt.Errorf("top-level await rejected: %s", formatRejectionReason(promise.Result(), name, userLines)))
 			return nil
 		}
 
@@ -242,7 +244,7 @@ func (v *VM) runSourceAsModule(name, src string) error {
 		})
 		rejectHandler := rt.ToValue(func(call goja.FunctionCall) goja.Value {
 			reason := call.Argument(0)
-			settle(fmt.Errorf("top-level await rejected: %v", reason))
+			settle(fmt.Errorf("top-level await rejected: %s", formatRejectionReason(reason, name, userLines)))
 			return goja.Undefined()
 		})
 
@@ -258,6 +260,56 @@ func (v *VM) runSourceAsModule(name, src string) error {
 	case <-v.ctx.Done():
 		return v.ctx.Err()
 	}
+}
+
+// formatRejectionReason renders a promise rejection in a developer-friendly
+// way. If the reason is an Error-like object we use its .stack (which goja
+// captures at the throw site, including frames into native Go callbacks),
+// then strip the +1 line offset introduced by the async-wrapper in
+// runSourceAsModule. Falls back to the value's String() form.
+func formatRejectionReason(reason goja.Value, scriptPath string, userLines int) string {
+	if reason == nil {
+		return "<nil>"
+	}
+	msg := reason.String()
+	if obj, ok := reason.(*goja.Object); ok {
+		if s := obj.Get("stack"); s != nil && !goja.IsUndefined(s) && !goja.IsNull(s) {
+			msg = s.String()
+		}
+	}
+	return adjustWrapperLines(msg, scriptPath, userLines)
+}
+
+// adjustWrapperLines rewrites stack-trace lines that point at scriptPath:
+// frames from the wrapper itself (the leading "(async () => {" and the
+// trailing "})();") are dropped, and surviving frames have their line
+// number decremented by 1 so they refer to the user's source. userLines is
+// the number of lines in the original (un-wrapped) source.
+func adjustWrapperLines(s, scriptPath string, userLines int) string {
+	if scriptPath == "" {
+		return s
+	}
+	pathRe := regexp.MustCompile(regexp.QuoteMeta(scriptPath) + `:(\d+):(\d+)`)
+	out := make([]string, 0, strings.Count(s, "\n")+1)
+	for _, line := range strings.Split(s, "\n") {
+		m := pathRe.FindStringSubmatch(line)
+		if m == nil {
+			out = append(out, line)
+			continue
+		}
+		wrappedLn, err := strconv.Atoi(m[1])
+		if err != nil {
+			out = append(out, line)
+			continue
+		}
+		// The wrapper occupies wrapped-source lines 1 (header) and
+		// userLines+2 (footer); user code lives in wrapped lines 2..userLines+1.
+		if wrappedLn < 2 || wrappedLn > userLines+1 {
+			continue
+		}
+		out = append(out, pathRe.ReplaceAllString(line, fmt.Sprintf("%s:%d:$2", scriptPath, wrappedLn-1)))
+	}
+	return strings.Join(out, "\n")
 }
 
 func (v *VM) runEventLoop() error {

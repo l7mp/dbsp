@@ -6,7 +6,9 @@ runtime.onError((e) => {
 
 aggregate.compile(
     [
-        { "@join":    { "@eq": ["$.pods.metadata.labels.app", "$.services.spec.selector.app"] } },
+        { "@join":    {
+            "@eq": ["$.pods.metadata.labels.app", "$.services.spec.selector.app"] }
+        },
         { "@groupBy": ["$.services.metadata.name", "$.pods.status.podIP"] },
         { "@project": { metadata: { name: "$.key" }, endpoints: "$.values" } },
     ], {

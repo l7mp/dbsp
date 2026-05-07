@@ -7,43 +7,37 @@ runtime.onError((e) => {
 });
 
 function setupConnectors(topics) {
-  producer.kubernetes.watch(
+  kubernetes.watch(
+    topics.inputs.gatewayClass,
+    { gvk: "gateway.networking.k8s.io/v1/GatewayClass" },
+    (entries) => entries,
+  );
+
+  kubernetes.watch(
+    topics.inputs.gateway,
+    { gvk: "gateway.networking.k8s.io/v1/Gateway" },
+    (entries) => entries,
+  );
+
+  kubernetes.watch(
+    topics.inputs.secret,
+    { gvk: "v1/Secret" },
+    (entries) => entries,
+  );
+
+  kubernetes.patch(
+    topics.outputs.gatewayClassStatusPatch,
     {
       gvk: "gateway.networking.k8s.io/v1/GatewayClass",
-      topic: topics.inputs.gatewayClass,
-    },
-    (entries) => entries,
-  );
-
-  producer.kubernetes.watch(
-    {
-      gvk: "gateway.networking.k8s.io/v1/Gateway",
-      topic: topics.inputs.gateway,
-    },
-    (entries) => entries,
-  );
-
-  producer.kubernetes.watch(
-    {
-      gvk: "v1/Secret",
-      topic: topics.inputs.secret,
-    },
-    (entries) => entries,
-  );
-
-  consumer.kubernetes.patcher(
-    {
-      gvk: "gateway.networking.k8s.io/v1/GatewayClass",
-      topic: topics.outputs.gatewayClassStatusPatch,
       subresource: "status",
     },
     (entries) => entries,
   );
 
-  consumer.kubernetes.patcher(
+  kubernetes.patch(
+    topics.outputs.gatewayStatusPatch,
     {
       gvk: "gateway.networking.k8s.io/v1/Gateway",
-      topic: topics.outputs.gatewayStatusPatch,
       subresource: "status",
     },
     (entries) => entries,

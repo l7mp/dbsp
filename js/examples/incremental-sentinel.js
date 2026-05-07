@@ -23,10 +23,9 @@
 // with a @select stage that distinguishes "annotation present" from "absent".
 
 // === Input: watch Service default/iperf-server ===
-producer.kubernetes.watch({
+kubernetes.watch("services", {
     gvk:       "v1/Service",
     namespace: "default",
-    topic:     "services",
 }, (entries) => {
     console.log("=== input service watcher === ", entries);
     return entries;
@@ -49,15 +48,14 @@ aggregate.compile(
             spec: "$.spec",
         }},
     ],
-    { inputs: ["services"], output: "desired-services" }
+    { inputs: ["services"], outputs: ["desired-services"] }
 ).transform("Optimizer", {
     pairs: [["services", "desired-services"]],
 }).validate();   // Optimized incremental closed loop.
 
 // === Output: apply U to the cluster via merge-patch ===
-consumer.kubernetes.patcher({
-    gvk:   "v1/Service",
-    topic: "desired-services",
+kubernetes.patch("desired-services", {
+    gvk: "v1/Service",
 }, (entries) => {
     console.log("=== desired service watcher === ", entries);
     return entries;
