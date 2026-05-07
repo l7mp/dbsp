@@ -600,7 +600,7 @@ var _ = Describe("DelegatingViewCache", func() {
 			delegatingCache := NewDelegatingViewCache(sharedStorage, CacheOptions{Logger: logger})
 
 			// Wrap it in a CompositeCache (simulating what CacheInjector does)
-			compositeCache, err := NewCompositeCache(nil, CacheOptions{
+			compositeCache, err := NewCompositeCache(CacheOptions{
 				ViewCache: delegatingCache,
 				Logger:    logger,
 			})
@@ -615,7 +615,7 @@ var _ = Describe("DelegatingViewCache", func() {
 
 		It("should enable API server and operator to share view storage", func() {
 			// Simulate API server setup
-			apiCache, err := NewCompositeCache(nil, CacheOptions{Logger: logger})
+			apiCache, err := NewCompositeCache(CacheOptions{Logger: logger})
 			Expect(err).NotTo(HaveOccurred())
 			apiViewCache := apiCache.GetViewCache()
 
@@ -625,7 +625,7 @@ var _ = Describe("DelegatingViewCache", func() {
 			Expect(ok).To(BeTrue(), "API server view store should be *ViewCache")
 
 			delegatingCache := NewDelegatingViewCache(apiViewStorage, CacheOptions{Logger: logger})
-			operatorCache, err := NewCompositeCache(nil, CacheOptions{
+			operatorCache, err := NewCompositeCache(CacheOptions{
 				ViewCache: delegatingCache,
 				Logger:    logger,
 			})

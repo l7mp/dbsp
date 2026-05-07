@@ -18,7 +18,7 @@ import (
 // newTestStoreComponents creates the minimal store components needed for apiserver tests.
 func newTestStoreComponents() (compositeClient *store.CompositeClient, compositeDiscovery *store.CompositeDiscoveryClient, err error) {
 	compositeDiscovery = store.NewCompositeDiscoveryClient(nil)
-	compositeCache, err := store.NewCompositeCache(nil, store.CacheOptions{Logger: logr.Discard()})
+	compositeCache, err := store.NewCompositeCache(store.CacheOptions{Logger: logr.Discard()})
 	if err != nil {
 		return nil, nil, err
 	}

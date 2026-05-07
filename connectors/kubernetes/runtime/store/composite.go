@@ -26,7 +26,7 @@ type CompositeCache struct {
 // CacheOptions are generic caching options.
 type CacheOptions struct {
 	ctrlcache.Options
-	// DefaultCache is the controller-runtime store used for anything that is not a view.
+	// DefaultCache is an optional cache used for anything that is not a view.
 	DefaultCache Cache
 	// ViewCache is the view store used for anything that is a view.
 	ViewCache Cache
@@ -34,21 +34,15 @@ type CacheOptions struct {
 	Logger logr.Logger
 }
 
-// NewCompositeCache creates a new composite store. If the config is not nil it also creates a
-// controller-runtime store for storing native resources.
-func NewCompositeCache(config *rest.Config, opts CacheOptions) (*CompositeCache, error) {
+// NewCompositeCache creates a new composite store.
+//
+// View resources are always served from the view cache. Native resources are served from
+// opts.DefaultCache when it is set; otherwise native cache operations return an error.
+// Native API-server access for non-view resources is handled by CompositeClient directly.
+func NewCompositeCache(opts CacheOptions) (*CompositeCache, error) {
 	logger := opts.Logger
 	if logger.GetSink() == nil {
 		logger = logr.Discard()
-	}
-
-	defaultCache := opts.DefaultCache
-	if defaultCache == nil && config != nil {
-		dc, err := ctrlcache.New(config, opts.Options)
-		if err != nil {
-			return nil, err
-		}
-		defaultCache = dc
 	}
 
 	var viewCache ViewCacheInterface
@@ -66,7 +60,7 @@ func NewCompositeCache(config *rest.Config, opts CacheOptions) (*CompositeCache,
 	}
 
 	return &CompositeCache{
-		defaultCache: defaultCache,
+		defaultCache: opts.DefaultCache,
 		viewCache:    viewCache,
 		logger:       logger,
 		log:          logger.WithName("cache"),
@@ -76,11 +70,6 @@ func NewCompositeCache(config *rest.Config, opts CacheOptions) (*CompositeCache,
 // GetLogger returns the logger of the store.
 func (cc *CompositeCache) GetLogger() logr.Logger {
 	return cc.logger
-}
-
-// GetDefaultCache returns the store used for storing native objects.
-func (cc *CompositeCache) GetDefaultCache() Cache {
-	return cc.defaultCache
 }
 
 // GetViewCache returns the store used for storing view objects.
@@ -102,7 +91,10 @@ func (cc *CompositeCache) GetInformer(ctx context.Context, obj client.Object, op
 	if viewv1a1.IsViewKind(gvk) {
 		return cc.viewCache.GetInformer(ctx, obj)
 	}
-	return cc.defaultCache.GetInformer(ctx, obj)
+	if cc.defaultCache != nil {
+		return cc.defaultCache.GetInformer(ctx, obj)
+	}
+	return nil, fmt.Errorf("native informers are not served by composite cache for %s", gvk)
 }
 
 // GetInformerForKind is similar to GetInformer, except that it takes a group-version-kind instead
@@ -113,7 +105,10 @@ func (cc *CompositeCache) GetInformerForKind(ctx context.Context, gvk schema.Gro
 	if viewv1a1.IsViewKind(gvk) {
 		return cc.viewCache.GetInformerForKind(ctx, gvk)
 	}
-	return cc.defaultCache.GetInformerForKind(ctx, gvk)
+	if cc.defaultCache != nil {
+		return cc.defaultCache.GetInformerForKind(ctx, gvk)
+	}
+	return nil, fmt.Errorf("native informers are not served by composite cache for %s", gvk)
 }
 
 // RemoveInformer removes an informer entry and stops it if it was running.
@@ -125,15 +120,16 @@ func (cc *CompositeCache) RemoveInformer(ctx context.Context, obj client.Object)
 	if viewv1a1.IsViewKind(gvk) {
 		return cc.viewCache.RemoveInformer(ctx, obj)
 	}
-	return cc.defaultCache.RemoveInformer(ctx, obj)
+	if cc.defaultCache != nil {
+		return cc.defaultCache.RemoveInformer(ctx, obj)
+	}
+	return fmt.Errorf("native informers are not served by composite cache for %s", gvk)
 }
 
 // Start runs all the informers known to this store until the context is closed. It blocks.
 func (cc *CompositeCache) Start(ctx context.Context) error {
 	cc.log.V(1).Info("starting")
 
-	// we must run this in a goroutine, otherwise the default store cannot start up
-	// ignore the returned error: viewcache.Start() never errs
 	if cc.defaultCache != nil {
 		go cc.defaultCache.Start(ctx) //nolint:errcheck
 	}
@@ -143,10 +139,10 @@ func (cc *CompositeCache) Start(ctx context.Context) error {
 
 // WaitForCacheSync waits for all the caches to sync. Returns false if it could not sync a store.c
 func (cc *CompositeCache) WaitForCacheSync(ctx context.Context) bool {
-	if cc.defaultCache == nil {
-		return cc.viewCache.WaitForCacheSync(ctx)
+	if cc.defaultCache != nil {
+		return cc.viewCache.WaitForCacheSync(ctx) && cc.defaultCache.WaitForCacheSync(ctx)
 	}
-	return cc.viewCache.WaitForCacheSync(ctx) && cc.defaultCache.WaitForCacheSync(ctx)
+	return cc.viewCache.WaitForCacheSync(ctx)
 }
 
 // IndexField adds an index with the given field name on the given object type.
@@ -155,7 +151,10 @@ func (cc *CompositeCache) IndexField(ctx context.Context, obj client.Object, fie
 	if viewv1a1.IsViewKind(gvk) {
 		return cc.viewCache.IndexField(ctx, obj, field, extractValue)
 	}
-	return cc.defaultCache.IndexField(ctx, obj, field, extractValue)
+	if cc.defaultCache != nil {
+		return cc.defaultCache.IndexField(ctx, obj, field, extractValue)
+	}
+	return fmt.Errorf("native indices are not served by composite cache for %s", gvk)
 }
 
 // Get retrieves an obj for the given object key from the store.
@@ -167,10 +166,10 @@ func (cc *CompositeCache) Get(ctx context.Context, key client.ObjectKey, obj cli
 	if viewv1a1.IsViewKind(gvk) {
 		return cc.viewCache.Get(ctx, key, obj, opts...)
 	}
-	if cc.defaultCache == nil {
-		return fmt.Errorf("native cache is not configured for %s", gvk)
+	if cc.defaultCache != nil {
+		return cc.defaultCache.Get(ctx, key, obj, opts...)
 	}
-	return cc.defaultCache.Get(ctx, key, obj, opts...)
+	return fmt.Errorf("native objects are not served by composite cache for %s", gvk)
 }
 
 // List retrieves list of objects for a given namespace and list options.
@@ -182,8 +181,8 @@ func (cc *CompositeCache) List(ctx context.Context, list client.ObjectList, opts
 	if viewv1a1.IsViewKind(gvk) {
 		return cc.viewCache.List(ctx, list, opts...)
 	}
-	if cc.defaultCache == nil {
-		return fmt.Errorf("native cache is not configured for %s", gvk)
+	if cc.defaultCache != nil {
+		return cc.defaultCache.List(ctx, list, opts...)
 	}
-	return cc.defaultCache.List(ctx, list, opts...)
+	return fmt.Errorf("native objects are not served by composite cache for %s", gvk)
 }

@@ -13,7 +13,6 @@ import (
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	kauth "github.com/l7mp/dbsp/connectors/kubernetes/runtime/auth"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
-	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	opv1a1 "github.com/l7mp/dbsp/dcontroller/api/operator/v1alpha1"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -43,12 +42,9 @@ func makeHeadlessRuntime(name string) *k8sruntime.Runtime {
 
 	rt, err := k8sruntime.New(k8sruntime.Config{
 		RESTConfig: nil,
-		CacheOptions: store.CacheOptions{
-			DefaultCache: store.NewFakeRuntimeCache(apiruntime.NewScheme()),
-		},
-		APIServer: &apicfg,
-		Auth:      &k8sruntime.AuthConfig{},
-		Logger:    logr.Discard().WithName("k8s-runtime").WithValues("name", name),
+		APIServer:  &apicfg,
+		Auth:       &k8sruntime.AuthConfig{},
+		Logger:     logr.Discard().WithName("k8s-runtime").WithValues("name", name),
 	})
 	Expect(err).NotTo(HaveOccurred())
 	return rt

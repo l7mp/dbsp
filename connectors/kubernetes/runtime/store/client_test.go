@@ -207,7 +207,7 @@ var _ = Describe("CompositeCache Client", func() {
 
 		// Create a headless composite store (no Kubernetes API server)
 		var err error
-		compositeCache, err = NewCompositeCache(nil, CacheOptions{Logger: logger})
+		compositeCache, err = NewCompositeCache(CacheOptions{Logger: logger})
 		Expect(err).NotTo(HaveOccurred())
 
 		compositeClient = compositeCache.GetViewCache().GetClient()
@@ -271,9 +271,9 @@ var _ = Describe("CompositeCache Client", func() {
 			obj := object.NewViewObject("test", "MissingCacheView")
 			object.SetName(obj, "default", "missing")
 
-			err := cc.Get(ctx, client.ObjectKeyFromObject(obj), obj)
-			Expect(err).To(HaveOccurred())
-			Expect(apierrors.IsInternalError(err)).To(BeTrue())
+			Expect(func() {
+				_ = cc.Get(ctx, client.ObjectKeyFromObject(obj), obj)
+			}).To(Panic())
 		})
 
 		It("returns typed errors for write and watch when native client is unset", func() {

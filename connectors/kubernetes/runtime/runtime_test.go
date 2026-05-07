@@ -50,12 +50,9 @@ var _ = Describe("Runtime", func() {
 
 		rt, err := kruntime.New(kruntime.Config{
 			RESTConfig: nil,
-			CacheOptions: rtstore.CacheOptions{
-				DefaultCache: rtstore.NewFakeRuntimeCache(scheme.Scheme),
-			},
-			Auth:      &kruntime.AuthConfig{},
-			APIServer: &apicfg,
-			Logger:    logr.Discard(),
+			Auth:       &kruntime.AuthConfig{},
+			APIServer:  &apicfg,
+			Logger:     logr.Discard(),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rt).NotTo(BeNil())
@@ -197,10 +194,7 @@ var _ = Describe("Runtime", func() {
 	It("stays headless for native resources when RESTConfig is nil", func() {
 		rt, err := kruntime.New(kruntime.Config{
 			RESTConfig: nil,
-			CacheOptions: rtstore.CacheOptions{
-				DefaultCache: rtstore.NewFakeRuntimeCache(scheme.Scheme),
-			},
-			Logger: logr.Discard(),
+			Logger:     logr.Discard(),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -212,10 +206,49 @@ var _ = Describe("Runtime", func() {
 
 		err = rt.GetClient().Get(context.Background(), client.ObjectKeyFromObject(pod), pod)
 		Expect(err).To(HaveOccurred())
-		Expect(apierrors.IsNotFound(err) || apierrors.IsBadRequest(err)).To(BeTrue())
+		Expect(apierrors.IsInternalError(err)).To(BeTrue())
 
 		_, err = rt.GetDiscovery().ServerResourcesForGroupVersion("v1")
 		Expect(err).To(HaveOccurred())
+	})
+
+	It("supports optional native cache injection while staying headless", func() {
+		fakeCache := rtstore.NewFakeRuntimeCache(scheme.Scheme)
+
+		rt, err := kruntime.New(kruntime.Config{
+			RESTConfig: nil,
+			CacheOptions: rtstore.CacheOptions{
+				DefaultCache: fakeCache,
+			},
+			Logger: logr.Discard(),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		pod := object.New()
+		pod.SetAPIVersion("v1")
+		pod.SetKind("Pod")
+		pod.SetName("pod-1")
+		pod.SetNamespace("default")
+
+		Expect(fakeCache.Add(pod)).To(Succeed())
+
+		By("serving native reads through the optional composite default cache")
+		fetched := object.New()
+		fetched.SetAPIVersion("v1")
+		fetched.SetKind("Pod")
+		err = rt.GetCache().Get(context.Background(), client.ObjectKeyFromObject(pod), fetched)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fetched.GetName()).To(Equal("pod-1"))
+
+		list := &unstructured.UnstructuredList{}
+		err = rt.GetCache().List(context.Background(), list)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list.Items).NotTo(BeEmpty())
+
+		By("keeping client native reads direct, which fails without REST config")
+		err = rt.GetClient().Get(context.Background(), client.ObjectKeyFromObject(pod), fetched)
+		Expect(err).To(HaveOccurred())
+		Expect(apierrors.IsInternalError(err)).To(BeTrue())
 	})
 
 	It("returns errors for auth helpers when auth is disabled", func() {
@@ -287,12 +320,9 @@ var _ = Describe("Runtime", func() {
 
 		rt, err := kruntime.New(kruntime.Config{
 			RESTConfig: nil,
-			CacheOptions: rtstore.CacheOptions{
-				DefaultCache: rtstore.NewFakeRuntimeCache(scheme.Scheme),
-			},
-			APIServer: &apicfg,
-			Auth:      &kruntime.AuthConfig{},
-			Logger:    logr.Discard(),
+			APIServer:  &apicfg,
+			Auth:       &kruntime.AuthConfig{},
+			Logger:     logr.Discard(),
 		})
 		Expect(err).NotTo(HaveOccurred())
 

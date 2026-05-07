@@ -128,18 +128,24 @@ func (c *CompositeClient) DeleteAllOf(ctx context.Context, obj client.Object, op
 
 // Get retrieves an obj for the given object key.
 func (c *CompositeClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	if c.compositeCache == nil {
-		return apierrors.NewInternalError(errors.New("composite cache is not configured"))
+	if viewv1a1.IsViewKind(obj.GetObjectKind().GroupVersionKind()) {
+		return c.compositeCache.Get(ctx, key, obj, opts...)
 	}
-	return c.compositeCache.Get(ctx, key, obj, opts...)
+	if c.Client == nil {
+		return apierrors.NewInternalError(errors.New("native K8s client is not configured"))
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
 }
 
 // List retrieves list of objects for a given namespace and list options.
 func (c *CompositeClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	if c.compositeCache == nil {
-		return apierrors.NewInternalError(errors.New("composite cache is not configured"))
+	if viewv1a1.IsViewKind(list.GetObjectKind().GroupVersionKind()) {
+		return c.compositeCache.List(ctx, list, opts...)
 	}
-	return c.compositeCache.List(ctx, list, opts...)
+	if c.Client == nil {
+		return apierrors.NewInternalError(errors.New("native K8s client is not configured"))
+	}
+	return c.Client.List(ctx, list, opts...)
 }
 
 // Watch watches objects of type obj and sends events on the returned channel.

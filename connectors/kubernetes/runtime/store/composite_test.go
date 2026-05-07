@@ -31,10 +31,9 @@ var (
 
 var _ = Describe("CompositeCache", func() {
 	var (
-		cache     *CompositeCache
-		fakeCache *FakeRuntimeCache
-		ctx       context.Context
-		cancel    context.CancelFunc
+		cache  *CompositeCache
+		ctx    context.Context
+		cancel context.CancelFunc
 	)
 
 	BeforeEach(func() {
@@ -42,11 +41,7 @@ var _ = Describe("CompositeCache", func() {
 		pod.SetUnstructuredContent(content)
 		// this is needed: for some unknown reason the converter does not work on the GVK
 		pod.GetObjectKind().SetGroupVersionKind(podn.GetObjectKind().GroupVersionKind())
-		fakeCache = NewFakeRuntimeCache(scheme.Scheme)
-		cache, _ = NewCompositeCache(nil, CacheOptions{
-			DefaultCache: fakeCache,
-			Logger:       logger,
-		})
+		cache, _ = NewCompositeCache(CacheOptions{Logger: logger})
 		ctx, cancel = context.WithCancel(context.Background())
 		go cache.Start(ctx)
 	})
@@ -58,7 +53,6 @@ var _ = Describe("CompositeCache", func() {
 	Describe("Basics", func() {
 		It("cache created", func() {
 			Expect(cache).NotTo(BeNil())
-			Expect(cache.GetDefaultCache).NotTo(BeNil())
 			Expect(cache.GetViewCache).NotTo(BeNil())
 		})
 	})
@@ -94,15 +88,24 @@ var _ = Describe("CompositeCache", func() {
 		})
 
 		It("should retrieve an added native object", func() {
-			err := fakeCache.Add(pod)
-			Expect(err).NotTo(HaveOccurred())
-
 			retrieved := object.DeepCopy(pod)
 			Expect(retrieved).To(Equal(pod))
 
-			err = cache.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			err := cache.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should retrieve native objects when a default cache is configured", func() {
+			fakeCache := NewFakeRuntimeCache(scheme.Scheme)
+			withDefault, err := NewCompositeCache(CacheOptions{DefaultCache: fakeCache, Logger: logger})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(retrieved).To(Equal(pod))
+
+			err = fakeCache.Add(pod)
+			Expect(err).NotTo(HaveOccurred())
+
+			retrieved := object.DeepCopy(pod)
+			err = withDefault.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			Expect(err).NotTo(HaveOccurred())
 			Expect(object.DeepEqual(retrieved, pod)).To(BeTrue())
 		})
 
@@ -156,21 +159,15 @@ var _ = Describe("CompositeCache", func() {
 		})
 
 		It("should list all added native objects", func() {
-			err := fakeCache.Add(pod)
-			Expect(err).NotTo(HaveOccurred())
-
 			list := &unstructured.UnstructuredList{}
-			err = cache.List(ctx, list)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(list.Items).To(HaveLen(1))
-			Expect(object.DeepEqual(&list.Items[0], pod)).To(BeTrue())
+			err := cache.List(ctx, list)
+			Expect(err).To(HaveOccurred())
 		})
 
 		It("should return an empty list when store is empty", func() {
 			list := &unstructured.UnstructuredList{}
 			err := cache.List(ctx, list)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(list.Items).To(BeEmpty())
+			Expect(err).To(HaveOccurred())
 		})
 	})
 

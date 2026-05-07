@@ -105,9 +105,10 @@ func New(cfg Config) (*Runtime, error) {
 	r.restMapper = store.NewCompositeRESTMapper(r.discovery)
 
 	// 3. Composite cache.
-	cache, err := store.NewCompositeCache(cfg.RESTConfig, store.CacheOptions{
+	cache, err := store.NewCompositeCache(store.CacheOptions{
 		Options:      cfg.CacheOptions.Options,
 		DefaultCache: cfg.CacheOptions.DefaultCache,
+		ViewCache:    cfg.CacheOptions.ViewCache,
 		Logger:       log,
 	})
 	if err != nil {
