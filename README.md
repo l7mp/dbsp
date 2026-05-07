@@ -40,6 +40,6 @@ The current user-facing application layers documented in this repository are:
 
 ## License
 
-Copyright 2026 by its authors. Some rights reserved. See [AUTHORS](AUTHORS).
+Copyright 2026 by its authors. Some rights reserved. See [AUTHORS](/AUTHORS).
 
-MIT License - see [LICENSE](LICENSE) for full text.
+MIT License - see [LICENSE](/LICENSE) for full text.

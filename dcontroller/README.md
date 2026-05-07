@@ -29,3 +29,9 @@ For local development against your current Kubernetes context:
 
 For the full current workflow, including TLS and view access, use
 [`doc/apps-dctl-getting-started.md`](/doc/apps-dctl-getting-started.md).
+
+## License
+
+Copyright 2026 by its authors. Some rights reserved. See [AUTHORS](/AUTHORS).
+
+MIT License - see [LICENSE](/LICENSE) for full text.

@@ -16,8 +16,13 @@ This directory is the technical documentation for DBSP in this repository. Start
     - [Overview](/doc/apps-dctl-overview.md)
     - [Getting Started](/doc/apps-dctl-getting-started.md)
     - [Sources, Targets, and Pipelines](/doc/apps-dctl-sources-targets-pipeline.md)
-    - [Extension API Server](/doc/apps-dctl-extension-api-server.md)
     - Tutorials
       - [ConfigMap to Deployment](/doc/apps-dctl-tutorial-configmap-deployment.md)
       - [Service Health Monitor](/doc/apps-dctl-tutorial-service-health.md)
       - [EndpointSlice Hybrid Consumer](/doc/apps-dctl-tutorial-endpointslice.md)
+
+## License
+
+Copyright 2026 by its authors. Some rights reserved. See [AUTHORS](/AUTHORS).
+
+MIT License - see [LICENSE](/LICENSE) for full text.
