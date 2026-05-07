@@ -46,8 +46,7 @@ func (s *APIServer) generateOpenAPIDefs(ref openapicommon.ReferenceCallback) map
 		}
 	}
 
-	// Keep this self-contained: do not depend on k8s.io/kubernetes generated OpenAPI.
-	defs := map[string]openapicommon.OpenAPIDefinition{}
+	defs := BaseOpenAPIDefinitions(ref)
 
 	unstructuredDefName := "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured.Unstructured"
 	defs[unstructuredDefName] = s.genOpenAPIUnstructDef(ref)
