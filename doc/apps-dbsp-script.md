@@ -220,6 +220,7 @@ Both `sql.compile(...)` and `aggregate.compile(...)` return a circuit handle.
 Supported transformer names are:
 
 - `"Incrementalizer"`
+- `"InputIntegrators"`
 - `"Rewriter"`
 - `"Reconciler"`
 - `"Regularizer"`
@@ -228,9 +229,14 @@ Optional transformer options:
 
 - `"Rewriter"`: `{ rules: "Pre" | "Post" | "Default" }`
 - `"Reconciler"`: `{ pairs: [["inputID", "outputID"], ...] }`
+- `"InputIntegrators"`: `{ inputs: ["inputName", ...] }` (optional; default is all inputs)
 
 `"Regularizer"` rewrites each output as `sum -> group_by(primary-key, identity) -> lexmin`
 to ensure deterministic one-row-per-key output deltas.
+
+`"InputIntegrators"` inserts `Integrate` directly at the designated inputs. This is useful when a
+snapshot circuit is fed by delta-style sources (for example watch streams) and should reconstruct
+per-input state before applying snapshot operators.
 
 `"Reconciler"` adds circuitry to handle self-referential input/output pairs. Pairs can be either
 explicit raw node IDs (`input_services`, `output_desired_services`) or plain topic names

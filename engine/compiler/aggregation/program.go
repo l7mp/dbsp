@@ -285,12 +285,15 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 func parseJoinArgs(args json.RawMessage) (expression.Expression, []string, []string, error) {
 	var list []json.RawMessage
 	if err := json.Unmarshal(args, &list); err == nil {
-		if len(list) != 2 {
-			return nil, nil, nil, fmt.Errorf("@join array form expects [predicate, options]")
+		if len(list) < 1 || len(list) > 2 {
+			return nil, nil, nil, fmt.Errorf("@join array form expects [predicate] or [predicate, options]")
 		}
 		pred, err := dbspexpr.NewParser().Parse(list[0])
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		if len(list) == 1 {
+			return pred, nil, nil, nil
 		}
 		opts := struct {
 			Inputs *[]string `json:"inputs"`

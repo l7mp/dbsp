@@ -23,8 +23,9 @@ type circuitHandle struct {
 }
 
 type circuitTransformOptions struct {
-	Pairs [][]string `json:"pairs"`
-	Rules string     `json:"rules"`
+	Pairs  [][]string `json:"pairs"`
+	Rules  string     `json:"rules"`
+	Inputs []string   `json:"inputs"`
 }
 
 func (h *circuitHandle) register() error {
@@ -69,6 +70,21 @@ func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
 
 		switch typ {
 		case transform.Incrementalizer:
+		case transform.InputIntegrators:
+			if len(jsOpts.Inputs) > 0 {
+				inputs := make([]string, 0, len(jsOpts.Inputs))
+				for i, in := range jsOpts.Inputs {
+					name := strings.TrimSpace(in)
+					if name == "" {
+						return fmt.Errorf("transform %s: input %d must not be empty", typ, i)
+					}
+					if !strings.HasPrefix(name, "input_") {
+						name = circuit.InputNodeID(name)
+					}
+					inputs = append(inputs, name)
+				}
+				args = append(args, inputs)
+			}
 		case transform.Regularizer:
 		case transform.Rewriter:
 			if strings.TrimSpace(jsOpts.Rules) != "" {

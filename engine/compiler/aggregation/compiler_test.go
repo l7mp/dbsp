@@ -313,6 +313,23 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(p.Branches[0].Stages[0].SoftInputs).To(Equal([]string{"svc"}))
 	})
 
+	It("parses @join array form without options", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep"}), toIdentityBindings([]string{"output"}))
+		ir, err := c.ParseString(`[
+			{"@inputs":["pod","dep"]},
+			{"@join":[{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]}]},
+			{"@output":"output"}
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		p, ok := ir.(*program)
+		Expect(ok).To(BeTrue())
+		Expect(p.Branches[0].Stages).To(HaveLen(1))
+		Expect(p.Branches[0].Stages[0].Op).To(Equal("@join"))
+		Expect(p.Branches[0].Stages[0].JoinInputs).To(BeNil())
+		Expect(p.Branches[0].Stages[0].SoftInputs).To(BeNil())
+	})
+
 	It("parses legacy @join form with nil soft inputs", func() {
 		c := New(toIdentityBindings([]string{"pod", "dep"}), toIdentityBindings([]string{"output"}))
 		ir, err := c.ParseString(`[

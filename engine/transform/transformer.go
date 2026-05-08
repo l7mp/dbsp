@@ -11,11 +11,12 @@ import (
 type TransformerType string
 
 const (
-	Incrementalizer TransformerType = "Incrementalizer"
-	Rewriter        TransformerType = "Rewriter"
-	Reconciler      TransformerType = "Reconciler"
-	Regularizer     TransformerType = "Regularizer"
-	Optimizer       TransformerType = "Optimizer"
+	Incrementalizer  TransformerType = "Incrementalizer"
+	InputIntegrators TransformerType = "InputIntegrators"
+	Rewriter         TransformerType = "Rewriter"
+	Reconciler       TransformerType = "Reconciler"
+	Regularizer      TransformerType = "Regularizer"
+	Optimizer        TransformerType = "Optimizer"
 )
 
 // Transformer transforms one circuit into another.
@@ -32,6 +33,12 @@ func New(typ TransformerType, args ...any) (Transformer, error) {
 	switch typ {
 	case Incrementalizer:
 		return NewIncrementalizer(), nil
+	case InputIntegrators:
+		inputs, err := parseInputIntegratorsArgs(args)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", InputIntegrators, err)
+		}
+		return NewInputIntegrators(inputs...), nil
 	case Rewriter:
 		rules, err := parseRewriterArgs(args)
 		if err != nil {
@@ -191,4 +198,20 @@ func parseOptimizerArgs(args []any) (OptimizerOptions, error) {
 	}
 
 	return OptimizerOptions{}, fmt.Errorf("expected OptimizerOptions argument, got %T", args[0])
+}
+
+func parseInputIntegratorsArgs(args []any) ([]string, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("expected zero args or one []string argument")
+	}
+
+	inputs, ok := args[0].([]string)
+	if !ok {
+		return nil, fmt.Errorf("expected []string argument, got %T", args[0])
+	}
+
+	return inputs, nil
 }

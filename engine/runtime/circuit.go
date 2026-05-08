@@ -30,10 +30,7 @@ type Circuit struct {
 	outputMap   map[string]string
 	inputNames  []string
 	outputNames []string
-
-	incremental bool
 	exec        *executor.Executor
-	state       map[string]zset.ZSet
 
 	topicToInput  map[string]string
 	docsFormatter func(Event) []string
@@ -57,10 +54,6 @@ func NewCircuit(name string, rt *Runtime, q *compiler.Query, logger logr.Logger)
 	outputMap := maps.Clone(q.OutputMap)
 	inputNames := sortedKeys(inputMap)
 	outputNames := sortedKeys(outputMap)
-	state := make(map[string]zset.ZSet, len(inputNames))
-	for _, name := range inputNames {
-		state[name] = zset.New()
-	}
 
 	c := &Circuit{
 		Publisher:    rt.NewPublisher(),
@@ -71,9 +64,7 @@ func NewCircuit(name string, rt *Runtime, q *compiler.Query, logger logr.Logger)
 		outputMap:    outputMap,
 		inputNames:   inputNames,
 		outputNames:  outputNames,
-		incremental:  true,
 		exec:         exec,
-		state:        state,
 		topicToInput: map[string]string{},
 		logger:       logger,
 	}
@@ -96,7 +87,7 @@ func (c *Circuit) String() string {
 	if c == nil {
 		return "processor<circuit>{<nil>}"
 	}
-	return fmt.Sprintf("processor<circuit>{name=%q, topics=%v, outputs=%v, incremental=%t}", c.name, c.inputNames, c.outputNames, c.incremental)
+	return fmt.Sprintf("processor<circuit>{name=%q, topics=%v, outputs=%v}", c.name, c.inputNames, c.outputNames)
 }
 
 // MarshalJSON provides a stable machine-readable representation.
@@ -106,12 +97,11 @@ func (c *Circuit) MarshalJSON() ([]byte, error) {
 	}
 
 	return json.Marshal(map[string]any{
-		"component":   "processor",
-		"type":        "circuit",
-		"name":        c.name,
-		"inputs":      append([]string(nil), c.inputNames...),
-		"outputs":     append([]string(nil), c.outputNames...),
-		"incremental": c.incremental,
+		"component": "processor",
+		"type":      "circuit",
+		"name":      c.name,
+		"inputs":    append([]string(nil), c.inputNames...),
+		"outputs":   append([]string(nil), c.outputNames...),
 	})
 }
 
@@ -183,27 +173,17 @@ func (c *Circuit) getObserver() executor.ObserverFunc {
 	return c.observer
 }
 
-// Reset clears executor and cached snapshot input state.
+// Reset clears executor state.
 func (c *Circuit) Reset() {
 	c.exec.Reset()
-	for _, name := range c.inputNames {
-		c.state[name] = zset.New()
-	}
 }
 
 func (c *Circuit) buildStepInputs(in Event) map[string]zset.ZSet {
 	inputs := make(map[string]zset.ZSet, len(c.inputMap))
-	if c.incremental {
-		for _, logical := range c.inputNames {
-			inputs[c.inputMap[logical]] = zset.New()
-		}
-		inputs[c.inputMap[in.Name]] = in.Data.Clone()
-		return inputs
-	}
-	c.state[in.Name] = in.Data.Clone()
 	for _, logical := range c.inputNames {
-		inputs[c.inputMap[logical]] = c.state[logical].Clone()
+		inputs[c.inputMap[logical]] = zset.New()
 	}
+	inputs[c.inputMap[in.Name]] = in.Data.Clone()
 	return inputs
 }
 

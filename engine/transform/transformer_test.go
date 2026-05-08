@@ -248,11 +248,120 @@ var _ = Describe("Incrementalize", func() {
 	})
 })
 
+var _ = Describe("InputIntegrators", func() {
+	It("inserts an Integrate node after each input", func() {
+		c := circuit.New("input-integrators-test")
+		c.AddNode(circuit.Input("pods"))
+		c.AddNode(circuit.Input("services"))
+		c.AddNode(circuit.Op("join", operator.NewCartesianProduct()))
+		c.AddNode(circuit.Output("out"))
+		c.AddEdge(circuit.NewEdge("pods", "join", 0))
+		c.AddEdge(circuit.NewEdge("services", "join", 1))
+		c.AddEdge(circuit.NewEdge("join", "out", 0))
+
+		adapted, err := NewInputIntegrators().Transform(c)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(adapted.Node("pods_int")).NotTo(BeNil())
+		Expect(adapted.Node("pods_int").Kind()).To(Equal(operator.KindIntegrate))
+		Expect(adapted.Node("services_int")).NotTo(BeNil())
+		Expect(adapted.Node("services_int").Kind()).To(Equal(operator.KindIntegrate))
+
+		joinIn := adapted.EdgesTo("join")
+		Expect(joinIn).To(HaveLen(2))
+		from := map[string]bool{}
+		for _, e := range joinIn {
+			from[e.From] = true
+		}
+		Expect(from["pods_int"]).To(BeTrue())
+		Expect(from["services_int"]).To(BeTrue())
+		Expect(from["pods"]).To(BeFalse())
+		Expect(from["services"]).To(BeFalse())
+	})
+
+	It("is eliminated by incrementalization", func() {
+		c := circuit.New("input-integrators-cancel")
+		c.AddNode(circuit.Input("left"))
+		c.AddNode(circuit.Input("right"))
+		c.AddNode(circuit.Op("prod", operator.NewCartesianProduct()))
+		c.AddNode(circuit.Output("out"))
+		c.AddEdge(circuit.NewEdge("left", "prod", 0))
+		c.AddEdge(circuit.NewEdge("right", "prod", 1))
+		c.AddEdge(circuit.NewEdge("prod", "out", 0))
+
+		withI, err := NewInputIntegrators().Transform(c)
+		Expect(err).NotTo(HaveOccurred())
+
+		incrWithI, err := NewIncrementalizer().Transform(withI)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(incrWithI.Node("left_int")).To(BeNil())
+		Expect(incrWithI.Node("right_int")).To(BeNil())
+		Expect(incrWithI.Node("prod^Δ_int_left")).NotTo(BeNil())
+		Expect(incrWithI.Node("prod^Δ_int_right")).NotTo(BeNil())
+		Expect(incrWithI.Validate()).To(BeEmpty())
+	})
+
+	It("supports selecting specific inputs", func() {
+		c := circuit.New("input-integrators-selective")
+		c.AddNode(circuit.Input("pods"))
+		c.AddNode(circuit.Input("services"))
+		c.AddNode(circuit.Op("join", operator.NewCartesianProduct()))
+		c.AddNode(circuit.Output("out"))
+		c.AddEdge(circuit.NewEdge("pods", "join", 0))
+		c.AddEdge(circuit.NewEdge("services", "join", 1))
+		c.AddEdge(circuit.NewEdge("join", "out", 0))
+
+		adapted, err := NewInputIntegrators("pods").Transform(c)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(adapted.Node("pods_int")).NotTo(BeNil())
+		Expect(adapted.Node("services_int")).To(BeNil())
+
+		joinIn := adapted.EdgesTo("join")
+		Expect(joinIn).To(HaveLen(2))
+		from := map[string]bool{}
+		for _, e := range joinIn {
+			from[e.From] = true
+		}
+		Expect(from["pods_int"]).To(BeTrue())
+		Expect(from["services"]).To(BeTrue())
+	})
+
+	It("rejects unknown selected input names", func() {
+		c := circuit.New("input-integrators-unknown")
+		c.AddNode(circuit.Input("pods"))
+		c.AddNode(circuit.Output("out"))
+		c.AddEdge(circuit.NewEdge("pods", "out", 0))
+
+		_, err := NewInputIntegrators("services").Transform(c)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("input \"services\" not found"))
+	})
+})
+
 var _ = Describe("Transformer factory", func() {
 	It("creates Incrementalizer", func() {
 		t, err := New(Incrementalizer)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(t.Name()).To(Equal(Incrementalizer))
+	})
+
+	It("creates InputIntegrators", func() {
+		t, err := New(InputIntegrators)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(t.Name()).To(Equal(InputIntegrators))
+	})
+
+	It("creates InputIntegrators with selected inputs", func() {
+		t, err := New(InputIntegrators, []string{"pods"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(t.Name()).To(Equal(InputIntegrators))
+	})
+
+	It("rejects InputIntegrators options with wrong type", func() {
+		_, err := New(InputIntegrators, "pods")
+		Expect(err).To(HaveOccurred())
 	})
 
 	It("creates Rewriter with default rules", func() {

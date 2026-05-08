@@ -1266,6 +1266,42 @@ c.transform(["Incrementalizer"]);
 		Expect(err.Error()).To(ContainSubstring("transformer name must be a string"))
 	})
 
+	It("accepts InputIntegrators with explicit input selection", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		script := `
+const c = aggregate.compile([
+  {"@join": {"@eq": ["$.pods.metadata.name", "$.services.metadata.name"]}},
+  {"@project": {"$.": "$."}}
+], {
+  inputs: ["pods", "services"],
+  outputs: ["out"]
+});
+
+c.transform("InputIntegrators", {inputs: ["pods"]}).validate();
+`
+		Expect(runScript(vm, script)).To(Succeed())
+	})
+
+	It("rejects InputIntegrators with empty input names", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {inputs: ["in"], outputs: ["out"]});
+
+c.transform("InputIntegrators", {inputs: [""]});
+`
+		err = runScript(vm, script)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("input 0 must not be empty"))
+	})
+
 	It("compiles aggregate pipelines with binding objects", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

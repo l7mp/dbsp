@@ -57,6 +57,8 @@ Use -e/--eval to execute inline JavaScript source.`,
 			return runScript(cmd, args, flags)
 		},
 	}
+	root.Flags().SetInterspersed(false)
+	root.PersistentFlags().SetInterspersed(false)
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&flags.configFile, "config", "", "Config file (YAML); env: DBSP_CONFIG")
