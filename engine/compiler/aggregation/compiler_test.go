@@ -346,6 +346,26 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(err.Error()).To(ContainSubstring("must include at least one hard input"))
 	})
 
+	It("accepts @join with explicit inputs and side-channel @inputs entries", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep", "side"}), toIdentityBindings([]string{"output"}))
+		_, err := c.CompileString(`[
+			{"@inputs":["pod","dep","side"]},
+			{"@join":[{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]},{"inputs":["pod","dep"]}]},
+			{"@project":{"$.":"$."}}
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("rejects @join soft input not listed in explicit @join inputs", func() {
+		c := New(toIdentityBindings([]string{"pod", "dep", "svc"}), toIdentityBindings([]string{"output"}))
+		_, err := c.CompileString(`[
+			{"@inputs":["pod","dep","svc"]},
+			{"@join":[{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]},{"inputs":["pod","dep"],"soft":["svc"]}]}
+		]`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("soft input \"svc\" is not listed in @join inputs"))
+	})
+
 	It("emits left-join fold subgraph for soft inputs", func() {
 		c := New(toIdentityBindings([]string{"pod", "dep", "svc"}), toIdentityBindings([]string{"output"}))
 		q, err := c.CompileString(`[

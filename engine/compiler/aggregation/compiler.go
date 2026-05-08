@@ -263,10 +263,21 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 	start := 0
 	current := currentInputs[0]
 	if hasJoin {
+		// participants is the union of hard + soft inputs; only these need
+		// namespace-wrap nodes (and only these participate in the @join
+		// cartesian/select). Inputs declared in @inputs but absent here are
+		// "side channels" — Input nodes still exist on the circuit (so the
+		// Reconciler can wire them as feedback) but they don't enter the
+		// pipeline body.
+		participants := joinParticipants(b.Inputs, b.Stages[0].JoinInputs)
+
 		nsNodes := make(map[string]string, len(currentInputs))
 		for i, sourceNode := range currentInputs {
-			nsID := fmt.Sprintf("b%d_ns_%d_%s", b.Index, i, circuit.SanitizeNodeID(b.Inputs[i]))
 			src := b.Inputs[i]
+			if !participants[src] {
+				continue
+			}
+			nsID := fmt.Sprintf("b%d_ns_%d_%s", b.Index, i, circuit.SanitizeNodeID(src))
 			nsExpr := expression.NewCompiled(func(ctx *expression.EvalContext) (any, error) {
 				doc := ctx.Document()
 				if doc == nil {
@@ -283,7 +294,7 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 			nsNodes[src] = nsID
 		}
 
-		hardInputs, softInputs := partitionJoinInputs(b.Inputs, nsNodes, b.Stages[0].SoftInputs)
+		hardInputs, softInputs := partitionJoinInputs(b.Inputs, b.Stages[0].JoinInputs, nsNodes, b.Stages[0].SoftInputs)
 		if len(hardInputs) == 0 {
 			return "", fmt.Errorf("branch[%d]: @join must include at least one hard input", b.Index)
 		}
@@ -400,14 +411,42 @@ type joinInputRef struct {
 	nodeID string
 }
 
-func partitionJoinInputs(all []string, nsNodes map[string]string, soft []string) ([]joinInputRef, []joinInputRef) {
+// joinParticipants returns the set of @inputs entries that participate in
+// the @join — explicit if the user gave one (hard ∪ soft), otherwise every
+// declared input. Anything in @inputs but not in this set is a side
+// channel: the circuit Input node is created (so the Reconciler can reach
+// it) but it does not enter the join's cartesian product.
+func joinParticipants(all []string, explicitParticipants []string) map[string]bool {
+	out := make(map[string]bool, len(all))
+	if explicitParticipants != nil {
+		for _, in := range explicitParticipants {
+			out[in] = true
+		}
+		return out
+	}
+	for _, in := range all {
+		out[in] = true
+	}
+	return out
+}
+
+// partitionJoinInputs splits the @join participants into hard (cartesian)
+// and soft (left-join fold) refs. The base set is the explicit participants
+// list when given, otherwise all of @inputs. Soft is a strict subset of
+// that base (validated upstream in parseBranch); hard = base − soft.
+func partitionJoinInputs(all []string, explicitParticipants []string, nsNodes map[string]string, soft []string) ([]joinInputRef, []joinInputRef) {
 	softSet := make(map[string]bool, len(soft))
 	for _, in := range soft {
 		softSet[in] = true
 	}
 
-	hard := make([]joinInputRef, 0, len(all))
-	for _, in := range all {
+	base := all
+	if explicitParticipants != nil {
+		base = explicitParticipants
+	}
+
+	hard := make([]joinInputRef, 0, len(base))
+	for _, in := range base {
 		if softSet[in] {
 			continue
 		}

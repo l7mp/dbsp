@@ -34,6 +34,7 @@ type stageSpec struct {
 	Op         string
 	RawArgs    json.RawMessage
 	Predicate  expression.Expression
+	JoinInputs []string // explicit @join participants list (hard ∪ soft); nil means "default to all of branch's @inputs"
 	SoftInputs []string
 	Projection expression.Expression
 	UnwindPath string
@@ -171,25 +172,50 @@ func parseBranch(index int, pipeline Pipeline, sources, outputs []string, explic
 	}
 
 	if len(b.Stages) > 0 && b.Stages[0].Op == "@join" {
+		participants := b.Stages[0].JoinInputs // explicit participants (hard ∪ soft); nil means "all of @inputs"
 		soft := b.Stages[0].SoftInputs
-		if len(soft) > 0 {
-			inputSet := make(map[string]bool, len(b.Inputs))
-			for _, in := range b.Inputs {
-				inputSet[in] = true
-			}
-			seenSoft := make(map[string]bool, len(soft))
-			for _, in := range soft {
-				if seenSoft[in] {
-					return b, fmt.Errorf("branch[%d]: @join soft input %q declared more than once", index, in)
+
+		inputSet := make(map[string]bool, len(b.Inputs))
+		for _, in := range b.Inputs {
+			inputSet[in] = true
+		}
+
+		participantSet := make(map[string]bool, len(b.Inputs))
+		if participants != nil {
+			seenP := make(map[string]bool, len(participants))
+			for _, in := range participants {
+				if seenP[in] {
+					return b, fmt.Errorf("branch[%d]: @join input %q declared more than once", index, in)
 				}
-				seenSoft[in] = true
+				seenP[in] = true
 				if !inputSet[in] {
-					return b, fmt.Errorf("branch[%d]: @join soft input %q is not listed in @inputs", index, in)
+					return b, fmt.Errorf("branch[%d]: @join input %q is not listed in @inputs", index, in)
 				}
+				participantSet[in] = true
 			}
-			if len(b.Inputs)-len(seenSoft) < 1 {
-				return b, fmt.Errorf("branch[%d]: @join must include at least one hard input", index)
+		} else {
+			for _, in := range b.Inputs {
+				participantSet[in] = true
 			}
+		}
+
+		seenSoft := make(map[string]bool, len(soft))
+		for _, in := range soft {
+			if seenSoft[in] {
+				return b, fmt.Errorf("branch[%d]: @join soft input %q declared more than once", index, in)
+			}
+			seenSoft[in] = true
+			if !participantSet[in] {
+				if participants != nil && inputSet[in] {
+					return b, fmt.Errorf("branch[%d]: @join soft input %q is not listed in @join inputs", index, in)
+				}
+				return b, fmt.Errorf("branch[%d]: @join soft input %q is not listed in @inputs", index, in)
+			}
+		}
+
+		// Strict subset: at least one participant must remain hard.
+		if len(participantSet)-len(seenSoft) < 1 {
+			return b, fmt.Errorf("branch[%d]: @join must include at least one hard input", index)
 		}
 	}
 
@@ -200,11 +226,12 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 	s := stageSpec{Index: i, Op: stage.Op, RawArgs: stage.Args}
 	switch stage.Op {
 	case "@join":
-		pred, soft, err := parseJoinArgs(stage.Args)
+		pred, hard, soft, err := parseJoinArgs(stage.Args)
 		if err != nil {
 			return s, wrapStageErr(i, stage.Op, "predicate", stage.Args, err)
 		}
 		s.Predicate = pred
+		s.JoinInputs = hard
 		s.SoftInputs = soft
 	case "@select":
 		expr, err := dbspexpr.NewParser().Parse(stage.Args)
@@ -221,10 +248,12 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 	case "@unwind":
 		var path string
 		if err := json.Unmarshal(stage.Args, &path); err != nil {
-			return s, wrapStageErr(i, stage.Op, "path", stage.Args, fmt.Errorf("argument must be a string: %w", err))
+			return s, wrapStageErr(i, stage.Op, "path", stage.Args,
+				fmt.Errorf("argument must be a string: %w", err))
 		}
 		if !strings.HasPrefix(path, "$.") {
-			return s, wrapStageErr(i, stage.Op, "path", stage.Args, fmt.Errorf("argument must start with '$.': %q", path))
+			return s, wrapStageErr(i, stage.Op, "path", stage.Args,
+				fmt.Errorf("argument must start with '$.': %q", path))
 		}
 		s.UnwindPath = path
 	case "@groupBy":
@@ -239,36 +268,49 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 		}
 		s.Distinct = true
 	case "@aggregate", "@gather", "@mux":
-		return s, wrapStageErr(i, stage.Op, "stage", stage.Args, fmt.Errorf("%s is not supported; use @groupBy and @project", stage.Op))
+		return s, wrapStageErr(i, stage.Op, "stage", stage.Args,
+			fmt.Errorf("%s is not supported; use @groupBy and @project", stage.Op))
 	default:
-		return s, wrapStageErr(i, stage.Op, "stage", stage.Args, fmt.Errorf("unsupported pipeline operation: %s", stage.Op))
+		return s, wrapStageErr(i, stage.Op, "stage", stage.Args,
+			fmt.Errorf("unsupported pipeline operation: %s", stage.Op))
 	}
 	return s, nil
 }
-func parseJoinArgs(args json.RawMessage) (expression.Expression, []string, error) {
+
+// parseJoinArgs returns the predicate, the explicit @join participants list
+// (the array form's "inputs:" key — hard ∪ soft; nil if the user did not
+// specify one, in which case the caller defaults to "all of branch's
+// @inputs"), and the soft-input list (a strict subset of the participants
+// list when both are given).
+func parseJoinArgs(args json.RawMessage) (expression.Expression, []string, []string, error) {
 	var list []json.RawMessage
 	if err := json.Unmarshal(args, &list); err == nil {
 		if len(list) != 2 {
-			return nil, nil, fmt.Errorf("@join array form expects [predicate, options]")
+			return nil, nil, nil, fmt.Errorf("@join array form expects [predicate, options]")
 		}
 		pred, err := dbspexpr.NewParser().Parse(list[0])
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		opts := struct {
-			Soft []string `json:"soft"`
+			Inputs *[]string `json:"inputs"`
+			Soft   []string  `json:"soft"`
 		}{}
 		if err := json.Unmarshal(list[1], &opts); err != nil {
-			return nil, nil, fmt.Errorf("@join options must be an object")
+			return nil, nil, nil, fmt.Errorf("@join options must be an object")
 		}
-		return pred, append([]string(nil), opts.Soft...), nil
+		var hard []string
+		if opts.Inputs != nil {
+			hard = append([]string(nil), (*opts.Inputs)...)
+		}
+		return pred, hard, append([]string(nil), opts.Soft...), nil
 	}
 
 	pred, err := dbspexpr.NewParser().Parse(args)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return pred, nil, nil
+	return pred, nil, nil, nil
 }
 
 func firstOutput(outputs []string) string {
