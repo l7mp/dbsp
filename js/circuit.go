@@ -1,4 +1,4 @@
-package main
+package js
 
 import (
 	"errors"
@@ -219,6 +219,24 @@ func (h *circuitHandle) validate() error {
 	return h.register()
 }
 
+// close unregisters the circuit's runtime processor, clearing any active
+// observer. Idempotent: calling close on an already-closed handle is a no-op.
+// After close, the handle remains usable: validate() will re-register the
+// circuit with the runtime.
+func (h *circuitHandle) close() error {
+	if h.proc == nil {
+		return nil
+	}
+	if h.obsFn != nil {
+		if err := h.clearObserver(); err != nil {
+			return err
+		}
+	}
+	h.vm.runtime.Stop(h.proc)
+	h.proc = nil
+	return nil
+}
+
 func (h *circuitHandle) observe(jsFn goja.Callable) error {
 	h.obsFn = jsFn
 	return h.installObserver()
@@ -354,6 +372,13 @@ func (h *circuitHandle) jsObject() *goja.Object {
 			return nil, err
 		}
 
+		return obj, nil
+	}))
+
+	_ = obj.Set("close", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		if err := h.close(); err != nil {
+			return nil, err
+		}
 		return obj, nil
 	}))
 

@@ -21,21 +21,12 @@ spec:
         runAsNonRoot: true
       containers:
       - command:
-        - /dctl
+        - /dbsp
+        # NOTE: the dcontroller operator runs as a JavaScript program in the
+        # dbsp runtime. The script path below is a placeholder; it will be
+        # populated by the follow-up PR that lands the JS port of the operator.
         args:
-        - start
-        - --leader-elect
-{{- if .Values.apiServer.enabled }}
-  {{- if eq .Values.apiServer.mode "production" }}
-        - --tls-cert-file=/etc/dcontroller/tls/tls.crt
-        - --tls-key-file=/etc/dcontroller/tls/tls.key
-  {{- else }}
-        - --http
-        - --disable-authentication
-  {{- end }}
-{{- else }}
-        - --disable-api-server
-{{- end }}
+        - {{ .Values.script | default "/scripts/dcontroller.js" }}
         image: "{{ .Values.image.name }}:{{ .Values.image.tag }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         name: dcontroller

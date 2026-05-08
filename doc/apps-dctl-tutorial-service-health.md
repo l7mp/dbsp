@@ -34,18 +34,17 @@ Look for `status.conditions` and `status.lastErrors`.
 
 If the embedded API server is enabled, the example is a good place to inspect a local view.
 
-Generate a kubeconfig for the view API server and list resources:
+Generate a kubeconfig for the view API server via the JS runtime utility API:
 
 ```bash
-dctl generate-config --http --user=dev --namespaces="*" \
-  --server-address=localhost:8443 > /tmp/dctl.config
-KUBECONFIG=/tmp/dctl.config kubectl api-resources
+./js/bin/dbsp -e 'const cfg = kubernetes.runtime.config({apiServer:{addr:"localhost",port:8443,http:true}}); const yaml = cfg.generateKubeConfig({user:"dev",namespaces:["*"],keyFile:"apiserver.key",serverAddress:"localhost:8443",http:true}); require("fs").writeFileSync("/tmp/dcontroller.config", yaml);'
+KUBECONFIG=/tmp/dcontroller.config kubectl api-resources
 ```
 
 Then read the generated `HealthView` objects:
 
 ```bash
-KUBECONFIG=/tmp/dctl.config kubectl get healthview.svc-health-operator.view.dcontroller.io -o yaml
+KUBECONFIG=/tmp/dcontroller.config kubectl get healthview.svc-health-operator.view.dcontroller.io -o yaml
 ```
 
 This is the main reason the example is useful: it shows how a complex controller can be split into

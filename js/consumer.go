@@ -1,4 +1,4 @@
-package main
+package js
 
 import (
 	"context"
@@ -64,10 +64,11 @@ func (v *VM) registerCallbackConsumer(topic string, jsFn goja.Callable) {
 }
 
 // registerProducerCallback subscribes to sourceTopic, calls jsFn with each
-// batch, and publishes the return value to targetTopic.  A JS return of
+// batch, and publishes the return value to targetTopic. A JS return of
 // undefined or null publishes an empty Z-set (producer semantics: the callback
-// transforms raw data before it hits the bus).
-func (v *VM) registerProducerCallback(sourceTopic, targetTopic, errorOrigin string, jsFn goja.Callable) {
+// transforms raw data before it hits the bus). The returned stop function
+// cancels the subscription and is safe to call multiple times.
+func (v *VM) registerProducerCallback(sourceTopic, targetTopic, errorOrigin string, jsFn goja.Callable) func() {
 	sub := v.runtime.NewSubscriber()
 	sub.Subscribe(sourceTopic)
 	pub := v.runtime.NewPublisher()
@@ -140,4 +141,6 @@ func (v *VM) registerProducerCallback(sourceTopic, targetTopic, errorOrigin stri
 			})
 		}
 	}()
+
+	return func() { _ = stop.Cancel() }
 }

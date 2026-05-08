@@ -1,4 +1,4 @@
-package main
+package js
 
 import (
 	"context"
@@ -40,6 +40,7 @@ type VM struct {
 	runtime  *dbspruntime.Runtime
 	db       *relation.Database
 	logger   logr.Logger
+	opts     Options
 	ctx      context.Context
 	cancelVM context.CancelFunc
 
@@ -59,6 +60,7 @@ type VM struct {
 	k8sMu              sync.Mutex
 	k8sRuntime         *k8sruntime.Runtime
 	k8sNativeAvailable bool
+	k8sStartConfig     *k8sRuntimeStartConfig
 }
 
 type processState struct {
@@ -84,7 +86,17 @@ var (
 	forAwaitRe     = regexp.MustCompile(`\bfor\s+await\s*\(`)
 )
 
+// NewVM creates a VM with the given logger and otherwise default options. It is
+// a thin shim around NewVMWithOptions kept for backward compatibility with
+// existing callers.
 func NewVM(logger logr.Logger) (*VM, error) {
+	return NewVMWithOptions(Options{Logger: logger})
+}
+
+// NewVMWithOptions creates a VM configured by opts. Use this when callers
+// need explicit logger control or future VM-wide options.
+func NewVMWithOptions(opts Options) (*VM, error) {
+	logger := opts.Logger
 	if logger.GetSink() == nil {
 		logger = logr.Discard()
 	}
@@ -95,6 +107,7 @@ func NewVM(logger logr.Logger) (*VM, error) {
 		runtime:      dbspruntime.NewRuntime(logger),
 		db:           relation.NewDatabase("dbsp"),
 		logger:       logger,
+		opts:         opts,
 		ctx:          ctx,
 		cancelVM:     cancel,
 		runtimeDone:  make(chan error, 1),
@@ -159,6 +172,20 @@ func (v *VM) RunFile(path string) error {
 		return fmt.Errorf("execute module %s: %w", absPath, err)
 	}
 	v.logger.V(1).Info("module loaded, entering event loop", "path", absPath)
+
+	return v.runEventLoop()
+}
+
+// RunString runs JavaScript source directly and enters the runtime event loop.
+// Callers that want immediate process exit should include an explicit exit()
+// call in src.
+func (v *VM) RunString(src string) error {
+	const name = "<eval>"
+	v.logger.Info("running inline script")
+	if err := v.runSourceAsModule(name, src); err != nil {
+		return fmt.Errorf("execute module %s: %w", name, err)
+	}
+	v.logger.V(1).Info("module loaded, entering event loop", "path", name)
 
 	return v.runEventLoop()
 }
@@ -588,6 +615,13 @@ func (v *VM) injectGlobals() error {
 	if err := kubeObj.Set("update", v.wrap(v.k8sUpdate)); err != nil {
 		return err
 	}
+	kubeRuntimeObj, err := v.newK8sRuntimeNamespace()
+	if err != nil {
+		return err
+	}
+	if err := kubeObj.Set("runtime", kubeRuntimeObj); err != nil {
+		return err
+	}
 	if err := v.rt.Set("kubernetes", kubeObj); err != nil {
 		return err
 	}
@@ -691,6 +725,49 @@ func (v *VM) wrap(fn func(call goja.FunctionCall) (goja.Value, error)) func(call
 	}
 }
 
+// runnableHandle returns a JS object {close(), name()} wrapping a runnable
+// registered with the dbsp runtime. close() unregisters the runnable via
+// runtime.Stop and runs any extra teardown callbacks; it is idempotent. The
+// extras are invoked after Stop in the order given.
+func (v *VM) runnableHandle(r dbspruntime.Runnable, extras ...func()) *goja.Object {
+	obj := v.rt.NewObject()
+	name := r.Name()
+
+	var (
+		mu     sync.Mutex
+		closed bool
+	)
+
+	_ = obj.Set("close", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if closed {
+			return goja.Undefined(), nil
+		}
+		closed = true
+		v.runtime.Stop(r)
+		for _, fn := range extras {
+			if fn != nil {
+				fn()
+			}
+		}
+		return goja.Undefined(), nil
+	}))
+
+	_ = obj.Set("name", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		return v.rt.ToValue(name), nil
+	}))
+
+	_ = obj.Set("toJSON", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		return v.rt.ToValue(map[string]any{
+			"kind": "runnable",
+			"name": name,
+		}), nil
+	}))
+
+	return obj
+}
+
 func (v *VM) withCancelContext(ctx cancelContext, run func()) {
 	v.ctxMu.Lock()
 	v.ctxStack = append(v.ctxStack, ctx)
@@ -767,6 +844,9 @@ func toInt64(v any) (int64, error) {
 }
 
 func decodeOptionValue(value goja.Value, target any) error {
+	if value == nil {
+		return nil
+	}
 	if goja.IsUndefined(value) || goja.IsNull(value) {
 		return nil
 	}

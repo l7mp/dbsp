@@ -6,11 +6,17 @@ runtime.onError((e) => {
 
 aggregate.compile(
     [
-        { "@join":    {
-            "@eq": ["$.pods.metadata.labels.app", "$.services.spec.selector.app"] }
-        },
+        { "@join": [
+            { "@eq": ["$.pods.metadata.labels.app", "$.services.spec.selector.app"] },
+            { inputs: ["pods", "services"] },
+        ]},
         { "@groupBy": ["$.services.metadata.name", "$.pods.status.podIP"] },
-        { "@project": { metadata: { name: "$.key" }, endpoints: "$.values" } },
+        { "@project": {
+            apiVersion: "endpointsdemo.view.dcontroller.io/v1alpha1",
+            kind:       "Endpoints",
+            metadata:   { name: "$.key", namespace: "default" },
+            endpoints:  "$.values",
+        }},
     ], {
         inputs:  ["pods", "services"],
         outputs: ["endpoints"],

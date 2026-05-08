@@ -22,6 +22,8 @@
 // include a version-bearing field in the projection or extend the pipeline
 // with a @select stage that distinguishes "annotation present" from "absent".
 
+kubernetes.runtime.start();
+
 // === Input: watch Service default/iperf-server ===
 kubernetes.watch("services", {
     gvk:       "v1/Service",

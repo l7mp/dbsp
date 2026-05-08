@@ -15,6 +15,8 @@
 // when only the annotation changes, the two Z-set entries cancel (−1 + 1 = 0)
 // and no patch is emitted for an annotation-removal disturbance.  
 
+kubernetes.runtime.start();
+
 // === Input: list Service snapshots on each watch tick ===
 kubernetes.list("services", {
     gvk:       "v1/Service",

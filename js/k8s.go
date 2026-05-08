@@ -1,9 +1,8 @@
-package main
+package js
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -13,13 +12,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
 	k8sconsumer "github.com/l7mp/dbsp/connectors/kubernetes/consumer"
 	k8sproducer "github.com/l7mp/dbsp/connectors/kubernetes/producer"
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
-	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 // describeCall summarises the arguments of a goja call, for use in error
@@ -168,13 +166,14 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 	}
 
 	publishTopic := topic
+	var callbackStop func()
 	if callback != nil {
 		internalKind := "kubernetes-watch"
 		if listMode {
 			internalKind = "kubernetes-list"
 		}
 		publishTopic = v.nextInternalTopic(internalKind, topic)
-		v.registerProducerCallback(publishTopic, topic, internalKind+"-callback", callback)
+		callbackStop = v.registerProducerCallback(publishTopic, topic, internalKind+"-callback", callback)
 	}
 
 	producerKind := "watcher"
@@ -194,25 +193,40 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 		Logger:        v.logger,
 	}
 
+	var runnable dbspruntime.Runnable
 	if listMode {
 		p, err := k8sproducer.NewLister(baseCfg)
 		if err != nil {
+			if callbackStop != nil {
+				callbackStop()
+			}
 			return nil, fmt.Errorf("%s: %w", kind, err)
 		}
 		if err := v.runtime.Add(p); err != nil {
+			if callbackStop != nil {
+				callbackStop()
+			}
 			return nil, fmt.Errorf("%s: register lister: %w", kind, err)
 		}
+		runnable = p
 	} else {
 		p, err := k8sproducer.NewWatcher(baseCfg)
 		if err != nil {
+			if callbackStop != nil {
+				callbackStop()
+			}
 			return nil, fmt.Errorf("%s: %w", kind, err)
 		}
 		if err := v.runtime.Add(p); err != nil {
+			if callbackStop != nil {
+				callbackStop()
+			}
 			return nil, fmt.Errorf("%s: register watcher: %w", kind, err)
 		}
+		runnable = p
 	}
 
-	return goja.Undefined(), nil
+	return v.runnableHandle(runnable, callbackStop), nil
 }
 
 func (v *VM) k8sPatch(call goja.FunctionCall) (goja.Value, error) {
@@ -273,6 +287,7 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 		Logger:     v.logger,
 	}
 
+	var runnable dbspruntime.Runnable
 	if patcher {
 		p, err := k8sconsumer.NewPatcher(baseCfg)
 		if err != nil {
@@ -281,6 +296,7 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 		if err := v.runtime.Add(p); err != nil {
 			return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
 		}
+		runnable = p
 	} else {
 		u, err := k8sconsumer.NewUpdater(baseCfg)
 		if err != nil {
@@ -289,44 +305,19 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 		if err := v.runtime.Add(u); err != nil {
 			return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
 		}
+		runnable = u
 	}
 
-	return goja.Undefined(), nil
+	return v.runnableHandle(runnable), nil
 }
 
 func (v *VM) ensureK8sRuntime() (*k8sruntime.Runtime, error) {
 	v.k8sMu.Lock()
 	defer v.k8sMu.Unlock()
 
-	if v.k8sRuntime != nil {
-		return v.k8sRuntime, nil
+	if v.k8sRuntime == nil {
+		return nil, fmt.Errorf("kubernetes runtime is not started: call kubernetes.runtime.start() before using kubernetes.watch/list/patch/update/log")
 	}
-
-	cfg, err := ctrlcfg.GetConfig()
-	nativeAvailable := true
-	if err != nil {
-		if !clientcmd.IsEmptyConfig(err) {
-			return nil, fmt.Errorf("get kubeconfig: %w", err)
-		}
-
-		nativeAvailable = false
-		cfg = nil
-		fmt.Fprintln(os.Stderr, "warning: kubeconfig is unavailable: native Kubernetes resources are disabled, only view resources can be used")
-	}
-
-	krt, err := k8sruntime.New(k8sruntime.Config{RESTConfig: cfg, Logger: v.logger.WithName("kubernetes-runtime")})
-	if err != nil {
-		return nil, fmt.Errorf("create runtime: %w", err)
-	}
-
-	if nativeAvailable {
-		if err := v.runtime.Add(&k8sRuntimeRunner{rt: krt}); err != nil {
-			return nil, fmt.Errorf("register runtime: %w", err)
-		}
-	}
-
-	v.k8sRuntime = krt
-	v.k8sNativeAvailable = nativeAvailable
 
 	return v.k8sRuntime, nil
 }

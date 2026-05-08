@@ -1,13 +1,6 @@
 # Build variables
 PACKAGE = github.com/l7mp/dbsp/dcontroller
-BUILD_DIR ?= bin/
-VERSION ?= $(shell (git describe --tags --abbrev=8 --always --long) | tr "/" "-")
-COMMIT_HASH ?= $(shell git rev-parse --short HEAD 2>/dev/null)
-BUILD_DATE ?= $(shell date +%FT%T%z)
-LDFLAGS += -s -w
-LDFLAGS += -X main.version=${VERSION} -X main.commitHash=${COMMIT_HASH} -X main.buildDate=${BUILD_DATE}
 GOARGS = -trimpath
-EXECUTABLE = dctl
 
 # Use only the locally installed Go toolchain (for example from Debian apt).
 export GOTOOLCHAIN ?= local
@@ -63,20 +56,13 @@ test: manifests generate fmt vet envtest
 
 ##@ Build
 
-.PHONY: build
-build: manifests generate fmt vet build-bin
-
-.PHONY: build-bin
-build-bin:
-	go build ${GOARGS} -ldflags "${LDFLAGS}" -o ${BUILD_DIR}/${EXECUTABLE} .
-
-.PHONY: run
-run: manifests generate fmt vet
-	go run .
+# The operator runs as a DBSP JavaScript program inside the `dbsp` binary; the
+# `dctl` binary has been retired. The `dbsp` binary lives in the js/ module and
+# is built from there. The targets below cover only Docker / chart packaging.
 
 .PHONY: docker-build
 docker-build: test
-	docker build -t ${IMG} .
+	docker build -f Dockerfile -t ${IMG} ..
 
 .PHONY: docker-push
 docker-push:

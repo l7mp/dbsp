@@ -1,32 +1,34 @@
 ###########
-# Build the manager binary (monorepo-aware)
+# Build the dbsp binary (monorepo-aware). The dcontroller operator runs as a
+# DBSP JavaScript program inside the dbsp runtime; the dctl binary has been
+# retired.
 FROM docker.io/golang:1.26-alpine AS builder
 
 WORKDIR /workspace
 
 # Copy module manifests first to maximize build cache reuse.
-COPY dcontroller/go.mod dcontroller/go.sum /workspace/dcontroller/
+COPY js/go.mod js/go.sum /workspace/js/
 
-# Copy local replacement modules referenced by dcontroller/go.mod.
+# Copy local replacement modules referenced by js/go.mod.
 COPY engine /workspace/engine
 COPY connectors/kubernetes /workspace/connectors/kubernetes
 COPY connectors/misc /workspace/connectors/misc
 
-WORKDIR /workspace/dcontroller
+WORKDIR /workspace/js
 RUN go mod download
 
-# Copy the dcontroller sources.
-COPY dcontroller /workspace/dcontroller
+# Copy the js sources.
+COPY js /workspace/js
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /workspace/bin/dctl .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /workspace/bin/dbsp ./cmd
 
 ###########
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
+# Use distroless as the minimal base image to package the dbsp binary.
+# Refer to https://github.com/GoogleContainerTools/distroless for more details.
 FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /
-COPY --from=builder /workspace/bin/dctl .
+COPY --from=builder /workspace/bin/dbsp .
 USER 65532:65532
 
-ENTRYPOINT ["/dctl", "start"]
+ENTRYPOINT ["/dbsp"]

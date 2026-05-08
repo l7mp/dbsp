@@ -1,4 +1,4 @@
-package main
+package js
 
 import (
 	"context"
@@ -1028,6 +1028,7 @@ console.error("test-error", { code: 42 });
 
 		Expect(runScript(vm, `runtime.publish("plain", [[{id: 1}, 1]]);`)).To(Succeed())
 		Expect(vm.k8sRuntime).To(BeNil())
+		Expect(runScript(vm, `kubernetes.runtime.start();`)).To(Succeed())
 
 		_, err = vm.parseGVK("v1/Pod")
 		Expect(err).To(HaveOccurred())

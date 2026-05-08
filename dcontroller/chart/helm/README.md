@@ -1,6 +1,6 @@
 # Δ-controller Helm Chart
 
-This chart deploys Δ-controller and its embedded API server.
+This chart deploys Δ-controller as a `dbsp` JavaScript runtime workload.
 
 ## Quick start
 
@@ -12,8 +12,15 @@ helm upgrade --install dcontroller dcontroller/dcontroller \
   --create-namespace
 ```
 
-Default install uses development mode (`apiServer.mode=development`): HTTP, authentication disabled,
-and internal `ClusterIP` service.
+Default install uses development-oriented chart values. Runtime API-server
+behavior is expected to be configured in the mounted JS script via
+`kubernetes.runtime.config(...).start()`.
+
+For local utility commands without helper files, `dbsp` supports inline eval:
+
+```bash
+./js/bin/dbsp -e 'console.log(typeof kubernetes.runtime.config({}).generateKeys)'
+```
 
 ## Documentation
 

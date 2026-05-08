@@ -26,6 +26,8 @@ if (Object.keys(labels).length === 0) {
     throw new Error("Usage: dbsp pod-log-filter.js <label-key>:<label-value>[,...]");
 }
 
+kubernetes.runtime.start();
+
 // Watch Pods matching the label selector and publish raw pod documents.
 kubernetes.watch("pods-raw", { gvk: "v1/Pod", labels });
 

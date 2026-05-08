@@ -1,194 +1,140 @@
 # Δ-controller: Getting Started
 
-Δ-controller lives in the [`dcontroller/`](dcontroller/) module and builds on the same Go workspace
-as DBSP. This guide is the primary place for install and API-server configuration.
+Δ-controller now runs as a JavaScript program inside the `dbsp` runtime. The
+old `dctl` admin workflow has been replaced by the `kubernetes.runtime` JS API.
 
-## Installation
+## Build and install
 
-### Obtain `dctl`
-
-`dctl` is used to run Δ-controller locally and to generate API-server certificates and kubeconfigs.
-
-- Local build: `make build` then use `./dcontroller/bin/dctl`.
-- Go install: `go install github.com/l7mp/dbsp/dcontroller@latest`.
-- Release artifact: not published yet.
-
-### Build binaries from source
-
-From the workspace root:
+Build the JS runtime binary from the workspace root:
 
 ```bash
-make build
+make -C js build
 ```
 
-This builds `dctl` and the example binaries under `dcontroller/examples/`.
+This produces `js/bin/dbsp`.
 
-To build only the Δ-controller module:
+Build the dcontroller image and chart assets from `dcontroller/` as needed:
 
 ```bash
-cd dcontroller
-make build
+make -C dcontroller docker-build
 ```
 
-### Install with Helm (default development mode)
+## Local runtime model
 
-Add the Helm repo:
+Kubernetes connector startup is explicit. Scripts must call
+`kubernetes.runtime.start()` before `kubernetes.watch/list/patch/update/log`.
+
+```js
+// minimal startup: native Kubernetes only, no embedded API server
+kubernetes.runtime.start();
+```
+
+To include embedded API-server settings and auth defaults, create a runtime
+config object first:
+
+```js
+const runtimeConfig = kubernetes.runtime.config({
+  apiServer: {
+    addr: "0.0.0.0",
+    port: 8443,
+    http: false,
+    insecure: true,
+    certFile: "apiserver.crt",
+    keyFile: "apiserver.key",
+  },
+  auth: {
+    privateKeyFile: "apiserver.key",
+    publicKeyFile: "apiserver.crt",
+  },
+});
+
+runtimeConfig.start();
+```
+
+## Pure admin utilities (no runtime start)
+
+`kubernetes.runtime.config(...)` also exposes stateless utility functions.
+These do not start any runtime component.
+
+```js
+const runtimeConfig = kubernetes.runtime.config({
+  apiServer: { addr: "localhost", port: 8443, http: true },
+});
+
+runtimeConfig.generateKeys({
+  hostnames: ["localhost"],
+  keyFile: "apiserver.key",
+  certFile: "apiserver.crt",
+});
+
+const kubeconfigYAML = runtimeConfig.generateKubeConfig({
+  user: "dev",
+  namespaces: ["*"],
+  keyFile: "apiserver.key",
+  serverAddress: "localhost:8443",
+  http: true,
+});
+
+const info = runtimeConfig.inspectKubeConfig({
+  kubeconfig: "/tmp/dcontroller.config",
+  certFile: "apiserver.crt",
+});
+```
+
+For one-off admin tasks, prefer inline execution with `dbsp -e`.
+
+```bash
+./js/bin/dbsp -e 'const cfg = kubernetes.runtime.config({apiServer:{addr:"localhost",port:8443,http:true}}); const yaml = cfg.generateKubeConfig({user:"dev",namespaces:["*"],keyFile:"apiserver.key",serverAddress:"localhost:8443",http:true}); require("fs").writeFileSync("/tmp/dcontroller.config", yaml);'
+```
+
+## Helm install
 
 ```bash
 helm repo add dcontroller https://l7mp.github.io/dcontroller/
 helm repo update
-```
-
-Install into `dcontroller-system`:
-
-```bash
 helm upgrade --install dcontroller dcontroller/dcontroller \
   --namespace dcontroller-system \
   --create-namespace
 ```
 
-Default chart mode is `development`:
+The deployment runs `/dbsp <script>`. API-server behavior is expected to be
+declared in the script via `kubernetes.runtime.config(...).start()`.
 
-- HTTP API server.
-- Authentication disabled.
-- Internal `ClusterIP` service.
+## Script-driven configuration pattern
 
-If you are editing the chart from this repo, use `./dcontroller/chart/helm` instead of
-`dcontroller/dcontroller`.
+Mount a config file and let the script own runtime policy:
 
-## Configuration and API access
+```js
+const fs = require("fs");
 
-### Development mode access
+const raw = fs.readFileSync("/etc/dcontroller/runtime.json", "utf8");
+const cfg = JSON.parse(raw);
+const runtimeConfig = kubernetes.runtime.config(cfg.kubernetes || {});
 
-Port-forward the API server:
-
-```bash
-kubectl -n dcontroller-system port-forward svc/dcontroller-apiserver 8443:8443
+runtimeConfig.start();
 ```
 
-Generate and use a development kubeconfig:
+This keeps Helm focused on deployment concerns while connector behavior stays
+in source-controlled JS code.
+
+## Generate kubeconfig for view inspection
+
+One practical workflow is to use an inline one-liner:
 
 ```bash
-./dcontroller/bin/dctl generate-keys --hostname=localhost
-./dcontroller/bin/dctl generate-config --http --user=dev --namespaces="*" \
-  --tls-key-file=apiserver.key --server-address=localhost:8443 > /tmp/dctl.config
-export KUBECONFIG=/tmp/dctl.config
-kubectl api-resources
+./js/bin/dbsp -e 'const cfg = kubernetes.runtime.config({apiServer:{addr:"localhost",port:8443,http:true}}); const yaml = cfg.generateKubeConfig({user:"dev",namespaces:["*"],keyFile:"apiserver.key",serverAddress:"localhost:8443",http:true}); require("fs").writeFileSync("/tmp/dcontroller.config", yaml);'
+KUBECONFIG=/tmp/dcontroller.config kubectl api-resources
 ```
 
-### Production mode (TLS + authentication)
+## Troubleshooting
 
-Production mode needs a TLS Secret. Without it, the manager container does not start.
+- If you see `kubernetes runtime is not started`, call
+  `kubernetes.runtime.start()` early in your script.
+- If kubeconfig is unavailable, native resources are disabled but view
+  resources can still work when the embedded API server is configured.
+- For runtime failures from async components, register `runtime.onError(...)`.
 
-```bash
-./dcontroller/bin/dctl generate-keys \
-  --hostname=localhost \
-  --hostname=dcontroller-apiserver.dcontroller-system.svc
-
-kubectl -n dcontroller-system create secret tls dcontroller-tls \
-  --cert=apiserver.crt \
-  --key=apiserver.key \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-helm upgrade --install dcontroller dcontroller/dcontroller \
-  --namespace dcontroller-system \
-  --set apiServer.mode=production
-```
-
-### Expose production API server
-
-Keep `ClusterIP` and use port-forward, or expose externally:
-
-```bash
-# LoadBalancer
-helm upgrade --install dcontroller dcontroller/dcontroller \
-  --namespace dcontroller-system \
-  --set apiServer.mode=production \
-  --set apiServer.service.type=LoadBalancer
-
-# NodePort
-helm upgrade --install dcontroller dcontroller/dcontroller \
-  --namespace dcontroller-system \
-  --set apiServer.mode=production \
-  --set apiServer.service.type=NodePort \
-  --set apiServer.service.nodePort=30443
-
-# Gateway API
-helm upgrade --install dcontroller dcontroller/dcontroller \
-  --namespace dcontroller-system \
-  --set apiServer.mode=production \
-  --set apiServer.gateway.enabled=true \
-  --set apiServer.gateway.gatewayName=my-gateway \
-  --set apiServer.gateway.gatewayNamespace=gateway-system \
-  --set apiServer.gateway.hostname=dcontroller-api.example.com
-```
-
-If exposed externally, include the external hostname or IP in `dctl generate-keys --hostname=...`.
-
-### Authentication and authorization profiles
-
-`dctl generate-config` creates kubeconfigs with embedded JWT tokens. Access is controlled by
-namespace restrictions and Kubernetes-style RBAC policy rules.
-
-```bash
-# Admin profile
-./dcontroller/bin/dctl generate-config --user=admin --namespaces="*" \
-  --tls-key-file=apiserver.key --insecure --server-address=localhost:8443 > /tmp/dctl-admin.config
-
-# Read-only viewer profile
-./dcontroller/bin/dctl generate-config --user=viewer --namespaces=default \
-  --rules='[{"verbs":["get","list","watch"],"apiGroups":["*.view.dcontroller.io"],"resources":["*"]}]' \
-  --tls-key-file=apiserver.key --insecure --server-address=localhost:8443 > /tmp/dctl-viewer.config
-```
-
-For long-lived tokens, set `--expiry` (for example `--expiry=720h`).
-
-### Helm values quick reference
-
-| Value | Meaning | Default |
-|---|---|---|
-| `apiServer.enabled` | Enable embedded API server | `true` |
-| `apiServer.mode` | `development` or `production` | `development` |
-| `apiServer.port` | API server port | `8443` |
-| `apiServer.tls.secretName` | TLS secret name | `dcontroller-tls` |
-| `apiServer.service.type` | `ClusterIP`, `LoadBalancer`, `NodePort` | `ClusterIP` |
-| `apiServer.service.nodePort` | NodePort number | unset |
-| `apiServer.service.annotations` | Service annotations | `{}` |
-| `apiServer.gateway.enabled` | Create `HTTPRoute` | `false` |
-
-For all chart values, see `dcontroller/chart/helm/values.yaml`.
-
-### Upgrade, uninstall, troubleshooting
-
-```bash
-# Upgrade
-helm repo update
-helm upgrade dcontroller dcontroller/dcontroller --namespace dcontroller-system
-
-# Uninstall
-helm uninstall dcontroller --namespace dcontroller-system
-kubectl delete namespace dcontroller-system
-
-# Logs
-kubectl logs -n dcontroller-system deployment/dcontroller-manager
-```
-
-## Run manager locally (without Helm)
-
-`dctl` can run the manager directly against your current Kubernetes context.
-
-```bash
-# Development mode
-./dcontroller/bin/dctl start --http --disable-authentication
-
-# TLS-enabled mode
-./dcontroller/bin/dctl generate-keys --hostname=localhost
-./dcontroller/bin/dctl start --insecure --tls-cert-file=apiserver.crt --tls-key-file=apiserver.key
-```
-
-## Apply an operator
-
-Apply the service-health example:
+## Apply an example operator
 
 ```bash
 kubectl apply -f dcontroller/examples/service-health-monitor/svc-health-operator.yaml
@@ -197,13 +143,3 @@ kubectl get operator svc-health-operator -o yaml
 ```
 
 Useful status fields: `status.conditions` and `status.lastErrors`.
-
-## Inspect views
-
-```bash
-kubectl api-resources
-kubectl get healthview.svc-health-operator.view.dcontroller.io -o yaml
-kubectl get healthview.svc-health-operator.view.dcontroller.io --watch
-```
-
-Views appear under API group `<operator-name>.view.dcontroller.io/v1alpha1`.

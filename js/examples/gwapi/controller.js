@@ -6,6 +6,8 @@ runtime.onError((e) => {
   console.error(`[runtime:${e.origin}] ${e.message}`);
 });
 
+kubernetes.runtime.start();
+
 function setupConnectors(topics) {
   kubernetes.watch(
     topics.inputs.gatewayClass,

@@ -13,18 +13,25 @@ The maintained documentation lives under [`doc/`](/doc/) and example controllers
 
 ## Build And Run
 
-From this module:
+Build the DBSP JS runtime from the workspace root:
 
 ```bash
-make build
+make -C js build
 ```
 
-This builds `bin/dctl`.
+This builds `js/bin/dbsp`.
 
 For local development against your current Kubernetes context:
 
 ```bash
-./bin/dctl start --http --disable-authentication
+./js/bin/dbsp /path/to/dcontroller.js
+```
+
+For one-off utility actions (for example kubeconfig generation), use inline
+evaluation:
+
+```bash
+./js/bin/dbsp -e 'const cfg = kubernetes.runtime.config({apiServer:{addr:"localhost",port:8443,http:true}}); const yaml = cfg.generateKubeConfig({user:"dev",namespaces:["*"],keyFile:"apiserver.key",serverAddress:"localhost:8443",http:true}); require("fs").writeFileSync("/tmp/dcontroller.config", yaml);'
 ```
 
 For the full current workflow, including TLS and view access, use
