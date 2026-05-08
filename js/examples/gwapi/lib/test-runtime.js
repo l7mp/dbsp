@@ -45,22 +45,65 @@ function assertMultisetEqual(actualDocs, expectedDocs, label) {
   }
 }
 
-async function collectTopic(topic, timeoutMs = 50) {
-  const iter = subscribe(topic);
-  const done = iter.next();
-  const timer = new Promise((resolve) => {
-    setTimeout(() => resolve({ timeout: true }), timeoutMs);
-  });
-  const race = await Promise.race([done, timer]);
-  await iter.return();
+const topicCollectors = new Map();
 
-  if (race && race.timeout) {
+function ensureTopicCollector(topic) {
+  let collector = topicCollectors.get(topic);
+  if (collector) {
+    return collector;
+  }
+
+  collector = {
+    queue: [],
+    waiters: [],
+  };
+  topicCollectors.set(topic, collector);
+
+  subscribe(topic, (entries) => {
+    if (collector.waiters.length > 0) {
+      const resolve = collector.waiters.shift();
+      resolve(entries);
+      return;
+    }
+    collector.queue.push(entries);
+  });
+
+  return collector;
+}
+
+async function collectTopic(topic, timeoutMs = 50) {
+  const collector = ensureTopicCollector(topic);
+
+  if (collector.queue.length > 0) {
+    const entries = collector.queue.shift();
+    return entries.map(([doc]) => doc);
+  }
+
+  const entries = await new Promise((resolve) => {
+    let timer = null;
+    const onEntries = (batch) => {
+      const idx = collector.waiters.indexOf(onEntries);
+      if (idx >= 0) {
+        collector.waiters.splice(idx, 1);
+      }
+      clearTimeout(timer);
+      resolve(batch);
+    };
+
+    collector.waiters.push(onEntries);
+    timer = setTimeout(() => {
+      const idx = collector.waiters.indexOf(onEntries);
+      if (idx >= 0) {
+        collector.waiters.splice(idx, 1);
+      }
+      resolve(null);
+    }, timeoutMs);
+  });
+
+  if (!entries) {
     return [];
   }
-  if (!race || race.done) {
-    return [];
-  }
-  return race.value.map(([doc]) => doc);
+  return entries.map(([doc]) => doc);
 }
 
 function runTestCases(cases, runOne) {

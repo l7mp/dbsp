@@ -9,19 +9,30 @@ DCTRL_LOCALBIN := dcontroller/bin
 K8S_LOCALBIN_ABS := $(abspath $(K8S_LOCALBIN))
 DCTRL_LOCALBIN_ABS := $(abspath $(DCTRL_LOCALBIN))
 
-.PHONY: help build test test-fast clean test-report lint
+.PHONY: help generate manifests build test test-fast clean test-report lint
 .PHONY: build-connectors-kubernetes build-connectors-misc build-engine build-js build-dcontroller build-dcontroller-examples
 .PHONY: test-connectors-kubernetes test-connectors-misc test-engine test-js test-dcontroller
 .PHONY: test-fast-connectors-kubernetes test-fast-connectors-misc test-fast-engine test-fast-js test-fast-dcontroller
 
 help:
 	@printf "Root workspace targets:\n"
+	@printf "  make generate     Run code generation tasks\n"
+	@printf "  make manifests    Regenerate Kubernetes manifests\n"
 	@printf "  make build        Build all sub-project artifacts\n"
 	@printf "  make test         Run all tests (fail fast)\n"
 	@printf "  make test-fast    Run fast tests (skip integration/examples)\n"
 	@printf "  make test-report  Run all tests and print per-module pass/fail summary\n"
 	@printf "  make lint         Run golangci-lint across workspace modules\n"
 	@printf "  make clean        Remove build/test artifacts across sub-projects\n"
+
+
+generate:
+	@printf "==> [dcontroller] generate\n"
+	@$(MAKE) -C dcontroller generate
+
+manifests:
+	@printf "==> [dcontroller] manifests\n"
+	@$(MAKE) -C dcontroller manifests
 
 build: build-connectors-kubernetes build-connectors-misc build-engine build-js build-dcontroller
 

@@ -41,6 +41,11 @@ func New(name string) *Circuit {
 // Name returns the circuit's name.
 func (c *Circuit) Name() string { return c.name }
 
+// SetName updates the circuit name.
+func (c *Circuit) SetName(name string) {
+	c.name = name
+}
+
 // AddNode adds a node to the circuit.
 //
 // Special behavior for delay nodes (KindDelay / *operator.DelayOp): the circuit

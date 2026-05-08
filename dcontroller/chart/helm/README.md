@@ -15,6 +15,7 @@ helm upgrade --install dcontroller dcontroller/dcontroller \
 Default install uses development-oriented chart values. Runtime API-server
 behavior is expected to be configured in the mounted JS script via
 `kubernetes.runtime.config(...).start()`.
+The default script path is `/dcontroller/dcontroller.js` inside the image.
 
 For local utility commands without helper files, `dbsp` supports inline eval:
 

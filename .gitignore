@@ -9,6 +9,8 @@ connectors/kubernetes/bin/
 
 # Ignore JS scripts by default; force-add selected examples when needed.
 *.js
+!dcontroller/*.js
+!dcontroller/lib/**/*.js
 
 # Keep local agent instruction docs out of git.
 AGENTS.md

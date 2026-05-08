@@ -3,6 +3,7 @@ package js
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/dop251/goja"
 
@@ -11,7 +12,7 @@ import (
 
 func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 	if len(call.Arguments) < 1 {
-		return nil, fmt.Errorf("aggregate.compile(pipeline, { inputs, output }) requires pipeline")
+		return nil, fmt.Errorf("aggregate.compile(pipeline, { inputs, outputs }) requires pipeline")
 	}
 
 	pipelineJSON, err := json.Marshal(call.Argument(0).Export())
@@ -20,12 +21,15 @@ func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 	}
 
 	inputs := []aggcompiler.Binding{{Name: "input", Logical: "input"}}
-	output := aggcompiler.Binding{Name: "output", Logical: "output"}
+	outputs := []aggcompiler.Binding{{Name: "output", Logical: "output"}}
+	compileName := ""
 
 	if len(call.Arguments) > 1 {
 		var opts struct {
-			Inputs  any `json:"inputs"`
-			Outputs any `json:"outputs"`
+			Inputs  any    `json:"inputs"`
+			Output  any    `json:"output"`
+			Outputs any    `json:"outputs"`
+			Name    string `json:"name"`
 		}
 		if err := decodeOptionValue(call.Argument(1), &opts); err != nil {
 			return nil, fmt.Errorf("aggregate.compile options: %w", err)
@@ -35,17 +39,26 @@ func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 		} else if len(parsedInputs) > 0 {
 			inputs = parsedInputs
 		}
-		if parsedOutput, err := parseOutputBinding(opts.Outputs); err != nil {
-			return nil, fmt.Errorf("aggregate.compile options.outputs: %w", err)
-		} else if parsedOutput.Name != "" {
-			output = parsedOutput
+		rawOutputs := opts.Outputs
+		if rawOutputs == nil {
+			rawOutputs = opts.Output
 		}
+		if parsedOutputs, err := parseOutputBindings(rawOutputs); err != nil {
+			return nil, fmt.Errorf("aggregate.compile options.outputs: %w", err)
+		} else if len(parsedOutputs) > 0 {
+			outputs = parsedOutputs
+		}
+		compileName = strings.TrimSpace(opts.Name)
 	}
 
-	compiler := aggcompiler.New(inputs, []aggcompiler.Binding{output})
+	compiler := aggcompiler.New(inputs, outputs)
 	compiled, err := compiler.CompileString(string(pipelineJSON))
 	if err != nil {
 		return nil, fmt.Errorf("aggregate.compile: %w", err)
+	}
+
+	if compileName != "" {
+		compiled.Circuit.SetName(compileName)
 	}
 
 	h := &circuitHandle{c: compiled.Circuit, query: compiled, vm: v}
@@ -104,28 +117,40 @@ func parseInputBinding(raw any) (aggcompiler.Binding, error) {
 	return b, nil
 }
 
-func parseOutputBinding(raw any) (aggcompiler.Binding, error) {
+func parseOutputBindings(raw any) ([]aggcompiler.Binding, error) {
 	if raw == nil {
-		return aggcompiler.Binding{}, nil
+		return nil, nil
 	}
-	// Unwrap a single-element array: outputs: ["name"] or outputs: [{...}].
+
 	if arr, ok := raw.([]any); ok {
-		if len(arr) == 0 {
-			return aggcompiler.Binding{}, nil
+		outs := make([]aggcompiler.Binding, 0, len(arr))
+		for i, item := range arr {
+			b, err := parseBinding(item, "output", true)
+			if err != nil {
+				return nil, fmt.Errorf("index %d: %w", i, err)
+			}
+			if b.Name == "" {
+				continue
+			}
+			if b.Logical == "" {
+				b.Logical = "output"
+			}
+			outs = append(outs, b)
 		}
-		raw = arr[0]
+		return outs, nil
 	}
+
 	b, err := parseBinding(raw, "output", true)
 	if err != nil {
-		return aggcompiler.Binding{}, err
+		return nil, err
 	}
 	if b.Name == "" {
-		return aggcompiler.Binding{}, nil
+		return nil, nil
 	}
 	if b.Logical == "" {
 		b.Logical = "output"
 	}
-	return b, nil
+	return []aggcompiler.Binding{b}, nil
 }
 
 func parseBinding(raw any, defaultLogical string, stringUsesDefaultLogical bool) (aggcompiler.Binding, error) {

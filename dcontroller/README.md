@@ -24,7 +24,7 @@ This builds `js/bin/dbsp`.
 For local development against your current Kubernetes context:
 
 ```bash
-./js/bin/dbsp /path/to/dcontroller.js
+./js/bin/dbsp dcontroller/dcontroller.js
 ```
 
 For one-off utility actions (for example kubeconfig generation), use inline

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/go-logr/logr"
 	"go.uber.org/zap/zapcore"
@@ -125,7 +126,7 @@ func (s *Suite) Close() {
 
 	if s.TestEnv != nil {
 		if err := s.TestEnv.Stop(); err != nil {
-			s.Log.Error(err, "tearing down the test environment")
+			Expect(err).NotTo(HaveOccurred(), "tearing down the test environment")
 		}
 	}
 }

@@ -8,6 +8,7 @@ require (
 	github.com/l7mp/dbsp/connectors/kubernetes v0.0.0
 	github.com/l7mp/dbsp/connectors/misc v0.0.0
 	github.com/l7mp/dbsp/engine v0.0.0
+	github.com/l7mp/dbsp/js v0.0.0
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	github.com/spf13/cobra v1.10.2
@@ -26,6 +27,8 @@ replace github.com/l7mp/dbsp/engine v0.0.0 => ../engine
 replace github.com/l7mp/dbsp/connectors/kubernetes v0.0.0 => ../connectors/kubernetes
 
 replace github.com/l7mp/dbsp/connectors/misc v0.0.0 => ../connectors/misc
+
+replace github.com/l7mp/dbsp/js v0.0.0 => ../js
 
 require (
 	cel.dev/expr v0.25.1 // indirect

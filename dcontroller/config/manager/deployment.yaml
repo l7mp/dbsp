@@ -21,24 +21,38 @@ spec:
         runAsNonRoot: true
       containers:
       - command:
-        - /dctl
+        - /dbsp
         args:
-        - start
-        - --leader-elect
+        - /dcontroller/dcontroller.js
         image: dcontroller:latest
         name: dcontroller
+        env:
+        - name: DCONTROLLER_API_SERVER_ENABLED
+          value: "true"
+        - name: DCONTROLLER_API_SERVER_MODE
+          value: "development"
+        - name: DCONTROLLER_API_SERVER_ADDR
+          value: "0.0.0.0"
+        - name: DCONTROLLER_API_SERVER_PORT
+          value: "8443"
+        - name: DCONTROLLER_API_SERVER_HTTP
+          value: "true"
+        - name: DCONTROLLER_API_SERVER_INSECURE
+          value: "true"
+        ports:
+        - name: api
+          containerPort: 8443
+          protocol: TCP
         securityContext:
           allowPrivilegeEscalation: false
         livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8081
+          tcpSocket:
+            port: api
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 8081
+          tcpSocket:
+            port: api
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:

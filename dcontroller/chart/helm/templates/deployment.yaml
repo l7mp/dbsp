@@ -22,32 +22,56 @@ spec:
       containers:
       - command:
         - /dbsp
-        # NOTE: the dcontroller operator runs as a JavaScript program in the
-        # dbsp runtime. The script path below is a placeholder; it will be
-        # populated by the follow-up PR that lands the JS port of the operator.
         args:
-        - {{ .Values.script | default "/scripts/dcontroller.js" }}
+        - {{ .Values.script | default "/dcontroller/dcontroller.js" }}
         image: "{{ .Values.image.name }}:{{ .Values.image.tag }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         name: dcontroller
+        env:
+        - name: DCONTROLLER_API_SERVER_ENABLED
+          value: {{ ternary "true" "false" .Values.apiServer.enabled | quote }}
+        - name: DCONTROLLER_API_SERVER_MODE
+          value: {{ .Values.apiServer.mode | quote }}
+        - name: DCONTROLLER_API_SERVER_ADDR
+          value: "0.0.0.0"
+        - name: DCONTROLLER_API_SERVER_PORT
+          value: {{ printf "%d" .Values.apiServer.port | quote }}
+        - name: DCONTROLLER_API_SERVER_HTTP
+          value: {{ ternary "true" "false" (eq .Values.apiServer.mode "development") | quote }}
+        - name: DCONTROLLER_API_SERVER_INSECURE
+          value: {{ ternary "true" "false" (eq .Values.apiServer.mode "development") | quote }}
+        - name: DCONTROLLER_API_SERVER_OPENAPI
+          value: "true"
+{{- if and .Values.apiServer.enabled (eq .Values.apiServer.mode "production") }}
+        - name: DCONTROLLER_API_SERVER_CERT_FILE
+          value: "/etc/dcontroller/tls/tls.crt"
+        - name: DCONTROLLER_API_SERVER_KEY_FILE
+          value: "/etc/dcontroller/tls/tls.key"
+        - name: DCONTROLLER_AUTH_PRIVATE_KEY_FILE
+          value: "/etc/dcontroller/tls/tls.key"
+        - name: DCONTROLLER_AUTH_PUBLIC_KEY_FILE
+          value: "/etc/dcontroller/tls/tls.crt"
+{{- end }}
+{{- if .Values.apiServer.enabled }}
         ports:
         - name: api
           containerPort: {{ .Values.apiServer.port }}
           protocol: TCP
+{{- end }}
         securityContext:
           allowPrivilegeEscalation: false
+{{- if .Values.apiServer.enabled }}
         livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8081
+          tcpSocket:
+            port: api
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 8081
+          tcpSocket:
+            port: api
           initialDelaySeconds: 5
           periodSeconds: 10
+{{- end }}
         resources:
           limits:
             cpu: 500m

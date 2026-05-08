@@ -952,6 +952,50 @@ runtime.observe("aggregation", (e) => {
 		Expect(fmt.Sprint(node)).NotTo(BeEmpty())
 	})
 
+	It("respects aggregate.compile name option for runtime.observe", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("runtime-observe-custom-collector", vm.runtime, "runtime-observe-custom-events")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {
+  inputs: "obs-custom-in",
+  outputs: ["obs-custom-out"],
+  name: "custom-aggregation"
+});
+
+runtime.observe("custom-aggregation", (e) => {
+  runtime.publish("runtime-observe-custom-events", [[{node: e.node.id}, 1]]);
+  cancel();
+});
+
+publish("obs-custom-in", [[{id: 303}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() bool {
+			events := collector.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			entries := events[0].Data.Entries()
+			if len(entries) == 0 {
+				return false
+			}
+			node, err := entries[0].Document.GetField("node")
+			if err != nil {
+				return false
+			}
+			return fmt.Sprint(node) != ""
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+	})
+
 	It("prints JSON for runtime objects and documents via console.log", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
@@ -1073,6 +1117,53 @@ c.validate();
 
 		Expect(first.Name).To(Equal("agg-out"))
 		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:11"}))
+	})
+
+	It("compiles aggregate pipelines with multiple outputs", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collectorA, err := newCollectingConsumer("agg-multi-out-a", vm.runtime, "agg-multi-out-a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collectorA)).To(Succeed())
+
+		collectorB, err := newCollectingConsumer("agg-multi-out-b", vm.runtime, "agg-multi-out-b")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collectorB)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {
+  inputs: "agg-multi-in",
+  outputs: ["agg-multi-out-a", "agg-multi-out-b"]
+});
+c.validate();
+publish("agg-multi-in", [[{id: 909}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() bool {
+			events := collectorA.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			return len(zsetRowsByField(events[0], "id")) > 0
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		Eventually(func() bool {
+			events := collectorB.Snapshot()
+			if len(events) == 0 {
+				return false
+			}
+			return len(zsetRowsByField(events[0], "id")) > 0
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		eventsA := collectorA.Snapshot()
+		eventsB := collectorB.Snapshot()
+		Expect(zsetRowsByField(eventsA[0], "id")).To(Equal([]string{"1:909"}))
+		Expect(zsetRowsByField(eventsB[0], "id")).To(Equal([]string{"1:909"}))
 	})
 
 	It("auto-registers aggregate circuits without explicit validate", func() {

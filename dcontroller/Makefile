@@ -32,6 +32,13 @@ SHELL = /usr/bin/env bash -o pipefail
 .PHONY: all
 all: build
 
+.PHONY: build
+build: build-bin
+
+.PHONY: build-bin
+build-bin:
+	go test ./... -run '^$$'
+
 ##@ Development
 
 .PHONY: manifests
@@ -49,6 +56,9 @@ fmt:
 .PHONY: vet
 vet:
 	go vet ./...
+
+.PHONY: lint
+lint: vet
 
 .PHONY: test
 test: manifests generate fmt vet envtest

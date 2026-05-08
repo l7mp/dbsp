@@ -99,6 +99,7 @@ helm upgrade --install dcontroller dcontroller/dcontroller \
 
 The deployment runs `/dbsp <script>`. API-server behavior is expected to be
 declared in the script via `kubernetes.runtime.config(...).start()`.
+The repository-provided manager script is `dcontroller/dcontroller.js`.
 
 ## Script-driven configuration pattern
 

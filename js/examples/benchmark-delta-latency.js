@@ -13,7 +13,15 @@ aggregate.compile([
 }).transform("Incrementalizer").validate();
 
 let count = 0;
-const iter = subscribe("output");
+let warmupResolve = null;
+subscribe("output", (entries) => {
+  count += entries.length;
+  if (warmupResolve !== null && count >= WARMUP_COUNT) {
+    const resolve = warmupResolve;
+    warmupResolve = null;
+    resolve();
+  }
+});
 
 const warmupBatch = [];
 for (let i = 0; i < WARMUP_COUNT; i++) {
@@ -21,14 +29,16 @@ for (let i = 0; i < WARMUP_COUNT; i++) {
 }
 publish("Pod", warmupBatch);
 
-while (count < WARMUP_COUNT) {
-  const step = await iter.next();
-  if (step.done) {
-    break;
-  }
-  count += step.value.length;
+if (count < WARMUP_COUNT) {
+  await new Promise((resolve) => {
+    warmupResolve = resolve;
+    if (count >= WARMUP_COUNT) {
+      const done = warmupResolve;
+      warmupResolve = null;
+      done();
+    }
+  });
 }
-await iter.return();
 
 console.log(`warmup: ${count} entries processed`);
 

@@ -5,15 +5,19 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/golang-jwt/jwt/v5"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
+	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	kauth "github.com/l7mp/dbsp/connectors/kubernetes/runtime/auth"
 )
 
@@ -27,8 +31,9 @@ const (
 )
 
 type k8sRuntimeStartConfig struct {
-	APIServer *k8sRuntimeAPIServerConfig `json:"apiServer,omitempty"`
-	Auth      *k8sRuntimeAuthConfig      `json:"auth,omitempty"`
+	Kubeconfig string                     `json:"kubeconfig,omitempty"`
+	APIServer  *k8sRuntimeAPIServerConfig `json:"apiServer,omitempty"`
+	Auth       *k8sRuntimeAuthConfig      `json:"auth,omitempty"`
 }
 
 type k8sRuntimeAPIServerConfig struct {
@@ -38,7 +43,7 @@ type k8sRuntimeAPIServerConfig struct {
 	Insecure      bool   `json:"insecure"`
 	CertFile      string `json:"certFile"`
 	KeyFile       string `json:"keyFile"`
-	EnableOpenAPI bool   `json:"enableOpenAPI"`
+	EnableOpenAPI bool   `json:"enableOpenAPI"` //nolint:tagliatelle
 }
 
 type k8sRuntimeAuthConfig struct {
@@ -47,8 +52,9 @@ type k8sRuntimeAuthConfig struct {
 }
 
 type k8sRuntimeConfigInput struct {
-	APIServer *k8sRuntimeAPIServerInput `json:"apiServer"`
-	Auth      *k8sRuntimeAuthInput      `json:"auth"`
+	Kubeconfig string                    `json:"kubeconfig"`
+	APIServer  *k8sRuntimeAPIServerInput `json:"apiServer"`
+	Auth       *k8sRuntimeAuthInput      `json:"auth"`
 }
 
 type k8sRuntimeAPIServerInput struct {
@@ -58,7 +64,7 @@ type k8sRuntimeAPIServerInput struct {
 	Insecure      bool   `json:"insecure"`
 	CertFile      string `json:"certFile"`
 	KeyFile       string `json:"keyFile"`
-	EnableOpenAPI *bool  `json:"enableOpenAPI"`
+	EnableOpenAPI *bool  `json:"enableOpenAPI"` //nolint:tagliatelle
 }
 
 type k8sRuntimeAuthInput struct {
@@ -93,6 +99,17 @@ type k8sInspectKubeconfigOptions struct {
 	CertFile   string `json:"certFile"`
 }
 
+type k8sResolveGVKOptions struct {
+	Operator string  `json:"operator"`
+	APIGroup *string `json:"apiGroup"`
+	Version  *string `json:"version"`
+	Kind     string  `json:"kind"`
+}
+
+type k8sViewRegistrationOptions struct {
+	GVKs []string `json:"gvks"`
+}
+
 func (v *VM) newK8sRuntimeNamespace() (*goja.Object, error) {
 	obj := v.rt.NewObject()
 	if err := obj.Set("config", v.wrap(v.k8sRuntimeConfig)); err != nil {
@@ -101,10 +118,19 @@ func (v *VM) newK8sRuntimeNamespace() (*goja.Object, error) {
 	if err := obj.Set("start", v.wrap(v.k8sRuntimeStart)); err != nil {
 		return nil, err
 	}
+	if err := obj.Set("resolveGVK", v.wrap(v.k8sRuntimeResolveGVK)); err != nil {
+		return nil, err
+	}
+	if err := obj.Set("registerViews", v.wrap(v.k8sRuntimeRegisterViews)); err != nil {
+		return nil, err
+	}
+	if err := obj.Set("unregisterViews", v.wrap(v.k8sRuntimeUnregisterViews)); err != nil {
+		return nil, err
+	}
 	if err := obj.Set("toJSON", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
 		return v.rt.ToValue(map[string]any{
 			"kind": "kubernetes.runtime",
-			"apis": []string{"config", "start"},
+			"apis": []string{"config", "start", "resolveGVK", "registerViews", "unregisterViews"},
 		}), nil
 	})); err != nil {
 		return nil, err
@@ -134,6 +160,197 @@ func (v *VM) k8sRuntimeStart(call goja.FunctionCall) (goja.Value, error) {
 	return goja.Undefined(), nil
 }
 
+func (v *VM) k8sRuntimeResolveGVK(call goja.FunctionCall) (goja.Value, error) {
+	var opts k8sResolveGVKOptions
+	if err := decodeOptionValue(call.Argument(0), &opts); err != nil {
+		return nil, fmt.Errorf("kubernetes.runtime.resolveGVK: %w", err)
+	}
+
+	gvk, err := v.resolveRuntimeGVK(opts)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes.runtime.resolveGVK: %w", err)
+	}
+
+	return v.rt.ToValue(map[string]any{
+		"group":   gvk.Group,
+		"version": gvk.Version,
+		"kind":    gvk.Kind,
+		"gvk":     fmt.Sprintf("%s/%s/%s", gvk.Group, gvk.Version, gvk.Kind),
+	}), nil
+}
+
+func (v *VM) k8sRuntimeRegisterViews(call goja.FunctionCall) (goja.Value, error) {
+	gvks, err := decodeViewGVKList(call.Argument(0))
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes.runtime.registerViews: %w", err)
+	}
+
+	krt, err := v.ensureK8sRuntime()
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes.runtime.registerViews: %w", err)
+	}
+
+	for _, gvk := range gvks {
+		if !viewv1a1.IsViewGroup(gvk.Group) {
+			return nil, fmt.Errorf("%s is not a view group", gvk.Group)
+		}
+		if err := krt.GetDiscovery().RegisterViewGVK(gvk); err != nil {
+			return nil, fmt.Errorf("register discovery GVK %s: %w", gvk.String(), err)
+		}
+	}
+
+	if api := krt.GetAPIServer(); api != nil {
+		if err := api.RegisterGVKs(gvks); err != nil {
+			return nil, fmt.Errorf("register API server GVKs: %w", err)
+		}
+	}
+
+	return goja.Undefined(), nil
+}
+
+func (v *VM) k8sRuntimeUnregisterViews(call goja.FunctionCall) (goja.Value, error) {
+	gvks, err := decodeViewGVKList(call.Argument(0))
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes.runtime.unregisterViews: %w", err)
+	}
+
+	krt, err := v.ensureK8sRuntime()
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes.runtime.unregisterViews: %w", err)
+	}
+
+	if api := krt.GetAPIServer(); api != nil {
+		api.UnregisterGVKs(gvks)
+	}
+
+	for _, gvk := range gvks {
+		if !viewv1a1.IsViewGroup(gvk.Group) {
+			return nil, fmt.Errorf("%s is not a view group", gvk.Group)
+		}
+		if err := krt.GetDiscovery().UnregisterViewGVK(gvk); err != nil {
+			return nil, fmt.Errorf("unregister discovery GVK %s: %w", gvk.String(), err)
+		}
+	}
+
+	return goja.Undefined(), nil
+}
+
+func (v *VM) resolveRuntimeGVK(opts k8sResolveGVKOptions) (schema.GroupVersionKind, error) {
+	kind := strings.TrimSpace(opts.Kind)
+	if kind == "" {
+		return schema.GroupVersionKind{}, fmt.Errorf("missing kind")
+	}
+
+	version := ""
+	if opts.Version != nil {
+		version = strings.TrimSpace(*opts.Version)
+	}
+
+	if opts.APIGroup == nil {
+		op := strings.TrimSpace(opts.Operator)
+		if op == "" {
+			return schema.GroupVersionKind{}, fmt.Errorf("operator is required when apiGroup is omitted")
+		}
+		return viewv1a1.GroupVersionKind(op, kind), nil
+	}
+
+	group := strings.TrimSpace(*opts.APIGroup)
+	if group == "" {
+		if version == "" {
+			version = "v1"
+		}
+		return schema.GroupVersionKind{Group: "", Version: version, Kind: kind}, nil
+	}
+
+	if viewv1a1.IsViewGroup(group) {
+		return schema.GroupVersionKind{Group: group, Version: viewv1a1.Version, Kind: kind}, nil
+	}
+
+	if version != "" {
+		return schema.GroupVersionKind{Group: group, Version: version, Kind: kind}, nil
+	}
+	krt, err := v.ensureK8sRuntime()
+	if err != nil {
+		return schema.GroupVersionKind{}, err
+	}
+	if !v.k8sNativeAvailable {
+		return schema.GroupVersionKind{}, fmt.Errorf("native Kubernetes resources unavailable: kubeconfig is missing, only view resources can be used")
+	}
+
+	mapping, err := krt.GetRESTMapper().RESTMapping(schema.GroupKind{Group: group, Kind: kind})
+	if err != nil {
+		return schema.GroupVersionKind{}, fmt.Errorf("resolve GVK for %s/%s: %w", group, kind, err)
+	}
+
+	return mapping.GroupVersionKind, nil
+}
+
+func decodeViewGVKList(value goja.Value) ([]schema.GroupVersionKind, error) {
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return nil, fmt.Errorf("missing GVK list")
+	}
+
+	var list []string
+	if err := decodeOptionValue(value, &list); err == nil {
+		return parseViewGVKStrings(list)
+	}
+
+	var opts k8sViewRegistrationOptions
+	if err := decodeOptionValue(value, &opts); err != nil {
+		return nil, fmt.Errorf("expected string[] or {gvks:string[]}")
+	}
+
+	return parseViewGVKStrings(opts.GVKs)
+}
+
+func parseViewGVKStrings(raw []string) ([]schema.GroupVersionKind, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty GVK list")
+	}
+
+	out := make([]schema.GroupVersionKind, 0, len(raw))
+	for i, item := range raw {
+		gvk, err := parseRawGVK(item)
+		if err != nil {
+			return nil, fmt.Errorf("index %d: %w", i, err)
+		}
+		out = append(out, gvk)
+	}
+
+	return out, nil
+}
+
+func parseRawGVK(raw string) (schema.GroupVersionKind, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return schema.GroupVersionKind{}, fmt.Errorf("empty GVK")
+	}
+
+	parts := strings.Split(s, "/")
+	switch len(parts) {
+	case 2:
+		gv, err := schema.ParseGroupVersion(strings.TrimSpace(parts[0]))
+		if err != nil {
+			return schema.GroupVersionKind{}, fmt.Errorf("invalid apiVersion: %w", err)
+		}
+		kind := strings.TrimSpace(parts[1])
+		if kind == "" {
+			return schema.GroupVersionKind{}, fmt.Errorf("missing kind")
+		}
+		return schema.GroupVersionKind{Group: gv.Group, Version: gv.Version, Kind: kind}, nil
+	case 3:
+		group := strings.TrimSpace(parts[0])
+		version := strings.TrimSpace(parts[1])
+		kind := strings.TrimSpace(parts[2])
+		if group == "" || version == "" || kind == "" {
+			return schema.GroupVersionKind{}, fmt.Errorf("expected group/version/kind")
+		}
+		return schema.GroupVersionKind{Group: group, Version: version, Kind: kind}, nil
+	default:
+		return schema.GroupVersionKind{}, fmt.Errorf("expected v1/Kind or group/version/kind")
+	}
+}
+
 func (v *VM) newK8sRuntimeConfigObject(cfg k8sRuntimeStartConfig) (goja.Value, error) {
 	data := cfg.toMap()
 	obj := v.rt.NewObject()
@@ -141,13 +358,8 @@ func (v *VM) newK8sRuntimeConfigObject(cfg k8sRuntimeStartConfig) (goja.Value, e
 	if err := obj.Set(k8sRuntimeConfigDataKey, data); err != nil {
 		return nil, err
 	}
-	if api, ok := data["apiServer"]; ok {
-		if err := obj.Set("apiServer", api); err != nil {
-			return nil, err
-		}
-	}
-	if auth, ok := data["auth"]; ok {
-		if err := obj.Set("auth", auth); err != nil {
+	for key, val := range data {
+		if err := obj.Set(key, val); err != nil {
 			return nil, err
 		}
 	}
@@ -205,7 +417,7 @@ func (v *VM) decodeK8sRuntimeConfigValue(value goja.Value) (k8sRuntimeStartConfi
 	if !goja.IsUndefined(value) && !goja.IsNull(value) {
 		if obj := value.ToObject(v.rt); obj != nil {
 			embedded := obj.Get(k8sRuntimeConfigDataKey)
-			if !goja.IsUndefined(embedded) && !goja.IsNull(embedded) {
+			if embedded != nil && !goja.IsUndefined(embedded) && !goja.IsNull(embedded) {
 				value = embedded
 			}
 		}
@@ -219,7 +431,7 @@ func (v *VM) decodeK8sRuntimeConfigValue(value goja.Value) (k8sRuntimeStartConfi
 }
 
 func normalizeK8sRuntimeConfig(in k8sRuntimeConfigInput) (k8sRuntimeStartConfig, error) {
-	cfg := k8sRuntimeStartConfig{}
+	cfg := k8sRuntimeStartConfig{Kubeconfig: strings.TrimSpace(in.Kubeconfig)}
 
 	if in.APIServer != nil {
 		enableOpenAPI := true
@@ -290,15 +502,27 @@ func (v *VM) startK8sRuntime(cfg k8sRuntimeStartConfig) error {
 		return fmt.Errorf("runtime already started")
 	}
 
-	restCfg, err := ctrlcfg.GetConfig()
-	nativeAvailable := true
-	if err != nil {
-		if !clientcmd.IsEmptyConfig(err) {
-			return fmt.Errorf("get kubeconfig: %w", err)
+	var (
+		restCfg         *rest.Config
+		err             error
+		nativeAvailable = true
+	)
+
+	if cfg.Kubeconfig != "" {
+		restCfg, err = clientcmd.BuildConfigFromFlags("", cfg.Kubeconfig)
+		if err != nil {
+			return fmt.Errorf("load kubeconfig %q: %w", cfg.Kubeconfig, err)
 		}
-		nativeAvailable = false
-		restCfg = nil
-		fmt.Fprintln(os.Stderr, "warning: kubeconfig is unavailable: native Kubernetes resources are disabled, only view resources can be used")
+	} else {
+		restCfg, err = ctrlcfg.GetConfig()
+		if err != nil {
+			if !clientcmd.IsEmptyConfig(err) {
+				return fmt.Errorf("get kubeconfig: %w", err)
+			}
+			nativeAvailable = false
+			restCfg = nil
+			fmt.Fprintln(os.Stderr, "warning: kubeconfig is unavailable: native Kubernetes resources are disabled, only view resources can be used")
+		}
 	}
 
 	k8sCfg := k8sruntime.Config{
@@ -392,6 +616,9 @@ func (cfg k8sRuntimeStartConfig) defaultInsecureMode() bool {
 
 func (cfg k8sRuntimeStartConfig) toMap() map[string]any {
 	out := map[string]any{}
+	if cfg.Kubeconfig != "" {
+		out["kubeconfig"] = cfg.Kubeconfig
+	}
 	if cfg.APIServer != nil {
 		out["apiServer"] = map[string]any{
 			"addr":          cfg.APIServer.Addr,
