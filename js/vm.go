@@ -430,8 +430,7 @@ func (v *VM) forwardRuntimeErrors() {
 		case rtErr := <-v.runtimeErrCh:
 			h := v.runtimeErrorHandler()
 			if h == nil {
-				v.logger.Error(rtErr.Err, "unhandled runtime error", "origin", rtErr.Origin)
-				v.recordRuntimeError(fmt.Errorf("runtime error from %s: %w", rtErr.Origin, rtErr.Err))
+				v.emitDefaultRuntimeError(rtErr)
 				continue
 			}
 
@@ -561,6 +560,8 @@ func (v *VM) injectGlobals() error {
 		requireOptions = append(requireOptions, require.WithGlobalFolders(
 			filepath.Join(cwd, "stdlib", "vendor"),
 			filepath.Join(cwd, "js", "stdlib", "vendor"),
+			filepath.Join(cwd, "lib"),
+			filepath.Join(cwd, "js", "lib"),
 		))
 	}
 	requireRegistry := require.NewRegistry(requireOptions...)
@@ -710,6 +711,12 @@ func (v *VM) injectGlobals() error {
 	}
 
 	return nil
+}
+
+// emitDefaultRuntimeError is the no-handler fallback: print to stderr.
+// Users who want structured output install their own runtime.onError(fn).
+func (v *VM) emitDefaultRuntimeError(rtErr dbspruntime.Error) {
+	fmt.Fprintf(os.Stderr, "runtime error [%s]: %s\n", rtErr.Origin, rtErr.Err)
 }
 
 func (v *VM) wrap(fn func(call goja.FunctionCall) (goja.Value, error)) func(call goja.FunctionCall) goja.Value {

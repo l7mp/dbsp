@@ -56,6 +56,7 @@ Available modules and globals include:
 - `fs` and `fs.promises` (read/write filesystem access)
 - `timers/promises` (`setTimeout(ms, value)`)
 - `@dbsp/test` (lightweight testing helpers, including `sleep`)
+- `log` (structured logging wrapper around the vendored `pino/browser` build)
 
 `node:` aliases are also available for these modules, for example:
 

@@ -37,16 +37,30 @@ In JS, this is visible as:
 - `process.argv[1]`: script path
 - `process.argv[2...]`: user script arguments
 
-## Vendored JS modules
+## Standard JS modules
 
-The runtime supports loading vendored JavaScript modules from:
+The runtime supports loading standard JavaScript modules from:
+
+- `js/lib`
+
+It also supports loading vendored third-party JavaScript modules from:
 
 - `js/stdlib/vendor`
 
-The `minimist` package is vendored and available via:
+Built-in DBSP modules include:
+
+```js
+const { createLogger } = require("log");
+```
+
+`log` wraps the vendored [pino](https://github.com/pinojs/pino) browser
+build and emits structured JSON log lines on `console.log` / `console.error`.
+
+Vendored third-party modules are available directly, for example:
 
 ```js
 const minimist = require("minimist");
+const pino = require("pino/browser");
 ```
 
 An alias is also provided:

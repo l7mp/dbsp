@@ -469,6 +469,23 @@ assert.strictEqual(parsed.f, true);
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("exposes structured log helper", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `
+const assert = require("assert");
+const log = require("log");
+const logger = log.createLogger("integration.log", { event_type: "dbsp runtime event" });
+logger.info({ topic: "integration" }, "hello");
+const child = logger.child({ component: "integration.log.child", tag: "t" });
+child.error({ error: "sample" }, "boom");
+assert.strictEqual(log.formatError(new Error("x")), "x");
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("exposes goja_nodejs process env", func() {
 		Expect(os.Setenv("DBSP_JS_TEST_ENV", "present")).To(Succeed())
 		DeferCleanup(func() {
@@ -792,6 +809,27 @@ runtime.onError((e) => {
 
 		Expect(origin).To(Equal("emitter-1"))
 		Expect(fmt.Sprint(message)).To(ContainSubstring(sentinel.Error()))
+	})
+
+	It("installs a default runtime.onError handler that keeps the VM alive", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		// No runtime.onError registered by user code: forwardRuntimeErrors
+		// emits the error as a structured JSON line on stderr and keeps
+		// the VM running.
+		emitter, err := newRuntimeErrorEmitter("default-handler-emitter", vm.runtime, errors.New("benign"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(emitter)).To(Succeed())
+
+		// Give forwardRuntimeErrors a moment to drain the error channel.
+		Consistently(func() error {
+			return vm.firstRuntimeError()
+		}, 200*time.Millisecond, 20*time.Millisecond).Should(BeNil())
+
+		// VM should still be usable.
+		Expect(runScript(vm, `runtime.publish("noop", []);`)).To(Succeed())
 	})
 
 	It("supports cancel() inside consumer callback", func() {
