@@ -7,7 +7,10 @@
 //   dbsp examples/pod-log-filter.js app:my-app
 //   dbsp examples/pod-log-filter.js app:my-app,env:prod
 
-const args = (process && process.argv ? process.argv : []).slice(2);
+const minimist = require("minimist");
+const { createLogger } = require("log");
+
+const logger = createLogger("examples.pod-log-filter");
 
 function parseLabels(s) {
     const result = {};
@@ -21,9 +24,12 @@ function parseLabels(s) {
     return result;
 }
 
+const parsed = minimist(process.argv.slice(2));
+const args = Array.isArray(parsed._) ? parsed._ : [];
+
 const labels = parseLabels(args[0]);
 if (Object.keys(labels).length === 0) {
-    throw new Error("Usage: dbsp pod-log-filter.js <label-key>:<label-value>[,...]");
+    throw new Error("Usage: dbsp examples/pod-log-filter.js <label-key>:<label-value>[,...]");
 }
 
 kubernetes.runtime.start();
@@ -72,7 +78,7 @@ subscribe("pods", (entries) => {
 subscribe("error-logs", (entries) => {
     for (const [doc, weight] of entries) {
         if (weight > 0) {
-            console.log("[ERROR]", JSON.stringify(doc));
+            logger.error({ doc }, "pod log error");
         }
     }
 });

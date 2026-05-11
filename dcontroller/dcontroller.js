@@ -1,8 +1,9 @@
 "use strict";
 
 const fs = require("fs");
+const minimist = require("minimist");
 const { DControllerManager } = require("./lib/manager");
-const { createLogger, formatError } = require("./lib/logging");
+const { createLogger, formatError } = require("log");
 
 function parseBool(raw, fallback) {
   if (raw == null || raw === "") {
@@ -27,20 +28,15 @@ function parseIntOr(raw, fallback) {
 }
 
 function parseArgs(argv) {
-  const args = Array.isArray(argv) ? argv.slice() : [];
-  const out = { runtimeConfigFile: "" };
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = String(args[i]);
-    if (arg === "--runtime-config" || arg === "--config") {
-      if (i + 1 < args.length) {
-        out.runtimeConfigFile = String(args[i + 1]);
-        i += 1;
-      }
-    }
+  const parsed = minimist(argv, {
+    string: ["runtime-config", "config"],
+    alias: { config: "runtime-config" },
+  });
+  let raw = parsed["runtime-config"];
+  if (Array.isArray(raw)) {
+    raw = raw.length > 0 ? raw[raw.length - 1] : "";
   }
-
-  return out;
+  return { runtimeConfigFile: raw == null ? "" : String(raw) };
 }
 
 function readRuntimeConfigFromFile(path) {
@@ -134,19 +130,18 @@ function main() {
 
   manager.start();
 
-  logger.info("dcontroller script initialized", {
+  logger.info({
     event_type: "dbsp runtime event",
     runtime_config_file: filePath || "",
-  });
+  }, "dcontroller script initialized");
 }
 
 try {
   main();
 } catch (err) {
-  const logger = createLogger("dcontroller.main");
-  logger.error("failed to start dcontroller", {
+  createLogger("dcontroller.main").error({
     event_type: "dbsp runtime event",
     error: formatError(err),
-  });
+  }, "failed to start dcontroller");
   throw err;
 }

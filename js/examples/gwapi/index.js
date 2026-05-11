@@ -1,12 +1,9 @@
-runtime.onError((e) => {
-  console.error(`[runtime:${e.origin}] ${e.message}`);
-});
-
 const minimist = require("minimist");
 
+const argv = minimist(process.argv.slice(2));
+
 function parseMode() {
-  const parsed = minimist((process?.argv || []).slice(2));
-  const mode = String(parsed._?.[0] || "help").toLowerCase();
+  const mode = String(argv._?.[0] || "help").toLowerCase();
   if (["help", "test", "controller"].includes(mode)) {
     return mode;
   }
@@ -14,8 +11,7 @@ function parseMode() {
 }
 
 function parseSuiteArg() {
-  const parsed = minimist((process?.argv || []).slice(2));
-  return parsed._?.[1] || parsed.suite || "all";
+  return argv._?.[1] || argv.suite || "all";
 }
 
 function runHelp() {

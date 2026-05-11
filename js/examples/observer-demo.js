@@ -4,10 +4,6 @@
 //   1) circuit.observe(fn)
 //   2) runtime.observe(circuitName, fn)
 
-runtime.onError((e) => {
-  console.error(`[runtime:${e.origin}] ${e.message}`);
-});
-
 const c = aggregate.compile([
   { "@project": { "$.": "$." } }
 ], {

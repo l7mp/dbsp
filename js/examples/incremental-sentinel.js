@@ -22,6 +22,9 @@
 // include a version-bearing field in the projection or extend the pipeline
 // with a @select stage that distinguishes "annotation present" from "absent".
 
+const { createLogger } = require("log");
+const logger = createLogger("examples.incremental-sentinel");
+
 kubernetes.runtime.start();
 
 // === Input: watch Service default/iperf-server ===
@@ -29,7 +32,7 @@ kubernetes.watch("services", {
     gvk:       "v1/Service",
     namespace: "default",
 }, (entries) => {
-    console.log("=== input service watcher === ", entries);
+    logger.info({ entries }, "input service watcher");
     return entries;
 });
 
@@ -59,6 +62,6 @@ aggregate.compile(
 kubernetes.patch("desired-services", {
     gvk: "v1/Service",
 }, (entries) => {
-    console.log("=== desired service watcher === ", entries);
+    logger.info({ entries }, "desired service watcher");
     return entries;
 });

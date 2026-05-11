@@ -3,7 +3,7 @@
 const { startController } = require("./controller-runtime");
 const { collectOwnedViewGVKs } = require("./gvk");
 const { ErrorRing, normalizeGeneration } = require("./status");
-const { formatError } = require("./logging");
+const { formatError } = require("log");
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -25,11 +25,11 @@ function registerViewGVKs(logger, gvks, operator) {
     return;
   }
   kubernetes.runtime.registerViews({ gvks });
-  logger.debug("registered operator view GVKs", {
+  logger.debug({
     event_type: "dbsp runtime event",
     topic: operator,
     gvks,
-  });
+  }, "registered operator view GVKs");
 }
 
 function unregisterViewGVKs(logger, gvks, operator) {
@@ -37,11 +37,11 @@ function unregisterViewGVKs(logger, gvks, operator) {
     return;
   }
   kubernetes.runtime.unregisterViews({ gvks });
-  logger.debug("unregistered operator view GVKs", {
+  logger.debug({
     event_type: "dbsp runtime event",
     topic: operator,
     gvks,
-  });
+  }, "unregistered operator view GVKs");
 }
 
 function startOperatorInstance(operatorDoc, logger, onComponentName) {
@@ -82,7 +82,7 @@ function startOperatorInstance(operatorDoc, logger, onComponentName) {
     registerViewGVKs(logger, state.viewGVKs, name);
 
     for (const controllerSpec of controllers) {
-      const controllerLogger = logger.child("controller", {
+      const controllerLogger = logger.child({
         operator: name,
         controller: controllerSpec && controllerSpec.name ? String(controllerSpec.name) : "",
       });
@@ -94,11 +94,11 @@ function startOperatorInstance(operatorDoc, logger, onComponentName) {
     throw err;
   }
 
-  logger.info("operator started", {
+  logger.info({
     event_type: "dbsp runtime event",
     topic: name,
     controllers: state.controllers.length,
-  });
+  }, "operator started");
 
   return state;
 }
@@ -116,11 +116,11 @@ function stopOperatorInstance(state, logger) {
     try {
       controllerRuntime.close();
     } catch (err) {
-      logger.warn("failed to close controller runtime", {
+      logger.warn({
         operator: state.name,
         controller: controllerRuntime.name,
         error: formatError(err),
-      });
+      }, "failed to close controller runtime");
     }
   }
 
@@ -129,17 +129,17 @@ function stopOperatorInstance(state, logger) {
   try {
     unregisterViewGVKs(logger, state.viewGVKs, state.name);
   } catch (err) {
-    logger.warn("failed to unregister view GVKs", {
+    logger.warn({
       operator: state.name,
       error: formatError(err),
-    });
+    }, "failed to unregister view GVKs");
   }
   state.viewGVKs = [];
 
-  logger.info("operator stopped", {
+  logger.info({
     event_type: "dbsp runtime event",
     topic: state.name,
-  });
+  }, "operator stopped");
 }
 
 module.exports = {

@@ -1,6 +1,6 @@
 "use strict";
 
-const { createLogger, formatError } = require("./logging");
+const { createLogger, formatError } = require("log");
 const { buildReadyStatus, buildNotReadyStatus } = require("./status");
 const {
   startOperatorInstance,
@@ -90,11 +90,11 @@ class DControllerManager {
       this.onRuntimeError(err);
     });
 
-    this.log.info("dcontroller manager started", {
+    this.log.info({
       event_type: "dbsp runtime event",
       topic: OPERATOR_EVENT_TOPIC,
       operator_gvk: OPERATOR_GVK,
-    });
+    }, "dcontroller manager started");
   }
 
   reconcileOperatorEvents(entries) {
@@ -129,10 +129,10 @@ class DControllerManager {
       if (equivalentSpecUpdate(oldDoc, newDoc)) {
         deletes.delete(key);
         upserts.delete(key);
-        this.log.debug("ignored status-only operator update", {
+        this.log.debug({
           event_type: "dbsp runtime event",
           topic: key,
-        });
+        }, "ignored status-only operator update");
       }
     }
 
@@ -149,10 +149,10 @@ class DControllerManager {
   upsertOperator(operatorDoc) {
     const name = operatorName(operatorDoc);
     if (!name) {
-      this.log.error("skipping operator without metadata.name", {
+      this.log.error({
         event_type: "dbsp runtime event",
         topic: OPERATOR_EVENT_TOPIC,
-      });
+      }, "skipping operator without metadata.name");
       return;
     }
 
@@ -169,17 +169,17 @@ class DControllerManager {
     try {
       state = startOperatorInstance(
         operatorDoc,
-        this.log.child("operator", { operator: name }),
+        this.log.child({ operator: name }),
         registerComponent,
       );
       this.operators.set(name, state);
       this.publishStatus(name, buildReadyStatus(state.generation, state.errors));
     } catch (err) {
-      this.log.error("operator reconciliation failed", {
+      this.log.error({
         event_type: "dbsp runtime event",
         topic: name,
         error: formatError(err),
-      });
+      }, "operator reconciliation failed");
 
       for (const [origin, mapped] of this.componentIndex.entries()) {
         if (mapped === name) {
@@ -207,7 +207,7 @@ class DControllerManager {
       this.componentIndex.delete(componentName);
     }
 
-    stopOperatorInstance(state, this.log.child("operator", { operator: key }));
+    stopOperatorInstance(state, this.log.child({ operator: key }));
   }
 
   onRuntimeError(payload) {
@@ -215,20 +215,20 @@ class DControllerManager {
     const message = payload && payload.message ? String(payload.message) : "unknown runtime error";
 
     if (!origin) {
-      this.log.error("runtime error without origin", {
+      this.log.error({
         event_type: "dbsp runtime event",
         message,
-      });
+      }, "runtime error without origin");
       return;
     }
 
     const operatorKey = this.componentIndex.get(origin);
     if (!operatorKey) {
-      this.log.error("runtime error from unmanaged component", {
+      this.log.error({
         event_type: "dbsp runtime event",
         origin,
         message,
-      });
+      }, "runtime error from unmanaged component");
       return;
     }
 
@@ -240,12 +240,12 @@ class DControllerManager {
     const fullMessage = `[${origin}] ${message}`;
     state.errors.push(fullMessage);
 
-    this.log.error("operator runtime error", {
+    this.log.error({
       event_type: "dbsp runtime event",
       topic: operatorKey,
       origin,
       message,
-    });
+    }, "operator runtime error");
 
     this.publishStatus(operatorKey, buildReadyStatus(state.generation, state.errors));
   }
@@ -255,11 +255,11 @@ class DControllerManager {
     const generation = generationOf(operatorDoc);
     this.publishRawStatus(operatorDoc, buildNotReadyStatus(generation, err));
 
-    this.log.error("published failed operator status", {
+    this.log.error({
       event_type: "dbsp runtime event",
       topic: name,
       error: formatError(err),
-    });
+    }, "published failed operator status");
   }
 
   publishStatus(operatorNameValue, status) {

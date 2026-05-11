@@ -1,9 +1,5 @@
 // endpoints.js -- In-memory Endpoints controller.
 
-runtime.onError((e) => {
-    console.error(`[runtime:${e.origin}] ${e.message}`);
-});
-
 aggregate.compile(
     [
         { "@join": [

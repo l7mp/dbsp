@@ -1,10 +1,9 @@
 const { CONTROLLER_NAME } = require("./lib/fixtures.js");
 const { DEFAULT_TOPICS } = require("./lib/topics.js");
 const { setupControllerPipelines } = require("./lib/controller-skeleton.js");
+const { createLogger } = require("log");
 
-runtime.onError((e) => {
-  console.error(`[runtime:${e.origin}] ${e.message}`);
-});
+const logger = createLogger("examples.gwapi.controller");
 
 kubernetes.runtime.start();
 
@@ -63,4 +62,4 @@ setupControllerPipelines({ topics, controllerName: CONTROLLER_NAME });
 wireStatusToPatches(topics);
 setupConnectors(topics);
 
-console.log("GWAPI controller started");
+logger.info("GWAPI controller started");

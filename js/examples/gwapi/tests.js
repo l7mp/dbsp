@@ -4,10 +4,6 @@ const { setupControllerPipelines } = require("./lib/controller-skeleton.js");
 const { gwclassCases } = require("./lib/test-cases-gwclass.js");
 const { assertMultisetEqual, collectTopic, runTestCases } = require("./lib/test-runtime.js");
 
-runtime.onError((e) => {
-  console.error(`[runtime:${e.origin}] ${e.message}`);
-});
-
 function pickSuite(arg) {
   if (!arg || arg === "all") {
     return "all";

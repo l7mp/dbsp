@@ -15,6 +15,9 @@
 // when only the annotation changes, the two Z-set entries cancel (−1 + 1 = 0)
 // and no patch is emitted for an annotation-removal disturbance.  
 
+const { createLogger } = require("log");
+const logger = createLogger("examples.sotw-sentinel");
+
 kubernetes.runtime.start();
 
 // === Input: list Service snapshots on each watch tick ===
@@ -22,7 +25,7 @@ kubernetes.list("services", {
     gvk:       "v1/Service",
     namespace: "default",
 }, (entries) => {
-    console.log("=== input service watcher === ", entries);
+    logger.info({ entries }, "input service watcher");
     return entries;
 });
 
@@ -50,6 +53,6 @@ aggregate.compile(
 kubernetes.patch("desired-services", {
     gvk: "v1/Service",
 }, (entries) => {
-    console.log("=== desired service watcher === ", entries);
+    logger.info({ entries }, "desired service watcher");
     return entries;
 });

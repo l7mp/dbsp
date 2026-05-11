@@ -143,7 +143,7 @@ function closeHandle(handle, logger) {
     handle.close();
   } catch (err) {
     if (logger) {
-      logger.warn("failed closing runtime handle", { error: String(err) });
+      logger.warn({ error: String(err) }, "failed closing runtime handle");
     }
   }
 }
@@ -271,10 +271,10 @@ function startSourceHandle(operatorName, controllerSpec, sourceConfig, logger) {
   }
 
   if (source && source.predicate) {
-    logger.warn("source predicate is not supported in JS runtime and will be ignored", {
+    logger.warn({
       controller: controllerSpec.name,
       sourceKind: source.kind,
-    });
+    }, "source predicate is not supported in JS runtime and will be ignored");
   }
 
   switch (sourceType) {
@@ -365,12 +365,12 @@ function startController(operatorName, controllerSpec, logger, onComponent) {
     sanitizeTopicSegment(controllerSpec.name),
   ].join(".");
 
-  logger.info("compiling controller", {
+  logger.info({
     event_type: "dbsp runtime event",
     topic: controllerSpec.name,
     sources: sourceBindingInfo.bindings,
     targets: targetBindings,
-  });
+  }, "compiling controller");
 
   const circuitHandle = aggregate.compile(controllerSpec.pipeline, {
     inputs: sourceBindingInfo.bindings,

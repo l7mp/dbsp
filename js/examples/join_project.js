@@ -10,10 +10,6 @@
 //   kubernetes.update(topic, opts[, cb])    - K8s full-object update consumer
 //   runtime.onError(fn)                     - subscribe to runtime errors
 
-runtime.onError((e) => {
-    console.error(`[runtime:${e.origin}] ${e.message}`);
-});
-
 // === Schema ===
 sql.table("products", "pid INT PRIMARY KEY, name TEXT, price FLOAT");
 sql.table("orders",   "oid INT PRIMARY KEY, product_id INT, qty INT");
