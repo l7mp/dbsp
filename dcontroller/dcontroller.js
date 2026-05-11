@@ -3,7 +3,7 @@
 const fs = require("fs");
 const minimist = require("minimist");
 const { DControllerManager } = require("./lib/manager");
-const { createLogger, formatError } = require("log");
+const { createLogger } = require("log");
 
 function parseBool(raw, fallback) {
   if (raw == null || raw === "") {
@@ -27,32 +27,18 @@ function parseIntOr(raw, fallback) {
   return Math.trunc(n);
 }
 
-function parseArgs(argv) {
+function parseRuntimeConfigArg(argv) {
   const parsed = minimist(argv, {
     string: ["runtime-config", "config"],
     alias: { config: "runtime-config" },
   });
-  let raw = parsed["runtime-config"];
-  if (Array.isArray(raw)) {
-    raw = raw.length > 0 ? raw[raw.length - 1] : "";
-  }
-  return { runtimeConfigFile: raw == null ? "" : String(raw) };
+  const raw = parsed["runtime-config"];
+  return Array.isArray(raw) ? raw[raw.length - 1] : raw;
 }
 
 function readRuntimeConfigFromFile(path) {
-  if (!path) {
-    return {};
-  }
-  const raw = fs.readFileSync(path, "utf8");
-  const decoded = JSON.parse(raw);
-  if (!decoded || typeof decoded !== "object") {
-    return {};
-  }
-
-  if (decoded.kubernetes && typeof decoded.kubernetes === "object") {
-    return decoded.kubernetes;
-  }
-  return decoded;
+  const decoded = JSON.parse(fs.readFileSync(path, "utf8"));
+  return decoded.kubernetes || decoded;
 }
 
 function runtimeConfigFromEnv() {
@@ -93,55 +79,39 @@ function runtimeConfigFromEnv() {
 }
 
 function mergeRuntimeConfig(base, override) {
-  const out = Object.assign({}, base || {});
-  const src = override && typeof override === "object" ? override : {};
+  const out = Object.assign({}, base);
 
-  if (Object.prototype.hasOwnProperty.call(src, "kubeconfig")) {
-    out.kubeconfig = src.kubeconfig;
+  if (Object.prototype.hasOwnProperty.call(override, "kubeconfig")) {
+    out.kubeconfig = override.kubeconfig;
   }
-
-  if (src.apiServer && typeof src.apiServer === "object") {
-    out.apiServer = Object.assign({}, out.apiServer || {}, src.apiServer);
+  if (override.apiServer) {
+    out.apiServer = Object.assign({}, out.apiServer || {}, override.apiServer);
   }
-
-  if (src.auth && typeof src.auth === "object") {
-    out.auth = Object.assign({}, out.auth || {}, src.auth);
+  if (override.auth) {
+    out.auth = Object.assign({}, out.auth || {}, override.auth);
   }
 
   return out;
 }
 
-function main() {
-  const logger = createLogger("dcontroller.main");
-  const args = parseArgs(process.argv.slice(2));
+const logger = createLogger("dcontroller.main");
+const runtimeConfigFile = parseRuntimeConfigArg(process.argv.slice(2))
+  || process.env.DCONTROLLER_RUNTIME_CONFIG
+  || "";
 
-  const filePath = args.runtimeConfigFile || process.env.DCONTROLLER_RUNTIME_CONFIG || "";
-  let runtimeConfig = runtimeConfigFromEnv();
-
-  if (filePath) {
-    const fromFile = readRuntimeConfigFromFile(filePath);
-    runtimeConfig = mergeRuntimeConfig(runtimeConfig, fromFile);
-  }
-
-  const manager = new DControllerManager({
-    runtimeConfig,
-    logger: createLogger("dcontroller"),
-  });
-
-  manager.start();
-
-  logger.info({
-    event_type: "dbsp runtime event",
-    runtime_config_file: filePath || "",
-  }, "dcontroller script initialized");
+let runtimeConfig = runtimeConfigFromEnv();
+if (runtimeConfigFile) {
+  runtimeConfig = mergeRuntimeConfig(runtimeConfig, readRuntimeConfigFromFile(runtimeConfigFile));
 }
 
-try {
-  main();
-} catch (err) {
-  createLogger("dcontroller.main").error({
-    event_type: "dbsp runtime event",
-    error: formatError(err),
-  }, "failed to start dcontroller");
-  throw err;
-}
+const manager = new DControllerManager({
+  runtimeConfig,
+  logger: createLogger("dcontroller"),
+});
+
+manager.start();
+
+logger.info({
+  event_type: "dcontroller_script_initialized",
+  runtime_config_file: runtimeConfigFile,
+}, "dcontroller script initialized");

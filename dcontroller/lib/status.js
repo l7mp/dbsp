@@ -2,17 +2,12 @@
 
 class ErrorRing {
   constructor(capacity) {
-    const parsed = Number(capacity);
-    this.capacity = Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 5;
+    this.capacity = capacity;
     this.items = [];
   }
 
   push(err) {
-    const message = formatError(err);
-    if (!message) {
-      return;
-    }
-    this.items.push(message);
+    this.items.push(formatError(err));
     while (this.items.length > this.capacity) {
       this.items.shift();
     }
@@ -24,28 +19,17 @@ class ErrorRing {
 }
 
 function formatError(err) {
-  if (!err) {
-    return "unknown error";
-  }
   if (typeof err === "string") {
     return err;
   }
-  if (err && typeof err.message === "string" && err.message.length > 0) {
+  if (err && err.message) {
     return err.message;
   }
   return String(err);
 }
 
-function normalizeGeneration(raw) {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) {
-    return 0;
-  }
-  return Math.trunc(n);
-}
-
 function buildReadyStatus(generation, errorRing) {
-  const errors = errorRing ? errorRing.values() : [];
+  const errors = errorRing.values();
   const now = new Date().toISOString();
 
   if (errors.length === 0) {
@@ -55,7 +39,7 @@ function buildReadyStatus(generation, errorRing) {
           type: "Ready",
           status: "True",
           reason: "Ready",
-          observedGeneration: normalizeGeneration(generation),
+          observedGeneration: generation,
           lastTransitionTime: now,
           message: "controllers report no reconciliation error",
         },
@@ -69,7 +53,7 @@ function buildReadyStatus(generation, errorRing) {
         type: "Ready",
         status: "False",
         reason: "ReconciliationFailed",
-        observedGeneration: normalizeGeneration(generation),
+        observedGeneration: generation,
         lastTransitionTime: now,
         message: "reconciliation failed for at least one controller",
       },
@@ -79,15 +63,14 @@ function buildReadyStatus(generation, errorRing) {
 }
 
 function buildNotReadyStatus(generation, err) {
-  const now = new Date().toISOString();
   return {
     conditions: [
       {
         type: "Ready",
         status: "False",
         reason: "NotReady",
-        observedGeneration: normalizeGeneration(generation),
-        lastTransitionTime: now,
+        observedGeneration: generation,
+        lastTransitionTime: new Date().toISOString(),
         message: "failed to initialize operator",
       },
     ],
@@ -99,5 +82,4 @@ module.exports = {
   ErrorRing,
   buildReadyStatus,
   buildNotReadyStatus,
-  normalizeGeneration,
 };
