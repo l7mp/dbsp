@@ -17,6 +17,7 @@ import (
 	k8sproducer "github.com/l7mp/dbsp/connectors/kubernetes/producer"
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
+	kpredicate "github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
@@ -82,9 +83,10 @@ func newKubernetesClientset(cfg *rest.Config) (kubernetes.Interface, error) {
 }
 
 type k8sWatchOptions struct {
-	GVK       string            `json:"gvk"`
-	Namespace string            `json:"namespace"`
-	Labels    map[string]string `json:"labels"`
+	GVK       string                `json:"gvk"`
+	Namespace string                `json:"namespace"`
+	Labels    map[string]string     `json:"labels"`
+	Predicate *kpredicate.Predicate `json:"predicate"`
 }
 
 type k8sConsumerOptions struct {
@@ -122,11 +124,11 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 	}
 
 	if len(call.Arguments) < 2 {
-		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels}[, callback]): expected (string topic, object opts), got %s", kind, describeCall(call))
+		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels, predicate}[, callback]): expected (string topic, object opts), got %s", kind, describeCall(call))
 	}
 
 	if _, ok := call.Argument(0).Export().(string); !ok {
-		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels}[, callback]): expected (string topic, object opts), got %s", kind, describeCall(call))
+		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels, predicate}[, callback]): expected (string topic, object opts), got %s", kind, describeCall(call))
 	}
 	topic := call.Argument(0).String()
 	if topic == "" {
@@ -189,6 +191,7 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 		InputName:     publishTopic,
 		Namespace:     opts.Namespace,
 		LabelSelector: selector,
+		Predicate:     opts.Predicate,
 		Runtime:       v.runtime,
 		Logger:        v.logger,
 	}
