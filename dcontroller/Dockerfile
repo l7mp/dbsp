@@ -16,6 +16,7 @@ COPY connectors/misc /workspace/connectors/misc
 
 WORKDIR /workspace/js
 RUN go mod download
+RUN go mod tidy
 
 # Copy the js sources.
 COPY js /workspace/js
