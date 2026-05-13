@@ -11,10 +11,11 @@ connectors/kubernetes/bin/
 *.js
 !dcontroller/*.js
 !dcontroller/lib/**/*.js
-!js/lib/**/*.js
-!js/stdlib/vendor/**/*.js
-!js/stdlib/vendor/**/package.json
-!js/stdlib/vendor/**/LICENSE
+!dcontroller/test/**/*.js
+!js/examples/**/*.js
+!js/stdlib/**/*.js
+!js/stdlib/**/package.json
+!js/stdlib/**/LICENSE
 
 # Keep local agent instruction docs out of git.
 AGENTS.md

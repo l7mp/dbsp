@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -329,70 +328,6 @@ func registerTimersPromisesModule(v *VM, reg *require.Registry) {
 	})
 }
 
-func registerDBSPTestModule(v *VM, reg *require.Registry) {
-	reg.RegisterNativeModule("@dbsp/test", func(rt *goja.Runtime, module *goja.Object) {
-		o := rt.NewObject()
-		_ = o.Set("assert", require.Require(rt, "assert"))
-		_ = o.Set("sleep", func(call goja.FunctionCall) goja.Value {
-			setTimeout := require.Require(rt, "timers/promises").ToObject(rt).Get("setTimeout")
-			fn, ok := goja.AssertFunction(setTimeout)
-			if !ok {
-				panic(rt.NewGoError(errors.New("timers/promises.setTimeout is not a function")))
-			}
-			value, err := fn(goja.Undefined(), call.Argument(0))
-			if err != nil {
-				panic(rt.NewGoError(err))
-			}
-			return value
-		})
-		_ = o.Set("run", func(call goja.FunctionCall) goja.Value {
-			casesVal := call.Argument(0)
-			runOneVal := call.Argument(1)
-			casesObj := casesVal.ToObject(rt)
-			lenV := casesObj.Get("length")
-			if lenV == nil || goja.IsUndefined(lenV) || goja.IsNull(lenV) {
-				panic(rt.NewGoError(errors.New("@dbsp/test.run expects an array of test cases")))
-			}
-			runOneFn, ok := goja.AssertFunction(runOneVal)
-			if !ok {
-				panic(rt.NewGoError(errors.New("@dbsp/test.run expects runOne function")))
-			}
-			p, resolve, reject := rt.NewPromise()
-			go func() {
-				v.schedule(func() {
-					length := int(lenV.ToInteger())
-					passed := 0
-					failed := []string{}
-					for i := 0; i < length; i++ {
-						caseV := casesObj.Get(strconv.Itoa(i))
-						name := fmt.Sprintf("case-%d", i)
-						if n := caseV.ToObject(rt).Get("name"); n != nil && !goja.IsUndefined(n) && !goja.IsNull(n) {
-							name = n.String()
-						}
-						_, err := runOneFn(goja.Undefined(), caseV)
-						if err != nil {
-							failed = append(failed, fmt.Sprintf("%s: %v", name, err))
-							continue
-						}
-						passed++
-						fmt.Printf("[PASS] %s\n", name)
-					}
-					fmt.Printf("\n%d/%d tests passed\n", passed, length)
-					if len(failed) > 0 {
-						for _, f := range failed {
-							fmt.Printf("[FAIL] %s\n", f)
-						}
-						_ = reject(rt.NewGoError(fmt.Errorf("test run failed: %d failures", len(failed))))
-						return
-					}
-					_ = resolve(goja.Undefined())
-				})
-			}()
-			return rt.ToValue(p)
-		})
-		_ = module.Set("exports", o)
-	})
-}
 
 func registerDBSPMinimistAlias(reg *require.Registry) {
 	reg.RegisterNativeModule("@dbsp/minimist", func(rt *goja.Runtime, module *goja.Object) {

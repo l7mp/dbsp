@@ -541,6 +541,35 @@ func (v *VM) fromJSEntries(value goja.Value) (zset.ZSet, error) {
 	return set, nil
 }
 
+// resolveStdlibPaths returns the ordered list of directories to search for
+// named require() calls. Priority: explicit opts → DBSP_STDLIB env var →
+// binary-relative → cwd-relative fallbacks.
+func resolveStdlibPaths(explicit []string) []string {
+	if len(explicit) > 0 {
+		return explicit
+	}
+	if env := os.Getenv("DBSP_STDLIB"); env != "" {
+		return filepath.SplitList(env)
+	}
+	if exe, err := os.Executable(); err == nil {
+		if c := filepath.Join(filepath.Dir(exe), "..", "stdlib"); dirExists(c) {
+			return []string{c}
+		}
+	}
+	cwd, _ := os.Getwd()
+	for _, rel := range []string{"js/stdlib", "stdlib"} {
+		if c := filepath.Join(cwd, rel); dirExists(c) {
+			return []string{c}
+		}
+	}
+	return nil
+}
+
+func dirExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
 func (v *VM) injectGlobals() error {
 	requireSourceLoader := func(modulePath string) ([]byte, error) {
 		if fi, statErr := os.Stat(modulePath); statErr == nil && fi.IsDir() {
@@ -556,13 +585,8 @@ func (v *VM) injectGlobals() error {
 		return data, nil
 	}
 	requireOptions := []require.Option{require.WithLoader(requireSourceLoader)}
-	if cwd, err := os.Getwd(); err == nil {
-		requireOptions = append(requireOptions, require.WithGlobalFolders(
-			filepath.Join(cwd, "stdlib", "vendor"),
-			filepath.Join(cwd, "js", "stdlib", "vendor"),
-			filepath.Join(cwd, "lib"),
-			filepath.Join(cwd, "js", "lib"),
-		))
+	if paths := resolveStdlibPaths(v.opts.StdlibPaths); len(paths) > 0 {
+		requireOptions = append(requireOptions, require.WithGlobalFolders(paths...))
 	}
 	requireRegistry := require.NewRegistry(requireOptions...)
 	registerAssertModule(requireRegistry)
@@ -571,7 +595,6 @@ func (v *VM) injectGlobals() error {
 	registerFSModule(v, requireRegistry)
 	registerNodeAliases(requireRegistry)
 	registerTimersPromisesModule(v, requireRegistry)
-	registerDBSPTestModule(v, requireRegistry)
 	v.require = requireRegistry.Enable(v.rt)
 	gojaconsole.Enable(v.rt)
 	if err := v.rt.Set("process", require.Require(v.rt, "process")); err != nil {

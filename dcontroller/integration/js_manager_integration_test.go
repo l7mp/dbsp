@@ -89,7 +89,15 @@ func startJSManagerVM(kubeconfigPath string) (*dbspjs.VM, <-chan error) {
 	scriptPath, err := filepath.Abs(filepath.Join("..", "dcontroller.js"))
 	Expect(err).NotTo(HaveOccurred())
 
-	vm, err := dbspjs.NewVM(logr.Discard())
+	wd, err := os.Getwd()
+	Expect(err).NotTo(HaveOccurred())
+	stdlibPath, err := filepath.Abs(filepath.Join(wd, "..", "..", "js", "stdlib"))
+	Expect(err).NotTo(HaveOccurred())
+
+	vm, err := dbspjs.NewVMWithOptions(dbspjs.Options{
+		Logger:      logr.Discard(),
+		StdlibPaths: []string{stdlibPath},
+	})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(vm.SetProcessArgv([]string{"dbsp", scriptPath})).To(Succeed())
 

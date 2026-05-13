@@ -39,6 +39,7 @@ type rootFlags struct {
 	logLevel   string
 	verbose    bool
 	evalSource string
+	stdlibPath string
 }
 
 func newRootCommand() *cobra.Command {
@@ -65,6 +66,7 @@ Use -e/--eval to execute inline JavaScript source.`,
 	pf.StringVarP(&flags.logLevel, "log-level", "l", "error", "Log level: trace|debug|info|warn|error")
 	pf.BoolVarP(&flags.verbose, "verbose", "v", false, "Enable debug logs (same as --log-level=debug)")
 	pf.StringVarP(&flags.evalSource, "eval", "e", "", "Evaluate JavaScript source and exit")
+	pf.StringVar(&flags.stdlibPath, "stdlib", "", "Stdlib directory path; env: DBSP_STDLIB")
 
 	cobra.OnInitialize(func() { initConfig(flags) })
 
@@ -129,7 +131,11 @@ func runScript(cmd *cobra.Command, args []string, flags *rootFlags) error {
 	logger := newLogger(level)
 	logger.V(1).Info("starting dbsp", "log-level", flags.logLevel)
 
-	opts := dbspjs.Options{Logger: logger}
+	var stdlibPaths []string
+	if flags.stdlibPath != "" {
+		stdlibPaths = []string{flags.stdlibPath}
+	}
+	opts := dbspjs.Options{Logger: logger, StdlibPaths: stdlibPaths}
 
 	vm, err := dbspjs.NewVMWithOptions(opts)
 	if err != nil {

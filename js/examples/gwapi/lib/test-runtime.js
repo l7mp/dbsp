@@ -1,4 +1,4 @@
-const t = require("@dbsp/test");
+const t = require("testing");
 const assert = t.assert;
 
 function sortObject(value) {
