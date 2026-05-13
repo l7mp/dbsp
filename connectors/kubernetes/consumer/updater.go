@@ -71,11 +71,9 @@ func (c *Updater) String() string {
 
 func (c *Updater) upsert(ctx context.Context, desired *unstructured.Unstructured) error {
 	key := client.ObjectKeyFromObject(desired)
+	isView := isViewObject(desired)
 	mainContent := runtime.DeepCopyJSON(desired.UnstructuredContent())
 	statusValue, hasStatus := mainContent["status"]
-	if hasStatus {
-		delete(mainContent, "status")
-	}
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := &unstructured.Unstructured{}
@@ -109,7 +107,7 @@ func (c *Updater) upsert(ctx context.Context, desired *unstructured.Unstructured
 		return fmt.Errorf("consumer updater %s: %w", key.String(), err)
 	}
 
-	if hasStatus && !isViewObject(desired) {
+	if hasStatus && !isView {
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			latest := &unstructured.Unstructured{}
 			latest.SetGroupVersionKind(desired.GroupVersionKind())

@@ -160,6 +160,55 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(ok).To(BeFalse())
 	})
 
+	It("passes status through updater update payload for native objects", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "app")
+		seed.Object = map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]any{
+				"name":      "app",
+				"namespace": "default",
+			},
+			"spec": map[string]any{"replicas": int64(1)},
+			"status": map[string]any{
+				"availableReplicas": int64(1),
+			},
+		}
+
+		base := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seed).WithObjects(seed).Build()
+		recording := &recordingClient{Client: base}
+
+		u, err := NewUpdater(Config{Name: "test-updater-payload-status", Client: recording, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		upsert := map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]any{
+				"name":      "app",
+				"namespace": "default",
+			},
+			"spec": map[string]any{"replicas": int64(2)},
+			"status": map[string]any{
+				"availableReplicas": int64(2),
+			},
+		}
+
+		Expect(u.Consume(ctx, out("out", upsert, 1))).To(Succeed())
+		Expect(recording.lastUpdated).NotTo(BeNil())
+
+		updated, ok := recording.lastUpdated.(*unstructured.Unstructured)
+		Expect(ok).To(BeTrue())
+		avail, ok, err := unstructured.NestedInt64(updated.Object, "status", "availableReplicas")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+		Expect(avail).To(Equal(int64(2)))
+	})
+
 	It("patches and unpatches objects with patcher", func() {
 		ctx := context.Background()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
@@ -524,6 +573,21 @@ var _ = Describe("Kubernetes consumers", func() {
 type docWeight struct {
 	doc map[string]any
 	w   zset.Weight
+}
+
+type recordingClient struct {
+	client.Client
+	lastUpdated client.Object
+}
+
+func (c *recordingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if o, ok := obj.DeepCopyObject().(client.Object); ok {
+		c.lastUpdated = o
+	} else {
+		c.lastUpdated = obj
+	}
+
+	return c.Client.Update(ctx, obj, opts...)
 }
 
 func out(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {

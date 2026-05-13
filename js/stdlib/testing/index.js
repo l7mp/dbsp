@@ -57,10 +57,16 @@ function describe(suiteName, fn) {
     // Surface top-level failures so the VM exits non-zero.
     p.catch((err) => {
         console.error(`suite "${suiteName}" failed: ${err.message}`);
-        // Re-throw to propagate through the event loop's unhandled rejection
-        // handler, which causes the VM to exit with a non-zero code.
+        if (typeof exit === "function") {
+            exit(1);
+            return;
+        }
         throw err;
     });
+    // Return the promise so callers can chain .then(() => exit()) to stop the
+    // event loop once all tests finish (needed when background watchers keep
+    // the loop alive).
+    return p;
 }
 
 module.exports = { assert, sleep, run, describe };

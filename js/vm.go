@@ -48,6 +48,7 @@ type VM struct {
 	runtimeErrCh     chan dbspruntime.Error
 	closeOnce        sync.Once
 	userExitCh       chan struct{}
+	exitCode         atomic.Int64
 	internalTopicSeq atomic.Uint64
 
 	errMu              sync.RWMutex
@@ -190,6 +191,13 @@ func (v *VM) RunString(src string) error {
 	return v.runEventLoop()
 }
 
+func scriptArgv(argv []string) []string {
+	if len(argv) <= 2 {
+		return []string{}
+	}
+	return append([]string(nil), argv[2:]...)
+}
+
 func (v *VM) SetProcessArgv(argv []string) error {
 	if len(argv) == 0 {
 		argv = []string{"dbsp"}
@@ -210,7 +218,10 @@ func (v *VM) SetProcessArgv(argv []string) error {
 		if proc == nil || goja.IsUndefined(proc) || goja.IsNull(proc) {
 			return nil
 		}
-		return proc.ToObject(rt).Set("argv", cpy)
+		if err := proc.ToObject(rt).Set("argv", cpy); err != nil {
+			return err
+		}
+		return rt.Set("argv", scriptArgv(cpy))
 	})
 }
 
@@ -372,10 +383,16 @@ func (v *VM) schedule(fn func()) {
 }
 
 func (v *VM) exitVM(call goja.FunctionCall) (goja.Value, error) {
+	code := int64(0)
+	if arg := call.Argument(0); !goja.IsUndefined(arg) && !goja.IsNull(arg) {
+		code = int64(arg.ToInteger())
+	}
+
 	select {
 	case <-v.userExitCh:
 		// already signalled
 	default:
+		v.exitCode.Store(code)
 		close(v.userExitCh)
 	}
 	return goja.Undefined(), nil
@@ -406,6 +423,9 @@ func (v *VM) waitRuntimeStop(timeout time.Duration) error {
 	case err, ok := <-v.runtimeDone:
 		if rtErr := v.firstRuntimeError(); rtErr != nil {
 			return rtErr
+		}
+		if code := v.exitCode.Load(); code != 0 {
+			return fmt.Errorf("script exited with code %d", code)
 		}
 		if !ok || err == nil {
 			return nil
@@ -598,6 +618,9 @@ func (v *VM) injectGlobals() error {
 	v.require = requireRegistry.Enable(v.rt)
 	gojaconsole.Enable(v.rt)
 	if err := v.rt.Set("process", require.Require(v.rt, "process")); err != nil {
+		return err
+	}
+	if err := v.rt.Set("argv", scriptArgv(v.currentProcessArgv())); err != nil {
 		return err
 	}
 	gojabuffer.Enable(v.rt)
