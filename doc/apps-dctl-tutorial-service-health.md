@@ -34,12 +34,25 @@ Look for `status.conditions` and `status.lastErrors`.
 
 If the embedded API server is enabled, the example is a good place to inspect a local view.
 
-Generate a kubeconfig for the view API server via the JS runtime utility API:
+Generate a kubeconfig for the view API server via the `apiserver` standard
+library module:
 
 ```bash
-./js/bin/dbsp -e 'const cfg = kubernetes.runtime.config({apiServer:{addr:"localhost",port:8443,http:true}}); const yaml = cfg.generateKubeConfig({user:"dev",namespaces:["*"],keyFile:"apiserver.key",serverAddress:"localhost:8443",http:true}); require("fs").writeFileSync("/tmp/dcontroller.config", yaml);'
+export DBSP_STDLIB="$(pwd)/js/stdlib"
+
+./js/bin/dbsp apiserver/generate_config \
+  --user=dev \
+  --namespaces='*' \
+  --profile=admin \
+  --tls-key-file=apiserver.key \
+  --server-address=localhost:8443 \
+  --http \
+  > /tmp/dcontroller.config
 KUBECONFIG=/tmp/dcontroller.config kubectl api-resources
 ```
+
+See [Concepts: The Extension API Server](/doc/concepts-API-server.md) for the
+full access workflow.
 
 Then read the generated `HealthView` objects:
 

@@ -61,8 +61,61 @@ const args = (process && process.argv) ? process.argv.slice(2) : [];
 if (args.join(",") !== "x,y") {
   throw new Error("unexpected argv: " + JSON.stringify(args));
 }
+if (!argv || argv.join(",") !== "x,y") {
+  throw new Error("unexpected global argv: " + JSON.stringify(argv));
+}
 `, "x", "y"})
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
+	}
+}
+
+func TestStdlibApiserverScriptWorkflow(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	stdlibPath := filepath.Join(cwd, "..", "stdlib")
+	t.Setenv("DBSP_STDLIB", stdlibPath)
+	tmpDir := t.TempDir()
+	keyFile := filepath.Join(tmpDir, "apiserver.key")
+	certFile := filepath.Join(tmpDir, "apiserver.crt")
+	configFile := filepath.Join(tmpDir, "viewer.config")
+
+	err = Execute([]string{
+		"apiserver/generate_keys",
+		"--hostnames=localhost,127.0.0.1",
+		"--tls-key-file=" + keyFile,
+		"--tls-cert-file=" + certFile,
+	})
+	if err != nil {
+		t.Fatalf("generate keys: %v", err)
+	}
+
+	err = Execute([]string{
+		"apiserver/generate_config",
+		"--user=viewer",
+		"--namespaces=default",
+		"--profile=viewer",
+		"--tls-key-file=" + keyFile,
+		"--server-address=localhost:8443",
+		"--http",
+		"--output-file=" + configFile,
+	})
+	if err != nil {
+		t.Fatalf("generate config: %v", err)
+	}
+	if _, err := os.Stat(configFile); err != nil {
+		t.Fatalf("stat generated config: %v", err)
+	}
+
+	err = Execute([]string{
+		"apiserver/get_config",
+		"--kubeconfig=" + configFile,
+		"--tls-cert-file=" + certFile,
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("get config: %v", err)
 	}
 }

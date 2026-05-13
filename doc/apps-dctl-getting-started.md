@@ -1,7 +1,9 @@
 # Δ-controller: Getting Started
 
-Δ-controller now runs as a JavaScript program inside the `dbsp` runtime. The
-old `dctl` admin workflow has been replaced by the `kubernetes.runtime` JS API.
+Δ-controller runs as a JavaScript program inside the `dbsp` runtime. API-server
+admin workflows use the `apiserver` JS standard library module; see
+[Concepts: The Extension API Server](/doc/concepts-API-server.md) for the full
+guide.
 
 ## Build and install
 
@@ -51,41 +53,32 @@ const runtimeConfig = kubernetes.runtime.config({
 runtimeConfig.start();
 ```
 
-## Pure admin utilities (no runtime start)
+## API server admin utilities
 
-`kubernetes.runtime.config(...)` also exposes stateless utility functions.
-These do not start any runtime component.
-
-```js
-const runtimeConfig = kubernetes.runtime.config({
-  apiServer: { addr: "localhost", port: 8443, http: true },
-});
-
-runtimeConfig.generateKeys({
-  hostnames: ["localhost"],
-  keyFile: "apiserver.key",
-  certFile: "apiserver.crt",
-});
-
-const kubeconfigYAML = runtimeConfig.generateKubeConfig({
-  user: "dev",
-  namespaces: ["*"],
-  keyFile: "apiserver.key",
-  serverAddress: "localhost:8443",
-  http: true,
-});
-
-const info = runtimeConfig.inspectKubeConfig({
-  kubeconfig: "/tmp/dcontroller.config",
-  certFile: "apiserver.crt",
-});
-```
-
-For one-off admin tasks, prefer inline execution with `dbsp -e`.
+Use the `apiserver` standard library module for key generation, user
+kubeconfig generation, and token inspection. These utilities do not start any
+runtime component. Set `DBSP_STDLIB` before running the stdlib script commands:
 
 ```bash
-./js/bin/dbsp -e 'const cfg = kubernetes.runtime.config({apiServer:{addr:"localhost",port:8443,http:true}}); const yaml = cfg.generateKubeConfig({user:"dev",namespaces:["*"],keyFile:"apiserver.key",serverAddress:"localhost:8443",http:true}); require("fs").writeFileSync("/tmp/dcontroller.config", yaml);'
+export DBSP_STDLIB="$(pwd)/js/stdlib"
+
+./js/bin/dbsp apiserver/generate_keys \
+  --hostnames=localhost,127.0.0.1 \
+  --tls-key-file=apiserver.key \
+  --tls-cert-file=apiserver.crt
+
+./js/bin/dbsp apiserver/generate_config \
+  --user=dev \
+  --namespaces='*' \
+  --profile=admin \
+  --tls-key-file=apiserver.key \
+  --server-address=localhost:8443 \
+  --http \
+  > /tmp/dcontroller.config
 ```
+
+See [Concepts: The Extension API Server](/doc/concepts-API-server.md) for
+RBAC profiles, custom rules, and production HTTPS examples.
 
 ## Helm install
 
@@ -120,10 +113,20 @@ in source-controlled JS code.
 
 ## Generate kubeconfig for view inspection
 
-One practical workflow is to use an inline one-liner:
+One practical workflow is to generate a kubeconfig for the embedded API server
+and then point `kubectl` at it:
 
 ```bash
-./js/bin/dbsp -e 'const cfg = kubernetes.runtime.config({apiServer:{addr:"localhost",port:8443,http:true}}); const yaml = cfg.generateKubeConfig({user:"dev",namespaces:["*"],keyFile:"apiserver.key",serverAddress:"localhost:8443",http:true}); require("fs").writeFileSync("/tmp/dcontroller.config", yaml);'
+export DBSP_STDLIB="$(pwd)/js/stdlib"
+
+./js/bin/dbsp apiserver/generate_config \
+  --user=dev \
+  --namespaces='*' \
+  --profile=admin \
+  --tls-key-file=apiserver.key \
+  --server-address=localhost:8443 \
+  --http \
+  > /tmp/dcontroller.config
 KUBECONFIG=/tmp/dcontroller.config kubectl api-resources
 ```
 

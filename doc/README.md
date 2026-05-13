@@ -9,6 +9,7 @@ This directory is the technical documentation for DBSP in this repository. Start
   - [Basics: documents, Z-sets, circuits, operators](/doc/concepts-basics-data-models-zsets-circuits-operators.md)
   - [Runtime: producers, consumers, processors, pub-sub](/doc/concepts-runtime-producers-consumers-processors.md)
   - [Programming: compilers and expressions](/doc/concepts-programming-compilers-and-expressions.md)
+  - [Extension API Server](/doc/concepts-API-server.md)
 - Applications
   - DBSP Script: JavaScript runtime for DBSP
     - [Overview and reference](/doc/apps-dbsp-script.md)

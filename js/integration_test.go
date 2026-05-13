@@ -453,6 +453,57 @@ assert.strictEqual(log.formatError(new Error("x")), "x");
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("exposes apiserver stdlib helpers", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		tmpDir := GinkgoT().TempDir()
+		keyFile := filepath.Join(tmpDir, "apiserver.key")
+		certFile := filepath.Join(tmpDir, "apiserver.crt")
+		configFile := filepath.Join(tmpDir, "viewer.config")
+
+		script := fmt.Sprintf(`
+const assert = require("assert");
+const apiserver = require("apiserver");
+const generateConfig = require("apiserver/generate_config");
+assert.strictEqual(typeof generateConfig, "function");
+
+const keys = apiserver.generateKeys({
+  hostnames: "localhost,127.0.0.1",
+  keyFile: %q,
+  certFile: %q,
+});
+assert.strictEqual(keys.keyFile, %q);
+assert.strictEqual(keys.certFile, %q);
+
+const yaml = apiserver.generateConfig({
+  user: "viewer",
+  namespaces: "default",
+  profile: "viewer",
+  keyFile: %q,
+  serverAddress: "localhost:8443",
+  http: true,
+  outputFile: %q,
+});
+assert.ok(String(yaml).includes("viewer"));
+
+const info = JSON.parse(JSON.stringify(apiserver.getConfig({
+  kubeconfig: %q,
+  certFile: %q,
+})));
+assert.strictEqual(info.username, "viewer");
+assert.deepStrictEqual(info.namespaces, ["default"]);
+assert.strictEqual(info.rules[0].verbs[0], "get");
+assert.strictEqual(info.rules[0].apiGroups[0], "*");
+assert.strictEqual(info.valid, true);
+`, keyFile, certFile, keyFile, certFile, keyFile, configFile, configFile, certFile)
+
+		Expect(runScriptAsModule(vm, script)).To(Succeed())
+		_, err = os.Stat(configFile)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("exposes goja_nodejs process env", func() {
 		Expect(os.Setenv("DBSP_JS_TEST_ENV", "present")).To(Succeed())
 		DeferCleanup(func() {

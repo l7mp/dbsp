@@ -167,12 +167,51 @@ func (v *VM) RunFile(path string) error {
 
 	src, err := os.ReadFile(absPath)
 	if err != nil {
+		if shouldRunStdlibModule(path, err) {
+			return v.RunStdlibModule(path)
+		}
 		return fmt.Errorf("read script: %w", err)
 	}
 	if err := v.runSourceAsModule(absPath, string(src)); err != nil {
 		return fmt.Errorf("execute module %s: %w", absPath, err)
 	}
 	v.logger.V(1).Info("module loaded, entering event loop", "path", absPath)
+
+	return v.runEventLoop()
+}
+
+func shouldRunStdlibModule(path string, err error) bool {
+	if !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../") {
+		return false
+	}
+	return filepath.Ext(path) == ""
+}
+
+// RunStdlibModule runs a named CommonJS module as a command. The module must
+// export a function or a .main function; that function receives global argv.
+func (v *VM) RunStdlibModule(name string) error {
+	v.logger.Info("running stdlib module", "name", name)
+	quoted, err := json.Marshal(name)
+	if err != nil {
+		return fmt.Errorf("quote module name: %w", err)
+	}
+
+	source := fmt.Sprintf(`
+const mod = require(%s);
+const main = (typeof mod === "function") ? mod : mod.main;
+if (typeof main !== "function") {
+  throw new Error("stdlib module " + %s + " must export a function or .main");
+}
+await main(argv);
+exit();
+`, quoted, quoted)
+	if err := v.runSourceAsModule(name, source); err != nil {
+		return fmt.Errorf("execute stdlib module %s: %w", name, err)
+	}
+	v.logger.V(1).Info("stdlib module loaded, entering event loop", "name", name)
 
 	return v.runEventLoop()
 }

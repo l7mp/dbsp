@@ -16,6 +16,7 @@ import (
 
 func registerProcessModule(v *VM, reg *require.Registry) {
 	reg.RegisterNativeModule("process", func(rt *goja.Runtime, module *goja.Object) {
+		processObj := module.Get("exports").ToObject(rt)
 		env := map[string]string{}
 		for _, entry := range os.Environ() {
 			key, value, ok := strings.Cut(entry, "=")
@@ -25,10 +26,36 @@ func registerProcessModule(v *VM, reg *require.Registry) {
 			}
 			env[key] = value
 		}
-		if err := module.Get("exports").ToObject(rt).Set("env", env); err != nil {
+		if err := processObj.Set("env", env); err != nil {
 			panic(rt.NewGoError(err))
 		}
-		if err := module.Get("exports").ToObject(rt).Set("argv", v.currentProcessArgv()); err != nil {
+		if err := processObj.Set("argv", v.currentProcessArgv()); err != nil {
+			panic(rt.NewGoError(err))
+		}
+
+		stdout := rt.NewObject()
+		if err := stdout.Set("write", func(call goja.FunctionCall) goja.Value {
+			if _, err := os.Stdout.WriteString(call.Argument(0).String()); err != nil {
+				panic(rt.NewGoError(err))
+			}
+			return rt.ToValue(true)
+		}); err != nil {
+			panic(rt.NewGoError(err))
+		}
+		if err := processObj.Set("stdout", stdout); err != nil {
+			panic(rt.NewGoError(err))
+		}
+
+		stderr := rt.NewObject()
+		if err := stderr.Set("write", func(call goja.FunctionCall) goja.Value {
+			if _, err := os.Stderr.WriteString(call.Argument(0).String()); err != nil {
+				panic(rt.NewGoError(err))
+			}
+			return rt.ToValue(true)
+		}); err != nil {
+			panic(rt.NewGoError(err))
+		}
+		if err := processObj.Set("stderr", stderr); err != nil {
 			panic(rt.NewGoError(err))
 		}
 	})
@@ -327,7 +354,6 @@ func registerTimersPromisesModule(v *VM, reg *require.Registry) {
 		_ = module.Set("exports", o)
 	})
 }
-
 
 func registerDBSPMinimistAlias(reg *require.Registry) {
 	reg.RegisterNativeModule("@dbsp/minimist", func(rt *goja.Runtime, module *goja.Object) {
