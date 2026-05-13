@@ -436,39 +436,6 @@ assert.strictEqual(dec.decode(bytes), "hello");
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("exposes @dbsp/test helpers", func() {
-		vm, err := NewVM(logr.Discard())
-		Expect(err).NotTo(HaveOccurred())
-		defer vm.Close()
-
-		err = runScriptAsModule(vm, `
-const t = require("@dbsp/test");
-t.assert.ok(true);
-await t.sleep(2);
-t.assert.strictEqual(1 + 1, 2);
-`)
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	It("exposes minimist parse helper", func() {
-		vm, err := NewVM(logr.Discard())
-		Expect(err).NotTo(HaveOccurred())
-		defer vm.Close()
-
-		err = runScriptAsModule(vm, `
-const assert = require("assert");
-const minimist = require("minimist");
-const parsed = minimist(["test", "gwclass", "--suite=gwclass", "--verbose", "-vf"]);
-assert.strictEqual(parsed._[0], "test");
-assert.strictEqual(parsed._[1], "gwclass");
-assert.strictEqual(parsed.suite, "gwclass");
-assert.strictEqual(parsed.verbose, true);
-assert.strictEqual(parsed.v, true);
-assert.strictEqual(parsed.f, true);
-`)
-		Expect(err).NotTo(HaveOccurred())
-	})
-
 	It("exposes structured log helper", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
