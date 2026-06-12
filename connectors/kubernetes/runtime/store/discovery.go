@@ -95,14 +95,20 @@ func (c *CompositeDiscoveryClient) ServerGroupsAndResources() ([]*metav1.APIGrou
 	allGroups = append(allGroups, viewGroups...)
 	allResources = append(allResources, viewResources...)
 
-	// Add native groups and resources
+	// Add native groups and resources. A partial failure (one broken
+	// aggregated APIService) still yields the discoverable groups: mirror
+	// client-go and return the partial results together with the error so
+	// tolerant callers (e.g. restmapper.GetAPIGroupResources) keep working.
 	if c.nativeDiscovery != nil {
 		nativeGroups, nativeResources, err := c.nativeDiscovery.ServerGroupsAndResources()
-		if err != nil {
+		if err != nil && !discovery.IsGroupDiscoveryFailedError(err) {
 			return nil, nil, fmt.Errorf("failed to get native groups and resources: %w", err)
 		}
 		allGroups = append(allGroups, nativeGroups...)
 		allResources = append(allResources, nativeResources...)
+		if err != nil {
+			return allGroups, allResources, err
+		}
 	}
 
 	return allGroups, allResources, nil

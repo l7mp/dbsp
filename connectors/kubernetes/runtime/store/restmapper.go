@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"sync"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -21,14 +23,12 @@ type CompositeRESTMapper struct {
 
 // NewCompositeRESTMapper creates a new composite REST mapper.
 func NewCompositeRESTMapper(compositeDiscovery discovery.DiscoveryInterface) *CompositeRESTMapper {
-	// Create native RESTMapper from discovery if available
+	// Native lookups go through a lazy mapper: running discovery eagerly here
+	// would freeze an empty snapshot whenever the API server is not yet
+	// reachable at process startup, permanently failing every native lookup.
 	var nativeMapper meta.RESTMapper
 	if compositeDiscovery != nil {
-		// Use discovery to build a standard RESTMapper
-		groupResources, err := restmapper.GetAPIGroupResources(compositeDiscovery)
-		if err == nil {
-			nativeMapper = restmapper.NewDiscoveryRESTMapper(groupResources)
-		}
+		nativeMapper = newLazyNativeMapper(compositeDiscovery)
 	}
 
 	// Create view RESTMapper
@@ -141,4 +141,112 @@ func (m *CompositeRESTMapper) isViewGroup(group string) bool {
 	}
 	// Fallback check
 	return group == "view.dcontroller.io"
+}
+
+// defaultMapperReloadInterval rate-limits miss-triggered re-discovery.
+const defaultMapperReloadInterval = 5 * time.Second
+
+// lazyNativeMapper is a meta.RESTMapper that builds its discovery-based
+// delegate on first use and rebuilds it on lookup misses. An unreachable API
+// server surfaces as a lookup error and the next lookup retries discovery, so
+// late API server startup and CRDs registered after process start both
+// resolve without a restart.
+type lazyNativeMapper struct {
+	discovery      discovery.DiscoveryInterface
+	reloadInterval time.Duration
+
+	mu         sync.Mutex
+	delegate   meta.RESTMapper
+	generation int
+	lastLoad   time.Time
+}
+
+var _ meta.RESTMapper = &lazyNativeMapper{}
+
+func newLazyNativeMapper(d discovery.DiscoveryInterface) *lazyNativeMapper {
+	return &lazyNativeMapper{discovery: d, reloadInterval: defaultMapperReloadInterval}
+}
+
+// get returns the delegate and its load generation, running discovery if no
+// delegate has been built yet.
+func (l *lazyNativeMapper) get() (meta.RESTMapper, int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.delegate != nil {
+		return l.delegate, l.generation, nil
+	}
+	return l.loadLocked()
+}
+
+// reload re-runs discovery unless a successful load happened within the
+// reload interval, in which case the current delegate is returned as is.
+func (l *lazyNativeMapper) reload() (meta.RESTMapper, int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.delegate != nil && time.Since(l.lastLoad) < l.reloadInterval {
+		return l.delegate, l.generation, nil
+	}
+	return l.loadLocked()
+}
+
+func (l *lazyNativeMapper) loadLocked() (meta.RESTMapper, int, error) {
+	groupResources, err := restmapper.GetAPIGroupResources(l.discovery)
+	if err != nil {
+		return nil, l.generation, fmt.Errorf("RESTMapper discovery: %w", err)
+	}
+	l.delegate = restmapper.NewDiscoveryRESTMapper(groupResources)
+	l.generation++
+	l.lastLoad = time.Now()
+	return l.delegate, l.generation, nil
+}
+
+// lookup runs fn against the delegate; on a no-match error it re-runs
+// discovery (rate-limited) and retries once, so resources registered since
+// the last discovery resolve without waiting for a process restart.
+func lookup[T any](l *lazyNativeMapper, fn func(meta.RESTMapper) (T, error)) (T, error) {
+	m, gen, err := l.get()
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+
+	res, err := fn(m)
+	if err == nil || !meta.IsNoMatchError(err) {
+		return res, err
+	}
+
+	refreshed, rgen, reloadErr := l.reload()
+	if reloadErr != nil || rgen == gen {
+		return res, err
+	}
+
+	return fn(refreshed)
+}
+
+func (l *lazyNativeMapper) KindFor(resource schema.GroupVersionResource) (schema.GroupVersionKind, error) {
+	return lookup(l, func(m meta.RESTMapper) (schema.GroupVersionKind, error) { return m.KindFor(resource) })
+}
+
+func (l *lazyNativeMapper) KindsFor(resource schema.GroupVersionResource) ([]schema.GroupVersionKind, error) {
+	return lookup(l, func(m meta.RESTMapper) ([]schema.GroupVersionKind, error) { return m.KindsFor(resource) })
+}
+
+func (l *lazyNativeMapper) ResourceFor(input schema.GroupVersionResource) (schema.GroupVersionResource, error) {
+	return lookup(l, func(m meta.RESTMapper) (schema.GroupVersionResource, error) { return m.ResourceFor(input) })
+}
+
+func (l *lazyNativeMapper) ResourcesFor(input schema.GroupVersionResource) ([]schema.GroupVersionResource, error) {
+	return lookup(l, func(m meta.RESTMapper) ([]schema.GroupVersionResource, error) { return m.ResourcesFor(input) })
+}
+
+func (l *lazyNativeMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	return lookup(l, func(m meta.RESTMapper) (*meta.RESTMapping, error) { return m.RESTMapping(gk, versions...) })
+}
+
+func (l *lazyNativeMapper) RESTMappings(gk schema.GroupKind, versions ...string) ([]*meta.RESTMapping, error) {
+	return lookup(l, func(m meta.RESTMapper) ([]*meta.RESTMapping, error) { return m.RESTMappings(gk, versions...) })
+}
+
+func (l *lazyNativeMapper) ResourceSingularizer(resource string) (string, error) {
+	return lookup(l, func(m meta.RESTMapper) (string, error) { return m.ResourceSingularizer(resource) })
 }
