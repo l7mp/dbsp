@@ -41,6 +41,12 @@ func (h *handlerEntry) HasSynced() bool {
 	return true
 }
 
+// HasSyncedChecker returns an immediately-done checker: the view store has no
+// asynchronous initial sync to wait for.
+func (h *handlerEntry) HasSyncedChecker() toolscache.DoneChecker {
+	return syncedChecker{name: "view-cache-handler"}
+}
+
 // NewViewCacheInformer returns a new informer for the view store.
 func NewViewCacheInformer(gvk schema.GroupVersionKind, indexer toolscache.Indexer, logger logr.Logger) *ViewCacheInformer {
 	if logger.GetSink() == nil {
@@ -228,6 +234,12 @@ func (c *ViewCacheInformer) RunWithContext(ctx context.Context) {
 func (c *ViewCacheInformer) HasSynced() bool {
 	// Since we're not syncing with an API server, we can consider it always synced
 	return true
+}
+
+// HasSyncedChecker returns an immediately-done checker: the view informer serves
+// a local store and never syncs against an API server.
+func (c *ViewCacheInformer) HasSyncedChecker() toolscache.DoneChecker {
+	return syncedChecker{name: "view-cache-informer"}
 }
 
 // LastSyncResourceVersion is the resource version observed when last synced with the underlying

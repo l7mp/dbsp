@@ -295,6 +295,9 @@ func (f *FakeInformer) AddIndexers(indexers toolscache.Indexers) error          
 func (f *FakeInformer) GetIndexer() toolscache.Indexer                          { return nil }
 func (f *FakeInformer) Informer() toolscache.SharedIndexInformer                { return f }
 func (f *FakeInformer) HasSynced() bool                                         { return f.Synced }
+func (f *FakeInformer) HasSyncedChecker() toolscache.DoneChecker {
+	return syncedChecker{name: "fake-informer"}
+}
 func (f *FakeInformer) GetStore() toolscache.Store                              { return nil }
 func (f *FakeInformer) GetController() toolscache.Controller                    { return nil }
 func (f *FakeInformer) LastSyncResourceVersion() string                         { return "" }
