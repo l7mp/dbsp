@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -67,14 +68,23 @@ type publisher struct {
 	pubsub *PubSub
 }
 
-// Publish sends an unsolicited event to all current subscribers of event.Name.
-// On a full subscriber channel it logs the overflow and then blocks until the
-// event is accepted, preserving backpressure.
+// Publish folds the event into the topic's retained integral and sends it to
+// all current subscribers of event.Name. On a full subscriber channel it logs
+// the overflow and then blocks until the event is accepted, preserving
+// backpressure. Folding and fan-out happen atomically under the topic lock, so
+// every subscriber sees a gap-free, duplicate-free delta stream relative to
+// the integral it received on subscription.
 func (p *publisher) Publish(event Event) error {
-	p.pubsub.mu.RLock()
-	defer p.pubsub.mu.RUnlock()
+	ts := p.pubsub.topic(event.Name)
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 
-	for _, ch := range p.pubsub.subs[event.Name] {
+	event.Data.Iter(func(doc datamodel.Document, w zset.Weight) bool {
+		ts.acc.Insert(doc, w)
+		return true
+	})
+
+	for _, ch := range ts.subs {
 		if err := sendEvent(ch, event); err != nil {
 			if errors.Is(err, ErrChannelFull) {
 				log.Printf("runtime: event channel full, blocking publish: topic=%s err=%v", event.Name, err)
@@ -111,7 +121,12 @@ type subscriber struct {
 	topics map[string]struct{}
 }
 
-// Subscribe registers interest in a topic.
+// Subscribe registers interest in a topic. If the topic has a non-empty
+// retained integral (state accumulated from events published before this
+// subscription), it is delivered first as a single synthetic event, so a late
+// subscriber bootstraps to the current state before receiving live deltas.
+// Replay and registration happen atomically under the topic lock: no delta
+// published after the replayed integral can be missed or double-counted.
 func (s *subscriber) Subscribe(topic string) {
 
 	s.mu.Lock()
@@ -123,13 +138,29 @@ func (s *subscriber) Subscribe(topic string) {
 	ch := s.ch
 	s.mu.Unlock()
 
-	s.pubsub.mu.Lock()
-	s.pubsub.subs[topic] = append(s.pubsub.subs[topic], ch)
-	s.pubsub.mu.Unlock()
+	ts := s.pubsub.topic(topic)
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 
+	if !ts.acc.IsZero() {
+		replay := Event{Name: topic, Data: ts.acc.Clone()}
+		if err := sendEvent(ch, replay); err != nil {
+			if errors.Is(err, ErrChannelFull) {
+				log.Printf("runtime: event channel full, blocking replay: topic=%s err=%v", topic, err)
+				err = sendEventBlocking(ch, replay)
+			}
+			if err != nil {
+				log.Printf("runtime: cannot replay retained state: topic=%s err=%v", topic, err)
+			}
+		}
+	}
+
+	ts.subs = append(ts.subs, ch)
 }
 
-// Unsubscribe unregisters a topic. The channel closes when the last topic is removed.
+// Unsubscribe unregisters a topic. The channel closes when the last topic is
+// removed. The topic's retained integral is kept: retention outlives
+// subscriber churn.
 func (s *subscriber) Unsubscribe(topic string) {
 
 	s.mu.Lock()
@@ -144,20 +175,16 @@ func (s *subscriber) Unsubscribe(topic string) {
 		return
 	}
 
-	s.pubsub.mu.Lock()
-	list := s.pubsub.subs[topic]
-	keep := list[:0]
-	for _, c := range list {
+	ts := s.pubsub.topic(topic)
+	ts.mu.Lock()
+	keep := ts.subs[:0]
+	for _, c := range ts.subs {
 		if c != ch {
 			keep = append(keep, c)
 		}
 	}
-	if len(keep) == 0 {
-		delete(s.pubsub.subs, topic)
-	} else {
-		s.pubsub.subs[topic] = keep
-	}
-	s.pubsub.mu.Unlock()
+	ts.subs = keep
+	ts.mu.Unlock()
 
 	if empty {
 		close(ch)
@@ -190,14 +217,48 @@ func (s *subscriber) UnsubscribeAll() {
 	}
 }
 
-// PubSub is a topic-indexed subscription registry.
+// topicState holds the per-topic subscriber list and the retained integral.
+// Publish and Subscribe for one topic serialize on mu; distinct topics
+// proceed concurrently. Sends may block while mu is held, so a consumer that
+// publishes back into the very topic it consumes can deadlock once its own
+// channel fills up; publishing to any other topic is always safe.
+type topicState struct {
+	mu   sync.Mutex
+	subs []chan Event
+	// acc is the retained integral I(stream): the running sum of every Z-set
+	// published to the topic. For well-formed delta streams it equals the
+	// topic's current state, and it is replayed to late subscribers.
+	acc zset.ZSet
+}
+
+// PubSub is a topic-indexed subscription registry with per-topic state
+// retention for bootstrapping late subscribers.
 type PubSub struct {
-	mu   sync.RWMutex
-	subs map[string][]chan Event
+	mu     sync.RWMutex
+	topics map[string]*topicState
 }
 
 func NewPubSub() *PubSub {
-	return &PubSub{subs: map[string][]chan Event{}}
+	return &PubSub{topics: map[string]*topicState{}}
+}
+
+// topic returns the state for a topic, creating it on first use.
+func (ps *PubSub) topic(name string) *topicState {
+	ps.mu.RLock()
+	ts, ok := ps.topics[name]
+	ps.mu.RUnlock()
+	if ok {
+		return ts
+	}
+
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ts, ok := ps.topics[name]; ok {
+		return ts
+	}
+	ts = &topicState{acc: zset.New()}
+	ps.topics[name] = ts
+	return ts
 }
 
 // NewPublisher creates a publisher bound to this PubSub.

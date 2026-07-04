@@ -195,6 +195,15 @@ func (c *baseConsumer) classifyDeltas(data zset.ZSet) ([]classifiedDelta, error)
 			continue
 		}
 
+		// Multiple distinct documents mapping to the same object key mean the
+		// pipeline output is not unique per target object; selectCandidate
+		// resolves the conflict by picking one arbitrarily (largest content
+		// hash), so surface the anomaly instead of failing silently.
+		if n := residualCount(g.pos); n > 1 {
+			c.log.Info("conflicting documents for object key, selecting one arbitrarily",
+				"key", g.key.String(), "candidates", n)
+		}
+
 		if hasPos && hasNeg {
 			obj, w := selectCandidate(g.pos)
 			if obj == nil {
@@ -278,6 +287,17 @@ func hasResidualWeight(cands map[string]*candidate) bool {
 		}
 	}
 	return false
+}
+
+// residualCount returns the number of candidates with a non-zero weight.
+func residualCount(cands map[string]*candidate) int {
+	n := 0
+	for _, c := range cands {
+		if c.weight != 0 {
+			n++
+		}
+	}
+	return n
 }
 
 func selectCandidate(cands map[string]*candidate) (kobject.Object, zset.Weight) {

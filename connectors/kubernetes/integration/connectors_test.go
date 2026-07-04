@@ -26,6 +26,7 @@ import (
 	kauth "github.com/l7mp/dbsp/connectors/kubernetes/runtime/auth"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	rtstore "github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
+	"github.com/l7mp/dbsp/engine/compiler/aggregation"
 	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -265,6 +266,214 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			}
 			return replicas == int64(1)
 		}, suite.Timeout, suite.Interval).Should(BeTrue())
+	})
+
+	It("bootstraps a late-joining updater from retained topic state", func() {
+		rt := dbspruntime.NewRuntime(logr.Discard())
+		pub := rt.NewPublisher()
+
+		doc1 := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      "late-cm-1",
+				"namespace": suite.Namespace,
+			},
+			"data": map[string]any{"a": "1"},
+		}
+		doc2Old := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      "late-cm-2",
+				"namespace": suite.Namespace,
+			},
+			"data": map[string]any{"k": "old"},
+		}
+		doc2New := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      "late-cm-2",
+				"namespace": suite.Namespace,
+			},
+			"data": map[string]any{"k": "new"},
+		}
+
+		// Publish while no consumer is subscribed: two inserts and then a
+		// well-formed update of the second document. The topic integral must
+		// fold this to the two current document versions.
+		Expect(pub.Publish(output("late-out", doc1, 1))).To(Succeed())
+		Expect(pub.Publish(output("late-out", doc2Old, 1))).To(Succeed())
+		upd := zset.New()
+		upd.Insert(dbspunstructured.New(doc2Old, nil), -1)
+		upd.Insert(dbspunstructured.New(doc2New, nil), 1)
+		Expect(pub.Publish(dbspruntime.Event{Name: "late-out", Data: upd})).To(Succeed())
+
+		// The updater joins late: it subscribes only now, at construction.
+		u, err := consumer.NewUpdater(consumer.Config{
+			Name:       "late-updater-test",
+			Client:     suite.K8sClient,
+			OutputName: "late-out",
+			TargetGVK:  schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
+			Runtime:    rt,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		startCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			defer GinkgoRecover()
+			err := u.Start(startCtx)
+			Expect(err).NotTo(HaveOccurred())
+		}()
+
+		// Both ConfigMaps materialize in the cluster purely from the replayed
+		// integral, the second one with its post-update content.
+		Eventually(func(g Gomega) {
+			got := &corev1.ConfigMap{}
+			err := suite.K8sClient.Get(ctx, client.ObjectKey{Namespace: suite.Namespace, Name: "late-cm-1"}, got)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(got.Data["a"]).To(Equal("1"))
+		}, suite.Timeout, suite.Interval).Should(Succeed())
+
+		Eventually(func(g Gomega) {
+			got := &corev1.ConfigMap{}
+			err := suite.K8sClient.Get(ctx, client.ObjectKey{Namespace: suite.Namespace, Name: "late-cm-2"}, got)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(got.Data["k"]).To(Equal("new"))
+		}, suite.Timeout, suite.Interval).Should(Succeed())
+
+		// Live deltas keep flowing after the replay.
+		Expect(pub.Publish(output("late-out", doc1, -1))).To(Succeed())
+
+		Eventually(func() bool {
+			got := &corev1.ConfigMap{}
+			err := suite.K8sClient.Get(ctx, client.ObjectKey{Namespace: suite.Namespace, Name: "late-cm-1"}, got)
+			return client.IgnoreNotFound(err) != nil
+		}, suite.Timeout, suite.Interval).Should(BeFalse())
+	})
+
+	It("bootstraps a late-joining circuit and updater from retained watcher state", func() {
+		rt := dbspruntime.NewRuntime(logr.Discard())
+
+		// Source object, label-selected so the watcher ignores ConfigMaps left
+		// behind by other specs.
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "cb-cm",
+				Namespace: suite.Namespace,
+				Labels:    map[string]string{"app": "cb-test"},
+			},
+			Data: map[string]string{"k": "v1"},
+		}
+		Expect(suite.K8sClient.Create(ctx, cm)).To(Succeed())
+
+		// The probe tells us when the watcher has published; it consumes
+		// nothing away from retention.
+		probe := rt.NewSubscriber()
+		probe.Subscribe("cb-in")
+
+		w, err := producer.NewWatcher(producer.Config{
+			Name:          "cb-watcher",
+			Client:        suite.WatchClient,
+			SourceGVK:     schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
+			InputName:     "cb-in",
+			Namespace:     suite.Namespace,
+			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "cb-test"}},
+			Runtime:       rt,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		startCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			defer GinkgoRecover()
+			err := w.Start(startCtx)
+			Expect(err).NotTo(HaveOccurred())
+		}()
+
+		in := mustReceiveInput(probe.GetChannel())
+		Expect(weights(in.Data)).To(Equal([]zset.Weight{1}))
+
+		// Update the source before anything downstream exists: the input
+		// topic integral must fold −old,+new down to the v2 document.
+		Eventually(func() error {
+			obj := &corev1.ConfigMap{}
+			if err := suite.K8sClient.Get(ctx, client.ObjectKeyFromObject(cm), obj); err != nil {
+				return err
+			}
+			obj.Data["k"] = "v2"
+			return suite.K8sClient.Update(ctx, obj)
+		}, suite.Timeout, suite.Interval).Should(Succeed())
+
+		in = mustReceiveInput(probe.GetChannel())
+		Expect(weights(in.Data)).To(Equal([]zset.Weight{-1, 1}))
+		probe.UnsubscribeAll()
+
+		// The circuit joins late: it pre-subscribes to its input topic at
+		// construction and bootstraps from the retained integral.
+		comp := aggregation.New(
+			[]aggregation.Binding{{Name: "cb-in", Logical: "cb-in"}},
+			[]aggregation.Binding{{Name: "cb-out", Logical: "cb-out"}},
+		)
+		q, err := comp.CompileString(`[{"@project": {
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   {"name": "cb-cm-derived", "namespace": "$.metadata.namespace"},
+			"data":       {"copied": "$.data.k"}
+		}}]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		circ, err := dbspruntime.NewCircuit("cb-circuit", rt, q, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		go func() {
+			defer GinkgoRecover()
+			err := circ.Start(startCtx)
+			Expect(err).NotTo(HaveOccurred())
+		}()
+
+		// The updater joins even later, bootstrapping in turn from the
+		// retained circuit output.
+		u, err := consumer.NewUpdater(consumer.Config{
+			Name:       "cb-updater",
+			Client:     suite.K8sClient,
+			OutputName: "cb-out",
+			TargetGVK:  schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
+			Runtime:    rt,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		go func() {
+			defer GinkgoRecover()
+			err := u.Start(startCtx)
+			Expect(err).NotTo(HaveOccurred())
+		}()
+
+		// The derived object materializes from the doubly-replayed state,
+		// carrying the post-update source content.
+		Eventually(func(g Gomega) {
+			got := &corev1.ConfigMap{}
+			err := suite.K8sClient.Get(ctx, client.ObjectKey{Namespace: suite.Namespace, Name: "cb-cm-derived"}, got)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(got.Data["copied"]).To(Equal("v2"))
+		}, suite.Timeout, suite.Interval).Should(Succeed())
+
+		// Live changes keep propagating through the fully bootstrapped chain.
+		Eventually(func() error {
+			obj := &corev1.ConfigMap{}
+			if err := suite.K8sClient.Get(ctx, client.ObjectKeyFromObject(cm), obj); err != nil {
+				return err
+			}
+			obj.Data["k"] = "v3"
+			return suite.K8sClient.Update(ctx, obj)
+		}, suite.Timeout, suite.Interval).Should(Succeed())
+
+		Eventually(func(g Gomega) {
+			got := &corev1.ConfigMap{}
+			err := suite.K8sClient.Get(ctx, client.ObjectKey{Namespace: suite.Namespace, Name: "cb-cm-derived"}, got)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(got.Data["copied"]).To(Equal("v3"))
+		}, suite.Timeout, suite.Interval).Should(Succeed())
 	})
 
 	It("auth kubeconfig can query both native and view resources through the embedded API server", func() {

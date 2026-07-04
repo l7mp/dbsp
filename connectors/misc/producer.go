@@ -77,6 +77,11 @@ type baseProducer struct {
 	namespace   string
 	triggerName string
 
+	// lastDoc is the previously emitted trigger document. Each emit retracts
+	// it, so the trigger topic is a well-formed state stream holding exactly
+	// the current trigger document. Only accessed from the Start goroutine.
+	lastDoc *dbspunstructured.Unstructured
+
 	log logr.Logger
 }
 
@@ -248,8 +253,13 @@ func (p *PeriodicProducer) Start(ctx context.Context) error {
 }
 
 func (p *baseProducer) emit() error {
+	doc := p.triggerDocument()
 	zs := zset.New()
-	zs.Insert(p.triggerDocument(), 1)
+	if p.lastDoc != nil {
+		zs.Insert(p.lastDoc, -1)
+	}
+	zs.Insert(doc, 1)
+	p.lastDoc = doc
 
 	dbspruntime.LogFlowEvent(p.log, "producer.emit", "producer", p.String(), "output", p.inputName, "", zs, nil)
 

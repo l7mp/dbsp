@@ -77,12 +77,30 @@ var _ = Describe("Virtual source producers", func() {
 			mu.Lock()
 			defer mu.Unlock()
 			Expect(in.Name).To(Equal("in"))
-			entries := in.Data.Entries()
-			Expect(entries).To(HaveLen(1))
-			Expect(entries[0].Weight).To(Equal(zset.Weight(1)))
-			doc, ok := entries[0].Document.(*dbspunstructured.Unstructured)
-			Expect(ok).To(BeTrue())
-			Expect(doc.Fields()[VirtualSourceTypeField]).To(Equal(opv1a1PeriodicSourceType))
+
+			// The first tick inserts the trigger document; every later tick
+			// retracts the previous one and inserts the new one, keeping the
+			// integrated trigger state at exactly one document.
+			var pos, neg int
+			for _, e := range in.Data.Entries() {
+				switch e.Weight {
+				case zset.Weight(1):
+					pos++
+					doc, ok := e.Document.(*dbspunstructured.Unstructured)
+					Expect(ok).To(BeTrue())
+					Expect(doc.Fields()[VirtualSourceTypeField]).To(Equal(opv1a1PeriodicSourceType))
+				case zset.Weight(-1):
+					neg++
+				default:
+					Fail("unexpected weight in periodic delta")
+				}
+			}
+			Expect(pos).To(Equal(1))
+			if count == 0 {
+				Expect(neg).To(Equal(0))
+			} else {
+				Expect(neg).To(Equal(1))
+			}
 			count++
 			return nil
 		}))
