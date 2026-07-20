@@ -4,15 +4,16 @@ import (
 	"fmt"
 
 	"github.com/l7mp/dbsp/engine/circuit"
+	"github.com/l7mp/dbsp/engine/expression"
 	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/operator"
 )
 
 // NOTE: Regularizer intentionally does not add a trailing Distinct after
-// project(lexmin(values)). The GroupBy(pk, subject) + lexmin projection is
-// already set-producing by construction: representatives are PK-keyed,
-// deterministic, and unique per group, so downstream H never needs an extra
-// clamp stage for this chain.
+// project(lexmin(values)). The GroupBy(identity, subject) + lexmin projection
+// is already set-producing by construction: representatives are keyed by
+// document identity (content hash), deterministic, and unique per group, so
+// downstream H never needs an extra clamp stage for this chain.
 
 type regularizer struct{}
 
@@ -20,13 +21,14 @@ type regularizer struct{}
 //
 // For each output node, the transform inserts:
 //
-//	pred_0..pred_n -> sum -> group_by(pk, subject) -> project(lexmin(values)) -> output
+//	pred_0..pred_n -> sum -> group_by(identity, subject) -> project(lexmin(values)) -> output
 //
 // Semantics:
 //   - sum normalizes multi-predecessor outputs to a single stream.
-//   - group_by(pk, subject) collects rows per primary key.
+//   - group_by(identity, subject) collects rows per document identity
+//     (content hash).
 //   - project(lexmin(values)) selects one deterministic representative document
-//     (arg-lexmin over full documents) for each primary key.
+//     (arg-lexmin over full documents) for each identity.
 func NewRegularizer() Transformer {
 	return &regularizer{}
 }
@@ -55,7 +57,7 @@ func injectRegularizer(c *circuit.Circuit, output *circuit.Node) error {
 		}
 	}
 
-	// 2. Add Sum + GroupBy(pk) + Project(lexmin(values)).
+	// 2. Add Sum + GroupBy(identity) + Project(lexmin(values)).
 	coeffs := make([]int, len(inEdges))
 	for i := range coeffs {
 		coeffs[i] = 1
@@ -67,7 +69,23 @@ func injectRegularizer(c *circuit.Circuit, output *circuit.Node) error {
 	}
 
 	grpID := "_grp_" + output.ID
-	if err := c.AddNode(circuit.Op(grpID, operator.NewGroupBy(nil, dbspexpr.NewSubject()))); err != nil {
+	// Group by document identity: the key is the document's content hash,
+	// computed directly (one canonical serialization per element, the same
+	// cost the Z-set machinery already pays per insertion). The marshalable
+	// fallback expression preserves the grouping semantics for circuits
+	// reconstructed from JSON.
+	hashKey, err := dbspexpr.Compile([]byte(`{"@hash": "$."}`))
+	if err != nil {
+		return fmt.Errorf("regularizer: compile hash key: %w", err)
+	}
+	byIdentity := expression.NewCompiled(func(ctx *expression.EvalContext) (any, error) {
+		doc := ctx.Document()
+		if doc == nil {
+			return nil, fmt.Errorf("regularizer group key: missing document")
+		}
+		return doc.Hash(), nil
+	}, hashKey)
+	if err := c.AddNode(circuit.Op(grpID, operator.NewGroupBy(byIdentity, dbspexpr.NewSubject()))); err != nil {
 		return fmt.Errorf("regularizer: add group_by node: %w", err)
 	}
 
