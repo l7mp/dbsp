@@ -2,6 +2,7 @@ package dbsp
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -14,6 +15,9 @@ type ExpressionFactory func(args any) (Expression, error)
 type Registry struct {
 	mu        sync.RWMutex
 	operators map[string]ExpressionFactory
+	// callbacks tracks the host-provided (callback-backed) operators by
+	// name, mapping each to the registrant that owns it.
+	callbacks map[string]string
 }
 
 // DefaultRegistry is the global default registry with built-in operators.
@@ -23,6 +27,7 @@ var DefaultRegistry = NewRegistry()
 func NewRegistry() *Registry {
 	return &Registry{
 		operators: make(map[string]ExpressionFactory),
+		callbacks: make(map[string]string),
 	}
 }
 
@@ -76,9 +81,8 @@ func (r *Registry) Clone() *Registry {
 	defer r.mu.RUnlock()
 
 	clone := NewRegistry()
-	for name, factory := range r.operators {
-		clone.operators[name] = factory
-	}
+	maps.Copy(clone.operators, r.operators)
+	maps.Copy(clone.callbacks, r.callbacks)
 	return clone
 }
 

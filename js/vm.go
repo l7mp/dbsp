@@ -62,6 +62,21 @@ type VM struct {
 	k8sRuntime         *k8sruntime.Runtime
 	k8sNativeAvailable bool
 	k8sStartConfig     *k8sRuntimeStartConfig
+
+	// compileStarted flips when the first circuit is compiled and never
+	// resets: expression-operator registration is init-phase only (a
+	// program parsed against one operator set must not coexist with later
+	// registrations that would parse the same source differently).
+	compileStarted bool
+}
+
+// requireInitPhase guards the expression-mutation entry points: they are
+// only legal before the first sql/aggregate compilation in this VM.
+func (v *VM) requireInitPhase(what string) error {
+	if v.compileStarted {
+		return fmt.Errorf("%s: expression operators can only change during the init phase, before the first circuit is compiled", what)
+	}
+	return nil
 }
 
 type processState struct {
@@ -424,7 +439,7 @@ func (v *VM) schedule(fn func()) {
 func (v *VM) exitVM(call goja.FunctionCall) (goja.Value, error) {
 	code := int64(0)
 	if arg := call.Argument(0); !goja.IsUndefined(arg) && !goja.IsNull(arg) {
-		code = int64(arg.ToInteger())
+		code = arg.ToInteger()
 	}
 
 	select {
@@ -682,6 +697,17 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 	if err := v.rt.Set("aggregate", aggObj); err != nil {
+		return err
+	}
+
+	exprObj := v.rt.NewObject()
+	if err := exprObj.Set("register", v.wrap(v.expressionRegister)); err != nil {
+		return err
+	}
+	if err := exprObj.Set("unregister", v.wrap(v.expressionUnregister)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("expression", exprObj); err != nil {
 		return err
 	}
 

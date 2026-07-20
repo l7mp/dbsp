@@ -729,6 +729,45 @@ metadata:
     reconciled-at: {"@now": null}
 ```
 
+## Custom operators
+
+The operator set is extensible: an embedder can register additional operators backed by host
+functions, and pipelines use them exactly like built-ins. In the JavaScript runtime the
+registration API is the `expression.register` global:
+
+```javascript
+// Order the items list by the position of item[key] in the order list.
+expression.register("@orderBy", (items, order, key) => {
+  const pos = new Map(order.map((n, i) => [n, i]));
+  return [...items].sort((a, b) => (pos.get(a[key]) ?? Infinity) - (pos.get(b[key]) ?? Infinity));
+});
+```
+
+after which any pipeline compiled in the same process can write:
+
+```yaml
+"@orderBy": ["$.values", "$.key.order", "name"]
+```
+
+The argument expressions are evaluated engine-side and the resulting plain values (documents
+become plain objects) are passed to the function; its return value is the expression result, and a
+thrown exception becomes an expression error (which aborts the circuit step, like any failing
+expression). Registration must happen before the pipeline is compiled. Names must start with `@`;
+re-registering a custom operator replaces its callback, but built-in operator names cannot be
+taken over.
+
+Two things to keep in mind:
+
+- **Callbacks must be pure functions of their arguments.** A custom operator runs inside
+  incremental circuit operators, so a stateful or non-deterministic callback breaks retraction
+  symmetry exactly like `@now` in a group key. This is not enforced.
+- **Callbacks run on the JS event loop.** Circuit steps execute on their own goroutine and block
+  until the event loop services the call, so the function must be a plain synchronous
+  transformation; it must never wait on circuit output.
+
+On the Go side the same mechanism is `Registry.RegisterCallback(name, registrant, fn)` in
+`engine/expression/dbsp`.
+
 ## Putting it together
 
 Real expressions are usually small compositions of the operators above. For example, the following

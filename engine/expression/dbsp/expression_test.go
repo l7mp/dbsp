@@ -1281,3 +1281,130 @@ var _ = Describe("Registry", func() {
 		Expect(result).To(Equal(int64(999)))
 	})
 })
+
+var _ = Describe("Callback Operators", func() {
+	It("should evaluate arguments and pass values to the callback", func() {
+		registry := dbsp.DefaultRegistry.Clone()
+		err := registry.RegisterCallback("@sumall", "test", func(args []any) (any, error) {
+			var sum int64
+			for _, a := range args {
+				i, err := dbsp.AsInt(a)
+				if err != nil {
+					return nil, err
+				}
+				sum += i
+			}
+			return sum, nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		doc := NewTestDoc(map[string]any{"a": int64(10), "b": int64(20)})
+		expr, err := dbsp.CompileWithRegistry([]byte(`{"@sumall": ["$.a", "$.b", 12]}`), registry)
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(int64(42)))
+	})
+
+	It("should accept a single expression argument", func() {
+		registry := dbsp.DefaultRegistry.Clone()
+		Expect(registry.RegisterCallback("@twice", "test", func(args []any) (any, error) {
+			i, err := dbsp.AsInt(args[0])
+			if err != nil {
+				return nil, err
+			}
+			return i * 2, nil
+		})).To(Succeed())
+
+		doc := NewTestDoc(map[string]any{"a": int64(21)})
+		expr, err := dbsp.CompileWithRegistry([]byte(`{"@twice": "$.a"}`), registry)
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(int64(42)))
+	})
+
+	It("should marshal to its original JSON form", func() {
+		registry := dbsp.DefaultRegistry.Clone()
+		Expect(registry.RegisterCallback("@twice", "test", func(args []any) (any, error) {
+			return args[0], nil
+		})).To(Succeed())
+
+		expr, err := dbsp.CompileWithRegistry([]byte(`{"@twice": ["$.a"]}`), registry)
+		Expect(err).NotTo(HaveOccurred())
+
+		b, err := expr.MarshalJSON()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(b).To(MatchJSON(`{"@twice": ["$.a"]}`))
+	})
+
+	It("should propagate callback errors", func() {
+		registry := dbsp.DefaultRegistry.Clone()
+		Expect(registry.RegisterCallback("@boom", "test", func(args []any) (any, error) {
+			return nil, fmt.Errorf("kaboom")
+		})).To(Succeed())
+
+		expr, err := dbsp.CompileWithRegistry([]byte(`{"@boom": null}`), registry)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = expr.Evaluate(expression.NewContext(nil))
+		Expect(err).To(MatchError(ContainSubstring("kaboom")))
+	})
+
+	It("should allow re-registering a callback but protect built-ins", func() {
+		registry := dbsp.DefaultRegistry.Clone()
+		Expect(registry.RegisterCallback("@twice", "test", func(args []any) (any, error) {
+			return int64(1), nil
+		})).To(Succeed())
+		Expect(registry.RegisterCallback("@twice", "test", func(args []any) (any, error) {
+			return int64(2), nil
+		})).To(Succeed())
+		Expect(registry.RegisterCallback("@add", "test", func(args []any) (any, error) {
+			return nil, nil
+		})).To(MatchError(ContainSubstring("built-in")))
+
+		expr, err := dbsp.CompileWithRegistry([]byte(`{"@twice": null}`), registry)
+		Expect(err).NotTo(HaveOccurred())
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(int64(2)))
+	})
+
+	It("should refuse a name held by another registrant", func() {
+		registry := dbsp.DefaultRegistry.Clone()
+		Expect(registry.RegisterCallback("@mine", "alice", func(args []any) (any, error) {
+			return nil, nil
+		})).To(Succeed())
+		Expect(registry.RegisterCallback("@mine", "bob", func(args []any) (any, error) {
+			return nil, nil
+		})).To(MatchError(ContainSubstring(`already registered by "alice"`)))
+
+		holder, ok := registry.CallbackRegistrant("@mine")
+		Expect(ok).To(BeTrue())
+		Expect(holder).To(Equal("alice"))
+	})
+
+	It("should unregister callbacks only for their holder, never built-ins", func() {
+		registry := dbsp.DefaultRegistry.Clone()
+		Expect(registry.RegisterCallback("@mine", "alice", func(args []any) (any, error) {
+			return nil, nil
+		})).To(Succeed())
+
+		Expect(registry.UnregisterCallback("@mine", "bob")).
+			To(MatchError(ContainSubstring(`registered by "alice"`)))
+		Expect(registry.UnregisterCallback("@add", "alice")).
+			To(MatchError(ContainSubstring("built-in")))
+		Expect(registry.UnregisterCallback("@absent", "alice")).
+			To(MatchError(ContainSubstring("not registered")))
+
+		Expect(registry.UnregisterCallback("@mine", "alice")).To(Succeed())
+		Expect(registry.Has("@mine")).To(BeFalse())
+
+		// The name is free again after unregistration.
+		Expect(registry.RegisterCallback("@mine", "bob", func(args []any) (any, error) {
+			return nil, nil
+		})).To(Succeed())
+	})
+})

@@ -42,6 +42,7 @@ func (v *VM) sqlCompile(call goja.FunctionCall) (goja.Value, error) {
 	if len(call.Arguments) < 1 {
 		return nil, fmt.Errorf("sql.compile(query, { output }) requires query")
 	}
+	v.compileStarted = true
 
 	query := strings.TrimSpace(call.Argument(0).String())
 	if query == "" {

@@ -14,6 +14,7 @@ func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 	if len(call.Arguments) < 1 {
 		return nil, fmt.Errorf("aggregate.compile(pipeline, { inputs, outputs }) requires pipeline")
 	}
+	v.compileStarted = true
 
 	pipelineJSON, err := json.Marshal(call.Argument(0).Export())
 	if err != nil {
