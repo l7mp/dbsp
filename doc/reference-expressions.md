@@ -67,7 +67,8 @@ object while the map is iterating.
 Every JSON literal already works as an expression, but the explicit constructors are useful when you
 want to make the type obvious or build nested structures.
 
-Supported constructors are `@nil`, `@bool`, `@int`, `@float`, `@string`, `@list`, and `@dict`.
+Supported constructors are `@nil`, `@bool`, `@int`, `@float`, `@string`, `@list`, `@dict`, and
+`@literal`.
 
 ### `@nil`
 
@@ -95,6 +96,10 @@ metadata:
   annotations:
     replicas: {"@string": "$.spec.replicas"}
 ```
+
+A `$`-prefixed string argument is read as a field path, exactly as everywhere else in the
+language. To produce such a string literally, escape it with `@literal`:
+`{"@string": {"@literal": "$.foo"}}`.
 
 Related examples:
 
@@ -135,6 +140,17 @@ status:
   name: "$.metadata.name"
   ready: "$.status.readyReplicas"
   desired: "$.spec.replicas"
+```
+
+### `@literal`
+
+Returns its argument verbatim, with no expression interpretation whatsoever: `@`-prefixed keys are
+not parsed as operators and `$`-prefixed strings are not parsed as paths:
+
+```yaml
+typedConfig:
+  "@literal":
+    "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 ```
 
 ## Logical and conditional operators
@@ -431,8 +447,9 @@ under iteration in `@map`/`@filter`); every other path tests the document.
   - "$.spec.rules"
 ```
 
-A malformed path is an error, not `false` (and not `true`): expression errors abort the circuit
-step, so they surface instead of silently skewing a predicate.
+This is the cleanest presence test for optional fields. A malformed path is an error, not `false`
+(and not `true`): expression errors abort the circuit step, so they surface instead of silently
+skewing a predicate.
 
 ## List operators
 

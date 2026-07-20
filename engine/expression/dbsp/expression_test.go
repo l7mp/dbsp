@@ -532,6 +532,32 @@ var _ = Describe("Field Operators", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
+	It("should evaluate @literal verbatim, without interpretation", func() {
+		expr, err := dbsp.Compile([]byte(
+			`{"@literal": {"@type": "type.googleapis.com/T", "path": "$.not.a.path"}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(map[string]any{
+			"@type": "type.googleapis.com/T",
+			"path":  "$.not.a.path",
+		}))
+	})
+
+	It("should deep-copy @literal results per evaluation", func() {
+		expr, err := dbsp.Compile([]byte(`{"@literal": {"a": [1]}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		first, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		first.(map[string]any)["a"] = "mutated"
+
+		second, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(second).To(Equal(map[string]any{"a": []any{float64(1)}}))
+	})
+
 	It("should evaluate @set", func() {
 		expr, err := dbsp.Compile([]byte(`{"@set": ["newField", 42]}`))
 		Expect(err).NotTo(HaveOccurred())

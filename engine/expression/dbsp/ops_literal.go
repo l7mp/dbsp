@@ -1,6 +1,7 @@
 package dbsp
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/l7mp/dbsp/engine/expression"
@@ -160,6 +161,53 @@ func (e *constExpr) Evaluate(_ *expression.EvalContext) (any, error) {
 
 func (e *constExpr) String() string { return fmt.Sprintf("%v", e.value) }
 
+// literalExpr implements @literal - returns its argument verbatim, with no
+// expression interpretation. This is the escape hatch for data whose shape
+// collides with the expression syntax, such as protojson "@type" keys or
+// strings that look like field paths. The value is deep-copied per
+// evaluation so that documents assembled from it never alias each other.
+type literalExpr struct {
+	value any
+}
+
+func (e *literalExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value := deepCopyValue(e.value)
+	ctx.Logger().V(8).Info("eval", "op", "@literal", "result", value)
+	return value, nil
+}
+
+func (e *literalExpr) String() string { return fmt.Sprintf("@literal(%v)", e.value) }
+
+func (e *literalExpr) MarshalJSON() ([]byte, error) {
+	valueJSON, err := json.Marshal(e.value)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]json.RawMessage{"@literal": valueJSON})
+}
+
+func (e *literalExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
+
+// deepCopyValue copies nested JSON-shaped values (maps, slices, scalars).
+func deepCopyValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, item := range val {
+			out[k] = deepCopyValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(val))
+		for i, item := range val {
+			out[i] = deepCopyValue(item)
+		}
+		return out
+	default:
+		return val
+	}
+}
+
 func init() {
 	MustRegister("@nil", func(args any) (Expression, error) {
 		if err := utils.ValidateNullaryArgs(args, "@nil"); err != nil {
@@ -208,6 +256,10 @@ func init() {
 			return &listExpr{elements: []Expression{e}}, nil
 		}
 		return &listExpr{elements: nil}, nil
+	})
+	MustRegister("@literal", func(args any) (Expression, error) {
+		// The parser hands the raw JSON value over unparsed; anything goes.
+		return &literalExpr{value: args}, nil
 	})
 	MustRegister("@dict", func(args any) (Expression, error) {
 		if m, ok := args.(map[string]Expression); ok {

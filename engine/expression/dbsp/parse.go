@@ -132,6 +132,13 @@ func (p *Parser) parseOperator(name string, rawArgs any) (Expression, error) {
 // prepareArgs converts raw JSON args into the appropriate form for the factory:
 // nil, raw value (bool/int64/float64/string), Expression, []Expression, or map[string]Expression.
 func (p *Parser) prepareArgs(opName string, rawArgs any) (any, error) {
+	// @literal takes data, not expressions: its argument is passed through
+	// verbatim so that "@"-prefixed keys and "$"-prefixed strings inside it
+	// survive uninterpreted.
+	if opName == "@literal" {
+		return rawArgs, nil
+	}
+
 	if rawArgs == nil {
 		return nil, nil
 	}
