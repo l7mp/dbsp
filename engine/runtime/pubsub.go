@@ -143,7 +143,7 @@ func (s *subscriber) Subscribe(topic string) {
 	defer ts.mu.Unlock()
 
 	if !ts.acc.IsZero() {
-		replay := Event{Name: topic, Data: ts.acc.Clone()}
+		replay := Event{Name: topic, Data: ts.acc.ShallowCopy()}
 		if err := sendEvent(ch, replay); err != nil {
 			if errors.Is(err, ErrChannelFull) {
 				log.Printf("runtime: event channel full, blocking replay: topic=%s err=%v", topic, err)

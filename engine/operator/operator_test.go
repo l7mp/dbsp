@@ -430,7 +430,7 @@ var _ = Describe("Operators", func() {
 				Expect(out.Equal(expected)).To(BeTrue(),
 					"step %d: delta=%v acc=%v got=%v expected=%v", i, delta, acc, out, expected)
 
-				prev = snap.Clone()
+				prev = snap.ShallowCopy()
 			}
 		})
 	})

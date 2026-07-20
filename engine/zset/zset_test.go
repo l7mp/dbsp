@@ -205,7 +205,7 @@ var _ = Describe("ZSet", func() {
 			z := New()
 			z.Insert(testutils.StringElem("a"), 1)
 
-			clone := z.Clone()
+			clone := z.ShallowCopy()
 			clone.Insert(testutils.StringElem("a"), 5)
 
 			Expect(z.Lookup(testutils.StringElem("a").Hash())).To(Equal(Weight(1)))

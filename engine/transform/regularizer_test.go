@@ -207,7 +207,7 @@ var _ = Describe("Regularizer", func() {
 			Expect(incrOut["output_x"].Equal(expected)).To(BeTrue(),
 				"round %d: delta=%v acc=%v got=%v expected=%v", i, delta, acc, incrOut["output_x"], expected)
 
-			prev = normalOut["output_x"].Clone()
+			prev = normalOut["output_x"].ShallowCopy()
 		}
 	})
 
@@ -261,7 +261,7 @@ var _ = Describe("Regularizer", func() {
 			Expect(incrOut["output_x"].Equal(expected)).To(BeTrue(),
 				"round %d: delta=%v acc=%v got=%v expected=%v", round, delta, acc, incrOut["output_x"], expected)
 
-			prev = normalOut["output_x"].Clone()
+			prev = normalOut["output_x"].ShallowCopy()
 		}
 	})
 })

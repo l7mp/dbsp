@@ -314,7 +314,7 @@ func (h *circuitHandle) installObserver() error {
 func (v *VM) observerPayload(node *circuit.Node, values map[string]zset.ZSet, schedule []string, position int) (map[string]any, error) {
 	serialized := make(map[string]any, len(values))
 	for id, value := range values {
-		entries, err := v.toJSEntries(value.Clone())
+		entries, err := v.toJSEntries(value.ShallowCopy())
 		if err != nil {
 			return nil, fmt.Errorf("node %q values: %w", id, err)
 		}

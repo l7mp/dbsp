@@ -183,7 +183,7 @@ func (c *Circuit) buildStepInputs(in Event) map[string]zset.ZSet {
 	for _, logical := range c.inputNames {
 		inputs[c.inputMap[logical]] = zset.New()
 	}
-	inputs[c.inputMap[in.Name]] = in.Data.Clone()
+	inputs[c.inputMap[in.Name]] = in.Data.ShallowCopy()
 	return inputs
 }
 

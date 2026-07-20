@@ -202,7 +202,7 @@ func (o *IntegrateOp) UnmarshalJSON(data []byte) error {
 }
 
 // DifferentiateOp computes D: output = current - previous (arity 1, Bypass).
-// Apply(in) → out = in - prev; prev = in.Clone(); returns out.
+// Apply(in) → out = in - prev; prev = in.ShallowCopy(); returns out.
 // Set(v) initializes prev to v.
 // Linearity is Bypass: D^Δ = identity.
 type DifferentiateOp struct {
@@ -234,7 +234,7 @@ func (o *DifferentiateOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet,
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	out := in.Subtract(o.prev)
-	o.prev = in.Clone()
+	o.prev = in.ShallowCopy()
 	o.logger.V(2).Info("operator", "op", o.String(), "input", in.String(), "output", out.String())
 	return out, nil
 }

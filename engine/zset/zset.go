@@ -82,7 +82,7 @@ func (z ZSet) Iter(fn func(elem datamodel.Document, weight Weight) bool) {
 
 // Add returns z + other.
 func (z ZSet) Add(other ZSet) ZSet {
-	result := z.Clone()
+	result := z.ShallowCopy()
 	other.Iter(func(elem datamodel.Document, weight Weight) bool {
 		result.Insert(elem, weight)
 		return true
@@ -117,11 +117,25 @@ func (z ZSet) Scale(c Weight) ZSet {
 	return result
 }
 
-// Clone creates a copy.
-func (z ZSet) Clone() ZSet {
+// ShallowCopy copies the Z-set structure (the entries and their weights)
+// while SHARING the document pointers with the original. This is safe only
+// because documents stored in Z-sets are immutable by convention: operators
+// evaluate user expressions on per-element copies and never mutate stored
+// elements. Use DeepCopy when handing documents to code that may mutate
+// them.
+func (z ZSet) ShallowCopy() ZSet {
 	result := New()
 	for key, e := range z.entries {
 		result.entries[key] = &Elem{Document: e.Document, Weight: e.Weight}
+	}
+	return result
+}
+
+// DeepCopy copies the Z-set structure and every document in it.
+func (z ZSet) DeepCopy() ZSet {
+	result := New()
+	for key, e := range z.entries {
+		result.entries[key] = &Elem{Document: e.Document.Copy(), Weight: e.Weight}
 	}
 	return result
 }

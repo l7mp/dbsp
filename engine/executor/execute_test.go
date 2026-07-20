@@ -543,7 +543,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 				Expect(incrOut["out"].Equal(expected)).To(BeTrue(),
 					"round %d: got %v, expected %v", round, incrOut["out"], expected)
 
-				prevNormal = normalOut["out"].Clone()
+				prevNormal = normalOut["out"].ShallowCopy()
 			}
 		})
 
