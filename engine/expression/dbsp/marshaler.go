@@ -191,27 +191,65 @@ func (e *intExpr) MarshalJSON() ([]byte, error) {
 }
 func (e *intExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
-// floatExpr: marshals as a bare float when the operand is a constant float64;
-// falls back to {"@float": <operand>} for computed operands.
+// floatExpr: marshals as a bare float when the operand is a constant float64
+// that survives a bare roundtrip; an integral value would re-parse as @int,
+// so it keeps the explicit {"@float": <n>} form. Computed operands use
+// {"@float": <operand>}.
 func (e *floatExpr) MarshalJSON() ([]byte, error) {
 	if c, ok := e.operand.(*constExpr); ok {
 		if f, ok := c.value.(float64); ok {
-			return json.Marshal(f)
+			if bareFloatRoundtrips(f) {
+				return json.Marshal(f)
+			}
 		}
 	}
 	return marshalUnaryOp("@float", e.operand)
 }
+
+// bareFloatRoundtrips reports whether the bare JSON number f re-parses to a
+// float constant of the same value; the parser reads integral numbers as
+// @int, so those must keep the explicit form.
+func bareFloatRoundtrips(f float64) bool {
+	expr, err := NewParser().parseValue(f)
+	if err != nil {
+		return false
+	}
+	fe, ok := expr.(*floatExpr)
+	if !ok {
+		return false
+	}
+	c, ok := fe.operand.(*constExpr)
+	return ok && c.value == f
+}
 func (e *floatExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
-// stringExpr: marshals as a bare string when the operand is a constant string that
-// does not start with "$." or "$$." (which would be misread as a @get/@getsub
-// shorthand). Uses {"@string": <operand>} otherwise.
+// bareStringRoundtrips reports whether the bare JSON string s re-parses to
+// the same string constant.
+func bareStringRoundtrips(s string) bool {
+	expr, err := NewParser().parseValue(s)
+	if err != nil {
+		return false
+	}
+	se, ok := expr.(*stringExpr)
+	if !ok {
+		return false
+	}
+	c, ok := se.operand.(*constExpr)
+	return ok && c.value == s
+}
+
+// stringExpr: marshals as a bare string when the operand is a constant
+// string that survives a bare roundtrip. A constant the parser would read
+// back as something else (a path, a context shorthand) escapes through
+// @literal: {"@string": {"@literal": s}}. Computed operands use
+// {"@string": <operand>}.
 func (e *stringExpr) MarshalJSON() ([]byte, error) {
 	if c, ok := e.operand.(*constExpr); ok {
 		if s, ok := c.value.(string); ok {
-			if !strings.HasPrefix(s, "$.") && !strings.HasPrefix(s, "$$.") {
+			if bareStringRoundtrips(s) {
 				return json.Marshal(s)
 			}
+			return json.Marshal(map[string]any{"@string": map[string]any{"@literal": s}})
 		}
 	}
 	return marshalUnaryOp("@string", e.operand)
@@ -225,7 +263,22 @@ func (e *listExpr) MarshalJSON() ([]byte, error) {
 func (e *listExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
 // dictExpr: marshals as a bare JSON object {k: v, ...}.
-func (e *dictExpr) MarshalJSON() ([]byte, error) { return marshalDictNatural(e.entries) }
+// dictExpr: marshals as a plain JSON object when that form re-parses as a
+// dict; a natural form the parser would read as something else (a single
+// "@"-prefixed key is an operator invocation) wraps in the explicit
+// {"@dict": {...}} form.
+func (e *dictExpr) MarshalJSON() ([]byte, error) {
+	b, err := marshalDictNatural(e.entries)
+	if err != nil {
+		return nil, err
+	}
+	if expr, err := Compile(b); err == nil {
+		if _, ok := expr.(*dictExpr); ok {
+			return b, nil
+		}
+	}
+	return json.Marshal(map[string]json.RawMessage{"@dict": b})
+}
 func (e *dictExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
 // getExpr: marshals as "$.field" shorthand when the field is a constant string;

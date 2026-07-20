@@ -157,8 +157,10 @@ func (p *Parser) prepareArgs(opName string, rawArgs any) (any, error) {
 		return elements, nil
 
 	case map[string]any:
-		// Check if it's an operator (nested expression) or dict args.
-		if len(args) == 1 {
+		// Check if it's an operator (nested expression) or dict args. The
+		// explicit @dict constructor takes literal entry keys: it exists
+		// precisely so "@"-prefixed keys need no escape.
+		if opName != "@dict" && len(args) == 1 {
 			for key := range args {
 				if strings.HasPrefix(key, "@") {
 					expr, err := p.parseMap(args)
@@ -202,7 +204,7 @@ func shouldParseScalarStringArg(opName, arg string) bool {
 	}
 
 	switch opName {
-	case "@string", "@get", "@getsub", "@exists":
+	case "@get", "@getsub", "@exists":
 		return false
 	default:
 		return true

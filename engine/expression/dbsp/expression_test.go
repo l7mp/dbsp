@@ -532,6 +532,115 @@ var _ = Describe("Field Operators", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
+	It("should evaluate @string arguments like every converter", func() {
+		expr, err := dbsp.Compile([]byte(`{"@string": "$.age"}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal("30"))
+	})
+
+	It("should keep @literal-escaped @string arguments verbatim", func() {
+		expr, err := dbsp.Compile([]byte(`{"@string": {"@literal": "$.age"}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal("$.age"))
+	})
+
+	It("should evaluate @int arguments like every converter", func() {
+		expr, err := dbsp.Compile([]byte(`{"@int": "$.age"}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(int64(30)))
+	})
+
+	It("should evaluate @float arguments like every converter", func() {
+		expr, err := dbsp.Compile([]byte(`{"@float": "$.score"}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(95.5))
+	})
+
+	It("should evaluate @bool arguments like every converter", func() {
+		boolDoc := NewTestDoc(map[string]any{"enabled": true})
+		expr, err := dbsp.Compile([]byte(`{"@bool": "$.enabled"}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(boolDoc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(true))
+	})
+
+	It("should evaluate @list elements like every converter", func() {
+		expr, err := dbsp.Compile([]byte(`{"@list": ["$.age", "$.name"]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{int64(30), "Alice"}))
+	})
+
+	It("should evaluate @dict values like every converter", func() {
+		expr, err := dbsp.Compile([]byte(`{"@dict": {"years": "$.age"}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(map[string]any{"years": int64(30)}))
+	})
+
+	It("should keep @literal-escaped @float arguments verbatim", func() {
+		expr, err := dbsp.Compile([]byte(`{"@float": {"@literal": 2.5}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(2.5))
+	})
+
+	It("should keep @literal-escaped @bool arguments verbatim", func() {
+		expr, err := dbsp.Compile([]byte(`{"@bool": {"@literal": true}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(true))
+	})
+
+	It("should keep @literal-escaped @list elements verbatim", func() {
+		expr, err := dbsp.Compile([]byte(`{"@list": [{"@literal": "$.age"}]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{"$.age"}))
+	})
+
+	It("should keep @literal-escaped @dict values verbatim", func() {
+		expr, err := dbsp.Compile([]byte(`{"@dict": {"path": {"@literal": "$.age"}}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(map[string]any{"path": "$.age"}))
+	})
+
+	It("should convert @literal values through @int", func() {
+		expr, err := dbsp.Compile([]byte(`{"@int": {"@literal": 1}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(int64(1)))
+	})
+
 	It("should evaluate @literal verbatim, without interpretation", func() {
 		expr, err := dbsp.Compile([]byte(
 			`{"@literal": {"@type": "type.googleapis.com/T", "path": "$.not.a.path"}}`))

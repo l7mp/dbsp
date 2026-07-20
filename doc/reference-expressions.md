@@ -132,7 +132,9 @@ status:
     desired: "$.spec.replicas"
 ```
 
-This is the expression-level way to construct a new document shape. Note again that the literal
+This is the expression-level way to construct a new document shape. The explicit `@dict` form
+takes literal entry keys, so a single `"@"`-prefixed key (which would otherwise parse as an
+operator invocation) needs no escape here. Note again that the literal
 constructors `@bool`, `@int`, `@float`, `@string` are all optional, so the above is identical to:
 
 ```yaml

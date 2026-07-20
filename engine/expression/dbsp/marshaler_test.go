@@ -63,21 +63,35 @@ var _ = Describe("JSON round-trip", func() {
 			Expect(j2).To(Equal(j1))
 		})
 
+		It("@float integral value keeps the explicit form", func() {
+			j1, j2 := stableJSON(dbsp.NewFloat(1))
+			Expect(j1).To(Equal(`{"@float":1}`))
+			Expect(j2).To(Equal(j1))
+		})
+
 		It("@string plain", func() {
 			j1, j2 := stableJSON(dbsp.NewString("hello"))
 			Expect(j1).To(Equal(`"hello"`))
 			Expect(j2).To(Equal(j1))
 		})
 
-		It("@string with $. prefix stays explicit", func() {
+		It("@string with $. prefix escapes through @literal", func() {
 			j1, j2 := stableJSON(dbsp.NewString("$.path"))
-			Expect(j1).To(Equal(`{"@string":"$.path"}`))
+			Expect(j1).To(Equal(`{"@string":{"@literal":"$.path"}}`))
 			Expect(j2).To(Equal(j1))
 		})
 
-		It("@string with $$. prefix stays explicit", func() {
+		It("@string with $$. prefix escapes through @literal", func() {
 			j1, j2 := stableJSON(dbsp.NewString("$$.path"))
-			Expect(j1).To(Equal(`{"@string":"$$.path"}`))
+			Expect(j1).To(Equal(`{"@string":{"@literal":"$$.path"}}`))
+			Expect(j2).To(Equal(j1))
+		})
+
+		It("@dict with a single @-key escapes through @dict", func() {
+			j1, j2 := stableJSON(dbsp.NewDict(map[string]dbsp.Expression{
+				"@type": dbsp.NewString("type.googleapis.com/T"),
+			}))
+			Expect(j1).To(Equal(`{"@dict":{"@type":"type.googleapis.com/T"}}`))
 			Expect(j2).To(Equal(j1))
 		})
 
@@ -246,9 +260,11 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@bool false", `false`),
 			Entry("@int", `42`),
 			Entry("@float", `3.14`),
+			Entry("@float integral stays explicit", `{"@float":1}`),
 			Entry("@string plain", `"hello"`),
-			Entry("@string $.path stays explicit", `{"@string":"$.path"}`),
-			Entry("@string $$.path stays explicit", `{"@string":"$$.path"}`),
+			Entry("@string of a field read", `{"@string":"$.path"}`),
+			Entry("@string $.path literal escapes through @literal", `{"@string":{"@literal":"$.path"}}`),
+			Entry("@string $$.path literal escapes through @literal", `{"@string":{"@literal":"$$.path"}}`),
 			Entry("@list", `[1,2]`),
 			Entry("@list empty", `[]`),
 			Entry("@get", `"$.fieldname"`),
@@ -256,6 +272,7 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@get bracketed JSONPath", `"$[\"fieldname\"]"`),
 			Entry("@getsub bracketed JSONPath", `"$$[\"fieldname\"]"`),
 			Entry("@dict plain", `{"key":1}`),
+			Entry("@dict single @-key stays explicit", `{"@dict":{"@type":"x"}}`),
 			Entry("@add binary", `{"@add":[1,2]}`),
 			Entry("@add variadic", `{"@add":[1,2,3]}`),
 			Entry("@sub", `{"@sub":[5,3]}`),
