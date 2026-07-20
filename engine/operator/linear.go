@@ -192,74 +192,59 @@ func (o *Project) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error
 	return result, nil
 }
 
-// Unwind flattens an array field into multiple documents.
-// For each element in the array, it produces a copy of the document
-// with the array field replaced by that single element.
-//
-// Example:
-//
-//	Input:  {id: "x", tags: ["a", "b"]}
-//	Output: {id: "x", tags: "a"}, {id: "x", tags: "b"}
-type Unwind struct {
-	linearOp
-	fieldPath  string // The array field to unwind.
-	indexField string // Optional: field to store the array index.
-	nameAppend bool   // Optional: append index to .metadata.name.
-}
-
-// NewUnwind creates a new Unwind operator.
-// fieldPath is the name of the array field to unwind.
-func NewUnwind(fieldPath string, opts ...Option) *Unwind {
-	return &Unwind{
-		linearOp:  newLinearOp(KindUnwind, 1, "", opts),
-		fieldPath: fieldPath,
-	}
-}
-
-// WithIndexField sets an optional field to store the array index.
-func (o *Unwind) WithIndexField(field string) *Unwind {
-	o.indexField = field
-	return o
-}
-
-// WithNameAppend toggles appending -<index> suffix to .metadata.name.
-func (o *Unwind) WithNameAppend(enabled bool) *Unwind {
-	o.nameAppend = enabled
-	return o
-}
-
-// String overrides opBase.String because indexField may be set after construction.
-func (o *Unwind) String() string {
-	if o.indexField != "" && o.nameAppend {
-		return fmt.Sprintf("Unwind(field=%s, index=%s, appendName=true)", o.fieldPath, o.indexField)
-	}
-	if o.indexField != "" {
-		return fmt.Sprintf("Unwind(field=%s, index=%s, appendName=false)", o.fieldPath, o.indexField)
-	}
-	if o.nameAppend {
-		return fmt.Sprintf("Unwind(field=%s, appendName=true)", o.fieldPath)
-	}
-	return fmt.Sprintf("Unwind(field=%s)", o.fieldPath)
-}
-
-// Apply implements Operator.
-// canonicalPath maps a legacy bare field path onto the strict $-rooted
-// document API: a bare path K reads as $.K. Transitional shim for the
-// operators that still carry bare paths (Unwind, map projections).
+// canonicalPath normalizes a Go-API field-name argument to the $-rooted
+// JSONPath the document interface accepts: a bare name F means "$.F" (dots
+// traverse, as they always did for these arguments).
 func canonicalPath(path string) string {
-	if strings.HasPrefix(path, "$") {
+	if path == "" || strings.HasPrefix(path, "$") {
 		return path
 	}
 	return "$." + path
 }
 
+// Unwind expands an array field into multiple documents: for a document
+// carrying the list [x, y] at the unwound field, the output contains one
+// copy of the document per element, with the field replaced by that
+// element.
+//
+// Example:
+//
+//	Input:  {id: "x", tags: ["a", "b"]}
+//	Output: {id: "x", tags: "a"}, {id: "x", tags: "b"}
+//
+// The operator is linear and injects nothing beyond the element itself:
+// when distinct inputs (or duplicate elements) produce equal output
+// documents, their weights merge, per Z-set semantics. Callers that need
+// row-distinct outputs or the original element order pair the list with
+// @enumerate before unwinding and project an explicit identity downstream.
+type Unwind struct {
+	linearOp
+	fieldPath string // The array field to unwind.
+}
+
+// NewUnwind creates a new Unwind operator.
+// fieldPath is the array field to unwind; as a Go-API convenience a bare
+// dotted field name F is canonicalized to the JSONPath "$.F".
+func NewUnwind(fieldPath string, opts ...Option) *Unwind {
+	return &Unwind{
+		linearOp:  newLinearOp(KindUnwind, 1, "", opts),
+		fieldPath: canonicalPath(fieldPath),
+	}
+}
+
+// String overrides opBase.String to name the unwound field.
+func (o *Unwind) String() string {
+	return fmt.Sprintf("Unwind(field=%s)", o.fieldPath)
+}
+
+// Apply implements Operator.
 func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 
 	var err error
 	inputs[0].Iter(func(doc datamodel.Document, weight zset.Weight) bool {
 		// Get the array field.
-		arrayVal, e := doc.GetField(canonicalPath(o.fieldPath))
+		arrayVal, e := doc.GetField(o.fieldPath)
 		if e != nil {
 			// Field not found - skip this document.
 			o.logger.V(2).Info("unwind-skip", "elem", doc.String(), "field", o.fieldPath, "error", e)
@@ -277,36 +262,11 @@ func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 		}
 
 		// For each element, create a copy with the field replaced.
-		for i, arrElem := range array {
+		for _, arrElem := range array {
 			newDoc := doc.Copy()
-			if e := newDoc.SetField(canonicalPath(o.fieldPath), arrElem); e != nil {
+			if e := newDoc.SetField(o.fieldPath, arrElem); e != nil {
 				err = fmt.Errorf("failed to set field %q: %w", o.fieldPath, e)
 				return false
-			}
-
-			if o.nameAppend {
-				nameRaw, e := newDoc.GetField("$.metadata.name")
-				if e != nil {
-					err = fmt.Errorf("failed to read metadata.name for name append: %w", e)
-					return false
-				}
-				name, ok := nameRaw.(string)
-				if !ok {
-					err = fmt.Errorf("metadata.name must be string for name append, got %T", nameRaw)
-					return false
-				}
-				if e := newDoc.SetField("$.metadata.name", fmt.Sprintf("%s-%d", name, i)); e != nil {
-					err = fmt.Errorf("failed to append index to metadata.name: %w", e)
-					return false
-				}
-			}
-
-			// Optionally set the index field.
-			if o.indexField != "" {
-				if e := newDoc.SetField(canonicalPath(o.indexField), int64(i)); e != nil {
-					err = fmt.Errorf("failed to set index field %q: %w", o.indexField, e)
-					return false
-				}
 			}
 
 			result.Insert(newDoc, weight)

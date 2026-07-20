@@ -17,8 +17,6 @@ type jsonOp struct {
 	Predicate  json.RawMessage `json:"predicate,omitempty"`
 	Projection json.RawMessage `json:"projection,omitempty"`
 	Field      string          `json:"field,omitempty"`
-	IndexField string          `json:"indexField,omitempty"`
-	NameAppend bool            `json:"nameAppend,omitempty"`
 	SumField   string          `json:"sumField,omitempty"`
 	KeyExpr    json.RawMessage `json:"keyExpr,omitempty"`
 	ValueExpr  json.RawMessage `json:"valueExpr,omitempty"`
@@ -111,7 +109,7 @@ func (o *Project) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON implements json.Marshaler.
 func (o *Unwind) MarshalJSON() ([]byte, error) {
-	return json.Marshal(jsonOp{Type: "unwind", Field: o.fieldPath, IndexField: o.indexField, NameAppend: o.nameAppend})
+	return json.Marshal(jsonOp{Type: "unwind", Field: o.fieldPath})
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -121,8 +119,6 @@ func (o *Unwind) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	o.fieldPath = p.Field
-	o.indexField = p.IndexField
-	o.nameAppend = p.NameAppend
 	return nil
 }
 
@@ -231,12 +227,7 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		}
 		return NewProject(proj), nil
 	case "unwind":
-		op := NewUnwind(p.Field)
-		if p.IndexField != "" {
-			op = op.WithIndexField(p.IndexField)
-		}
-		op = op.WithNameAppend(p.NameAppend)
-		return op, nil
+		return NewUnwind(p.Field), nil
 	default:
 		return nil, fmt.Errorf("unknown operator type %q", p.Type)
 	}

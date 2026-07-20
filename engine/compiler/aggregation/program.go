@@ -258,10 +258,13 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 		}
 		s.Projection = proj
 	case "@unwind":
+		// One form: a bare "$.path" string. Unwinding injects nothing —
+		// pipelines that need the element order (or row-distinct outputs)
+		// pair the list with @enumerate before unwinding.
 		var path string
 		if err := json.Unmarshal(stage.Args, &path); err != nil {
 			return s, wrapStageErr(i, stage.Op, "path", stage.Args,
-				fmt.Errorf("argument must be a string: %w", err))
+				fmt.Errorf("argument must be a \"$.path\" string: %w", err))
 		}
 		if !strings.HasPrefix(path, "$.") {
 			return s, wrapStageErr(i, stage.Op, "path", stage.Args,

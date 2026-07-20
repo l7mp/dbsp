@@ -420,6 +420,34 @@ func (e *rangeExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
+// enumerateExpr implements @enumerate: pairs each list element with its
+// position: [a, b] becomes [{index: 0, value: a}, {index: 1, value: b}].
+// The canonical use is recording element order before an @unwind, since
+// Z-sets carry no order: unwind the enumerated pairs, and downstream stages
+// (or a later @groupBy + @sortBy) can recover the original list positions.
+// A nil list enumerates to an empty list, following the @map convention.
+type enumerateExpr struct{ unaryOp }
+
+func (e *enumerateExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("@enumerate: %w", err)
+	}
+
+	list, err := AsList(value)
+	if err != nil {
+		return nil, fmt.Errorf("@enumerate: argument must be a list: %w", err)
+	}
+
+	result := make([]any, len(list))
+	for i, item := range list {
+		result[i] = map[string]any{"index": int64(i), "value": item}
+	}
+
+	ctx.Logger().V(8).Info("eval", "op", "@enumerate", "result", result)
+	return result, nil
+}
+
 // evaluateNumericList evaluates a list of expression args and validates they are numeric.
 func evaluateNumericList(ctx *expression.EvalContext, args []Expression, opName string) ([]any, error) {
 	result := make([]any, len(args))
@@ -597,5 +625,12 @@ func init() {
 			return nil, fmt.Errorf("@range: %w", err)
 		}
 		return &rangeExpr{unaryOp{"@range", operand}}, nil
+	})
+	MustRegister("@enumerate", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@enumerate: %w", err)
+		}
+		return &enumerateExpr{unaryOp{"@enumerate", operand}}, nil
 	})
 }

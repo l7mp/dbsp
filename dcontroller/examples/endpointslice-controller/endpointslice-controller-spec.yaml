@@ -19,6 +19,14 @@ controllers:
             type: $.spec.type
             ports: $.spec.ports
       - "@unwind": $.spec.ports
+      # One view object per port: the name carries the port identity
+      # (unwinding injects nothing, and views are keyed by name).
+      - "@project":
+          metadata:
+            name:
+              "@concat": [$.spec.serviceName, "-", $.spec.ports.protocol, "-", $.spec.ports.port]
+            namespace: $.metadata.namespace
+          spec: $.spec
     targets:
       - kind: ServiceView
   # endpointslice controller:

@@ -2,6 +2,7 @@ package aggregation
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/l7mp/dbsp/engine/circuit"
@@ -144,7 +145,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(x).To(Equal(float64(1)))
 	})
 
-	It("evaluates unwind and appends metadata.name indexes", func() {
+	It("evaluates unwind, leaving the documents untouched beyond the element", func() {
 		exec, outID := makeExec([]string{"Pod"}, `[{"@unwind":"$.spec.list"}]`)
 		in := zset.New()
 		in.Insert(unstructured.New(map[string]any{
@@ -157,16 +158,67 @@ var _ = Describe("Aggregation compiler parity", func() {
 		docs := collectDocs(outs[outID])
 		Expect(docs).To(HaveLen(3))
 
-		names := make([]string, 0, len(docs))
 		vals := make([]any, 0, len(docs))
 		for _, d := range docs {
 			name, _ := d.GetField("$.metadata.name")
+			Expect(name).To(Equal("name"))
 			v, _ := d.GetField("$.spec.list")
-			names = append(names, name.(string))
 			vals = append(vals, v)
 		}
-		Expect(names).To(ConsistOf("name-0", "name-1", "name-2"))
 		Expect(vals).To(ConsistOf(int64(1), "a", true))
+	})
+
+	It("evaluates enumerate-then-unwind, recording element positions", func() {
+		exec, outID := makeExec([]string{"Pod"}, `[
+			{"@project":{"metadata":"$.metadata","items":{"@enumerate":["$.spec.list"]}}},
+			{"@unwind":"$.items"}
+		]`)
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{
+			"metadata": map[string]any{"name": "name", "namespace": "default"},
+			"spec":     map[string]any{"list": []any{"a", "a", "b"}},
+		}), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
+		Expect(err).NotTo(HaveOccurred())
+		docs := collectDocs(outs[outID])
+		// The duplicate "a" elements stay distinct rows: the index
+		// discriminates them.
+		Expect(docs).To(HaveLen(3))
+
+		pairs := make([]string, 0, len(docs))
+		for _, d := range docs {
+			idx, _ := d.GetField("$.items.index")
+			val, _ := d.GetField("$.items.value")
+			pairs = append(pairs, fmt.Sprintf("%v:%v", idx, val))
+		}
+		Expect(pairs).To(ConsistOf("0:a", "1:a", "2:b"))
+	})
+
+	It("rebuilds original list order from enumerated unwound rows", func() {
+		exec, outID := makeExec([]string{"Pod"}, `[
+			{"@project":{"metadata":"$.metadata","items":{"@enumerate":["$.spec.list"]}}},
+			{"@unwind":"$.items"},
+			{"@groupBy":["$.metadata.name","$.items"]},
+			{"@project":{"name":"$.key","list":{"@map":["$$.value",
+				{"@sortBy":[{"@switch":[
+					[{"@lt":["$$.a.index","$$.b.index"]},-1],
+					[{"@eq":["$$.a.index","$$.b.index"]},0],
+					[true,1]]},"$.values"]}]}}}
+		]`)
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{
+			"metadata": map[string]any{"name": "name", "namespace": "default"},
+			"spec":     map[string]any{"list": []any{"c", "a", "b"}},
+		}), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
+		Expect(err).NotTo(HaveOccurred())
+		docs := collectDocs(outs[outID])
+		Expect(docs).To(HaveLen(1))
+		list, err := docs[0].GetField("$.list")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list).To(Equal([]any{"c", "a", "b"}))
 	})
 
 	It("evaluates nested unwind", func() {
@@ -664,7 +716,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		}
 	})
 
-	It("exposes unwind nameAppend flag in compiled operator", func() {
+	It("compiles unwind into the plain flatten operator", func() {
 		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
 		q, err := c.CompileString(`[{"@unwind":"$.spec.list"}]`)
 		Expect(err).NotTo(HaveOccurred())
@@ -672,7 +724,14 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(n).NotTo(BeNil())
 		u, ok := n.Operator.(*operator.Unwind)
 		Expect(ok).To(BeTrue())
-		Expect(u.String()).To(ContainSubstring("appendName=true"))
+		Expect(u.String()).To(Equal("Unwind(field=$.spec.list)"))
+	})
+
+	It("rejects the removed unwind object form", func() {
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
+		_, err := c.CompileString(`[{"@unwind":{"path":"$.spec.list","index":"$.i"}}]`)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("@enumerate"))
 	})
 
 	It("uses configured logical output name", func() {

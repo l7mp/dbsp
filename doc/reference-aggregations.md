@@ -277,11 +277,54 @@ spec:
 ```
 
 then the stage emits two documents. In each output document, `spec.ports` is replaced by one single
-port object. The compiler also appends an index suffix to `metadata.name`, yielding names such as
-`my-svc-0` and `my-svc-1`.
+port object. Nothing else is touched: the stage injects no bookkeeping and rewrites no fields.
 
-That name rewriting is important. Without it, the unwound outputs would collide as if they were the
-same object.
+Note that equal rows merge: When two output documents come out identical (duplicate elements in one
+list, or two inputs that differ only inside the unwound field), their weights add up into a single
+Z-set entry. The arithmetic stays exact (retracting one source subtracts its contribution), but
+downstream consumers that treat documents as distinct objects, most importantly Kubernetes-style
+targets keyed by `metadata.name`, see one object where the application means several. Unwound rows
+that materialize as named objects must therefore derive a distinguishing name explicitly, from
+whatever identifies the element (a port number, a rule position):
+
+```yaml
+[
+  {"@unwind": "$.spec.ports"},
+  {"@project": [
+    {"$.": "$."},
+    {"$.metadata.name": {"@concat": ["$.metadata.name", "-", "$.spec.ports.port"]}}
+  ]}
+]
+```
+
+Note also that the original list order is lost after `@unwind`: Z-sets are unordered, so once a
+list is unwound the original element positions are unrecoverable, unless they were captured in the
+documents first. Pair the list with [`@enumerate`](reference-expressions.md#enumerate) before
+unwinding; the index then travels with each row:
+
+```yaml
+[
+  {"@project": [{"$.": "$."}, {rules: {"@enumerate": ["$.spec.rules"]}}]},
+  {"@unwind": "$.rules"}
+]
+```
+
+In the result each output document carries `rules.index` and `rules.value`. The index doubles as a
+row discriminator (duplicate elements stay distinct) and lets a later stage rebuild the list in its
+original order:
+
+```yaml
+[
+  {"@groupBy": ["$.someKey", "$.rules"]},
+  {"@project": {key: "$.key",
+                rules: {"@map": ["$$.value",
+                                 {"@sortBy": [{"@switch": [
+                                     [{"@lt": ["$$.a.index", "$$.b.index"]}, -1],
+                                     [{"@eq": ["$$.a.index", "$$.b.index"]}, 0],
+                                     [true, 1]]},
+                                   "$.values"]}]}}}
+]
+```
 
 Nested unwind is also allowed:
 
@@ -297,13 +340,8 @@ endpoint.
 
 ## Deduplication: `@distinct`
 
-`@distinct` converts a Z-set into set membership.
-
-Its argument must be nullary: either explicit `null` or an empty object `{}`:
-
-```yaml
-"@distinct": null
-```
+`@distinct` converts a Z-set into set membership. It takes no argument, so the bare string form
+is the natural spelling; `{"@distinct": null}` is the equivalent explicit form.
 
 ```yaml
 "@distinct": {}

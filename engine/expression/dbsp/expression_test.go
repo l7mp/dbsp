@@ -846,6 +846,35 @@ var _ = Describe("List Operators", func() {
 		Expect(result).To(Equal([]any{int64(1), int64(2), int64(3), int64(4), int64(5)}))
 	})
 
+	It("should evaluate @enumerate", func() {
+		expr, err := dbsp.Compile([]byte(`{"@enumerate": {"@list": ["a", "b"]}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{
+			map[string]any{"index": int64(0), "value": "a"},
+			map[string]any{"index": int64(1), "value": "b"},
+		}))
+	})
+
+	It("should evaluate @enumerate on a defaulted missing list as empty", func() {
+		expr, err := dbsp.Compile([]byte(`{"@enumerate": {"@definedOr": ["$.missing", {"@list": []}]}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(NewTestDoc(map[string]any{"other": int64(1)})))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{}))
+	})
+
+	It("should reject @enumerate on a non-list", func() {
+		expr, err := dbsp.Compile([]byte(`{"@enumerate": "scalar"}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = expr.Evaluate(expression.NewContext(nil))
+		Expect(err).To(HaveOccurred())
+	})
+
 	It("should evaluate @map", func() {
 		// Map each element by adding 10.
 		expr, err := dbsp.Compile([]byte(`{"@map": [{"@add": ["$$.", 10]}, [1, 2, 3]]}`))

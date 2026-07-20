@@ -528,26 +528,29 @@ var _ = Describe("Operators", func() {
 			})
 		})
 
-		It("adds index field when configured", func() {
-			op := NewUnwind("values").WithIndexField("idx")
+		It("merges equal rows under weight", func() {
+			// Duplicate elements produce equal documents; per Z-set
+			// semantics their weights merge. Callers needing row-distinct
+			// outputs enumerate the list first.
+			op := NewUnwind("values")
 
 			input := zset.New()
 			input.Insert(testutils.NewMutableRecord(map[string]any{
 				"id":     "a",
-				"values": []any{"x", "y", "z"},
+				"values": []any{"x", "x", "y"},
 			}), 1)
 
 			result, err := op.Apply(nil, input)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Size()).To(Equal(3))
+			Expect(result.Size()).To(Equal(2))
 
-			indices := []int64{}
+			weights := map[string]zset.Weight{}
 			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				idx, _ := elem.GetField("$.idx")
-				indices = append(indices, idx.(int64))
+				v, _ := elem.GetField("$.values")
+				weights[v.(string)] = weight
 				return true
 			})
-			Expect(indices).To(ConsistOf(int64(0), int64(1), int64(2)))
+			Expect(weights).To(Equal(map[string]zset.Weight{"x": 2, "y": 1}))
 		})
 
 		It("skips documents with missing array field", func() {

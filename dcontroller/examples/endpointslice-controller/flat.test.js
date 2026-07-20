@@ -234,6 +234,23 @@ const OPERATOR_SPEC = {
                         },
                     },
                     { "@unwind": "$.spec.ports" },
+                    {
+                        "@project": {
+                            metadata: {
+                                name: {
+                                    "@concat": [
+                                        "$.spec.serviceName",
+                                        "-",
+                                        "$.spec.ports.protocol",
+                                        "-",
+                                        "$.spec.ports.port",
+                                    ],
+                                },
+                                namespace: "$.metadata.namespace",
+                            },
+                            spec: "$.spec",
+                        },
+                    },
                 ],
                 targets: [{ kind: "ServiceView" }],
             },

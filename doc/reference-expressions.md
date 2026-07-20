@@ -560,6 +560,20 @@ Generates the integer list `[1..n]`.
 
 This yields `[1, 2, 3, 4]`. It is handy when you need a fixed number of slots or iterations.
 
+### `@enumerate`
+
+Pairs each list element with its position.
+
+```yaml
+"@enumerate": "$.spec.rules"
+```
+
+For a two-element list this yields `[{index: 0, value: <rule-0>}, {index: 1, value: <rule-1>}]`.
+The canonical use is recording element order before an [`@unwind`](reference-aggregations.md#expanding-lists-unwind):
+Z-sets carry no order, so once a list is unwound the positions are unrecoverable unless they were
+captured in the documents. Enumerate the list, unwind the pairs, and the index travels with each
+row; a later `@groupBy` + `@sortBy` on the index rebuilds the list in its original order.
+
 ## String operators
 
 These operators normalize, search, and reshape strings.

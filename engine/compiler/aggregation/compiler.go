@@ -375,9 +375,7 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 			if path == "" {
 				return "", wrapStageErr(stage.Index, stage.Op, "path", stage.RawArgs, fmt.Errorf("missing parsed unwind path"))
 			}
-			fieldPath := strings.TrimPrefix(path, "$.")
-			op := operator.NewUnwind(fieldPath).WithNameAppend(true)
-			if err := compiled.AddNode(circuit.Op(id, op)); err != nil {
+			if err := compiled.AddNode(circuit.Op(id, operator.NewUnwind(path))); err != nil {
 				return "", err
 			}
 		case "@groupBy":
