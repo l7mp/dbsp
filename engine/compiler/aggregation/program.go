@@ -363,7 +363,10 @@ func isPipelineShape(p Pipeline) bool {
 }
 
 func validateProgramGraph(branches []branchSpec, sources, outputs []string) error {
-	producer := map[string]int{}
+	// Several branches may produce the same stream; the compiler unions
+	// their outputs by Z-set addition (a Plus node in front of every
+	// consumer), so production is a list, not an exclusive claim.
+	producers := map[string][]int{}
 	sourceSet := map[string]bool{}
 	for _, s := range sources {
 		sourceSet[sourceStreamKey(s)] = true
@@ -371,15 +374,12 @@ func validateProgramGraph(branches []branchSpec, sources, outputs []string) erro
 
 	for _, b := range branches {
 		outKey := outputStreamKey(b.Output)
-		if prev, ok := producer[outKey]; ok {
-			return fmt.Errorf("duplicate producer for %q: branch[%d] and branch[%d]", b.Output, prev, b.Index)
-		}
-		producer[outKey] = b.Index
+		producers[outKey] = append(producers[outKey], b.Index)
 	}
 
 	for _, b := range branches {
 		for _, in := range b.Inputs {
-			_, internal := producer[outputStreamKey(in)]
+			_, internal := producers[outputStreamKey(in)]
 			external := sourceSet[sourceStreamKey(in)]
 			if !internal && !external {
 				return fmt.Errorf("branch[%d]: input %q is unbound", b.Index, in)
@@ -392,7 +392,7 @@ func validateProgramGraph(branches []branchSpec, sources, outputs []string) erro
 			if sourceSet[sourceStreamKey(out)] {
 				continue
 			}
-			if _, ok := producer[outputStreamKey(out)]; !ok {
+			if _, ok := producers[outputStreamKey(out)]; !ok {
 				return fmt.Errorf("configured output %q is unbound", out)
 			}
 		}
@@ -410,7 +410,7 @@ func validateProgramGraph(branches []branchSpec, sources, outputs []string) erro
 			if sourceSet[sourceStreamKey(in)] {
 				continue
 			}
-			if p, ok := producer[outputStreamKey(in)]; ok {
+			for _, p := range producers[outputStreamKey(in)] {
 				if p == b.Index {
 					return fmt.Errorf("graph cycle: branch[%d] feeds itself via %q", b.Index, in)
 				}
@@ -426,13 +426,16 @@ func validateProgramGraph(branches []branchSpec, sources, outputs []string) erro
 }
 
 func buildTopoOrder(branches []branchSpec, sources []string) ([]int, error) {
-	producer := map[string]int{}
+	// A consumer compiles after ALL producers of its input streams, so the
+	// input-side union sees every producer node.
+	producers := map[string][]int{}
 	sourceSet := map[string]bool{}
 	for _, s := range sources {
 		sourceSet[sourceStreamKey(s)] = true
 	}
 	for _, b := range branches {
-		producer[outputStreamKey(b.Output)] = b.Index
+		outKey := outputStreamKey(b.Output)
+		producers[outKey] = append(producers[outKey], b.Index)
 	}
 
 	g := simple.NewDirectedGraph()
@@ -447,7 +450,7 @@ func buildTopoOrder(branches []branchSpec, sources []string) ([]int, error) {
 			if sourceSet[sourceStreamKey(in)] {
 				continue
 			}
-			if p, ok := producer[outputStreamKey(in)]; ok {
+			for _, p := range producers[outputStreamKey(in)] {
 				if p == b.Index {
 					return nil, fmt.Errorf("graph cycle: branch[%d] feeds itself via %q", b.Index, in)
 				}

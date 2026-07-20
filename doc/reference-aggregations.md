@@ -624,6 +624,32 @@ The compiler also supports explicit multi-branch programs. Each branch has its o
 The important rule is that the branch dependency graph must be acyclic. A branch may depend on an
 earlier branch output, but cyclic branch wiring is rejected.
 
+### Stream union
+
+Several branches may produce the same stream, internal or bound to a configured output. The
+compiler unions their outputs by Z-set addition (a merge node in front of every consumer):
+
+```yaml
+[
+  [
+    {"@inputs": ["evals"]},
+    {"@project": {...violation rows...}},
+    {"@output": "rows"}
+  ],
+  [
+    {"@inputs": ["evals"]},
+    {"@select": {...the error branch...}},
+    {"@project": {...error rows...}},
+    {"@output": "rows"}
+  ]
+]
+```
+
+The union is *additive* (bag semantics): if two branches emit the same document, the weights sum;
+follow with `@distinct` when set union is intended. One consequence to keep in mind: two branches
+accidentally sharing an `@output` name are silently merged rather than rejected, so a typo in a
+stream name becomes a union, not an error.
+
 ## What is not supported
 
 In the current implementation, these stage names are rejected:

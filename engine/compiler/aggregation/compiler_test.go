@@ -827,9 +827,9 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(out.Lookup(unstructured.New(map[string]any{"name": "p1"}).Hash())).To(Equal(zset.Weight(1)))
 	})
 
-	It("rejects duplicate internal output producers", func() {
+	It("unions multiple producers of an internal stream by Z-set addition", func() {
 		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"final"}))
-		_, err := c.CompileString(`[
+		q, err := c.CompileString(`[
 			[
 				{"@inputs":["Pod"]},
 				{"@project":{"name":"$.metadata.name"}},
@@ -846,8 +846,110 @@ var _ = Describe("Aggregation compiler parity", func() {
 				{"@output":"final"}
 			]
 		]`)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("duplicate producer for \"base\""))
+		Expect(err).NotTo(HaveOccurred())
+
+		exec, err := executor.New(q.Circuit, logger.DiscardLogger())
+		Expect(err).NotTo(HaveOccurred())
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "p1"}}), 1)
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
+		Expect(err).NotTo(HaveOccurred())
+
+		// The union is additive: both branches emit the same document, so
+		// the weights sum (bag semantics; @distinct restores set union).
+		out := outs[q.OutputMap["final"]]
+		Expect(out.Size()).To(Equal(1))
+		Expect(out.Lookup(unstructured.New(map[string]any{"name": "p1"}).Hash())).To(Equal(zset.Weight(2)))
+	})
+
+	It("unions multiple producers of a configured output", func() {
+		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"final"}))
+		q, err := c.CompileString(`[
+			[
+				{"@inputs":["Pod"]},
+				{"@project":{"name":"$.metadata.name", "from": "a"}},
+				{"@output":"final"}
+			],
+			[
+				{"@inputs":["Pod"]},
+				{"@project":{"name":"$.metadata.name", "from": "b"}},
+				{"@output":"final"}
+			]
+		]`)
+		Expect(err).NotTo(HaveOccurred())
+
+		exec, err := executor.New(q.Circuit, logger.DiscardLogger())
+		Expect(err).NotTo(HaveOccurred())
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "p1"}}), 1)
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
+		Expect(err).NotTo(HaveOccurred())
+
+		out := outs[q.OutputMap["final"]]
+		Expect(out.Size()).To(Equal(2))
+		Expect(out.Lookup(unstructured.New(map[string]any{"name": "p1", "from": "a"}).Hash())).To(Equal(zset.Weight(1)))
+		Expect(out.Lookup(unstructured.New(map[string]any{"name": "p1", "from": "b"}).Hash())).To(Equal(zset.Weight(1)))
+	})
+
+	It("keeps union multiplicities exact through @groupBy under incrementalization", func() {
+		const pipeline = `[
+			[{"@inputs":["l"]}, {"@select": true}, {"@output":"s"}],
+			[{"@inputs":["l"]}, {"@select": {"@eq": ["$.both", true]}}, {"@output":"s"}],
+			[{"@inputs":["s"]}, {"@groupBy": ["$.k", "$.v"]}, {"@project": {"key": "$.key", "vals": "$.values"}}, {"@output":"output"}]
+		]`
+
+		mk := func(incremental bool) (*executor.Executor, string) {
+			c := New(toIdentityBindings([]string{"l"}), toIdentityBindings([]string{"output"}))
+			q, err := c.CompileString(pipeline)
+			Expect(err).NotTo(HaveOccurred())
+			circ := q.Circuit
+			if incremental {
+				circ, err = transform.NewIncrementalizer().Transform(circ)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			exec, err := executor.New(circ, logger.DiscardLogger())
+			Expect(err).NotTo(HaveOccurred())
+			return exec, q.OutputMap["output"]
+		}
+
+		doc := func(both bool) *unstructured.Unstructured {
+			return unstructured.New(map[string]any{"k": "a", "v": int64(1), "both": both})
+		}
+
+		// The doc first matches both branches: the union carries it at
+		// weight 2 and the group materializes it twice.
+		incExec, incOut := mk(true)
+		acc := zset.New()
+		d1 := zset.New()
+		d1.Insert(doc(true), 1)
+		outs, err := incExec.Execute(map[string]zset.ZSet{"input_l": d1})
+		Expect(err).NotTo(HaveOccurred())
+		acc = acc.Add(outs[incOut])
+		Expect(collectDocs(acc)).To(HaveLen(1))
+		vals, err := collectDocs(acc)[0].GetField("$.vals")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vals).To(HaveLen(2))
+
+		// Replacing it with a variant matching one branch retracts exactly
+		// one copy.
+		d2 := zset.New()
+		d2.Insert(doc(true), -1)
+		d2.Insert(doc(false), 1)
+		outs, err = incExec.Execute(map[string]zset.ZSet{"input_l": d2})
+		Expect(err).NotTo(HaveOccurred())
+		acc = acc.Add(outs[incOut])
+
+		// The integral agrees with a snapshot run over the final input.
+		snapExec, snapOut := mk(false)
+		full := zset.New()
+		full.Insert(doc(false), 1)
+		snapOuts, err := snapExec.Execute(map[string]zset.ZSet{"input_l": full})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acc.Equal(snapOuts[snapOut])).To(BeTrue(),
+			"incremental: %s\nsnapshot: %s", acc.String(), snapOuts[snapOut].String())
+		vals, err = collectDocs(acc)[0].GetField("$.vals")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vals).To(HaveLen(1))
 	})
 
 	It("round-trips compiled circuits with wrapped expressions", func() {
