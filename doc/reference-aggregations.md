@@ -344,6 +344,9 @@ or:
 "@groupBy": [<keyExpr>, <valueExpr>, {distinct: true}]
 ```
 
+The key expression is required (`null` is a compile error); the value expression may be `null`, in
+which case the whole document is collected.
+
 The output shape of `@groupBy` in the current implementation is a document with three fields:
 
 - `key`: the grouping key,

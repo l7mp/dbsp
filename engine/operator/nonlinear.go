@@ -54,7 +54,7 @@ type GroupBy struct {
 
 // NewGroupBy creates an incremental GROUP BY operator.
 //
-// keyExpr may be nil; in that case document primary key is used as group key.
+// keyExpr is required: group-key evaluation fails without one.
 // valueExpr may be nil; in that case the whole document is used as value.
 func NewGroupBy(keyExpr, valueExpr expression.Expression, opts ...Option) *GroupBy {
 	if valueExpr == nil {
@@ -333,11 +333,7 @@ func evaluateGroupKey(
 ) (string, any, error) {
 	var key any
 	if keyExpr == nil {
-		pk, err := doc.PrimaryKey()
-		if err != nil {
-			return "", nil, fmt.Errorf("group_by: primary key: %w", err)
-		}
-		key = pk
+		return "", nil, fmt.Errorf("group_by: key expression is required")
 	} else {
 		v, err := keyExpr.Evaluate(expression.NewContext(doc).WithNow(now).WithSubject(doc))
 		if err != nil {

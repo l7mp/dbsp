@@ -765,6 +765,10 @@ func compileGroupByOp(args json.RawMessage, stageIndex int, stageOp string) (ope
 	if err != nil {
 		return nil, wrapStageErr(stageIndex, stageOp, "keyExpr", list[0], err)
 	}
+	if keyExpr == nil {
+		return nil, wrapStageErr(stageIndex, stageOp, "keyExpr", list[0],
+			fmt.Errorf("group key expression is required (null is not allowed)"))
+	}
 	valueExpr, err := parseExpr(list[1])
 	if err != nil {
 		return nil, wrapStageErr(stageIndex, stageOp, "valueExpr", list[1], err)
