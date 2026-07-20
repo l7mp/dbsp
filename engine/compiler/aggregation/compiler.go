@@ -702,9 +702,16 @@ func compileProjectExpression(args json.RawMessage, stageIndex int, stageOp stri
 				return nil, err
 			}
 			if asg.path == "" {
-				m, ok := val.(map[string]any)
-				if !ok {
-					return nil, fmt.Errorf("$. assignment must evaluate to map, got %T", val)
+				var m map[string]any
+				switch v := val.(type) {
+				case map[string]any:
+					m = v
+				case datamodel.Document:
+					// Join namespaces evaluate to documents; merge their
+					// fields like a plain map.
+					m = v.Fields()
+				default:
+					return nil, fmt.Errorf("$. assignment must evaluate to map or document, got %T", val)
 				}
 				for k, v := range m {
 					accum[k] = deepCopyAny(v)

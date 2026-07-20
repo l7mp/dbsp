@@ -278,6 +278,29 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(pn).To(Equal("result"))
 	})
 
+	It("merges a join namespace document via the $. project stage", func() {
+		exec, outID := makeExec([]string{"pod", "dep"}, `[
+			{"@join":{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]}},
+			{"@project":[{"$.":"$.pod"},{"$.spec.dep":"$.dep.metadata.name"}]}
+		]`)
+
+		pods := zset.New()
+		deps := zset.New()
+		deps.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "dep1"}}), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1"}, "spec": map[string]any{"parent": "dep1"}}), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": pods, "input_dep": deps})
+		Expect(err).NotTo(HaveOccurred())
+		docs := collectDocs(outs[outID])
+		Expect(docs).To(HaveLen(1))
+		name, err := docs[0].GetField("metadata.name")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(name).To(Equal("pod1"))
+		dep, err := docs[0].GetField("spec.dep")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(dep).To(Equal("dep1"))
+	})
+
 	It("evaluates three-source join", func() {
 		exec, outID := makeExec([]string{"pod", "dep", "rs"}, `[
 			{"@join":{"@and":[{"@eq":["$.dep.metadata.name","$.pod.spec.parent"]},{"@eq":["$.dep.metadata.name","$.rs.spec.dep"]}]}},
