@@ -731,7 +731,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
 		_, err := c.CompileString(`[{"@unwind":{"path":"$.spec.list","index":"$.i"}}]`)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("@enumerate"))
+		Expect(err.Error()).To(ContainSubstring(`"$.path" string`))
 	})
 
 	It("uses configured logical output name", func() {

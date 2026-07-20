@@ -21,7 +21,7 @@ const jsRegistrant = "js"
 //
 // The callback runs on the VM event loop: circuit steps execute on their own
 // goroutine and block until the event loop services the call. The function
-// must therefore be a plain synchronous value-in/value-out transformation —
+// must therefore be a plain synchronous value-in/value-out transformation;
 // it must not wait on circuit output, and like any expression it should be a
 // pure function of its arguments (a stateful or non-deterministic callback
 // breaks retraction symmetry in incremental circuits; this is not enforced).
@@ -76,7 +76,7 @@ func (v *VM) expressionRegister(call goja.FunctionCall) (goja.Value, error) {
 // It removes a JS-registered operator so future parses no longer accept it
 // (compiled circuits are unaffected). Init-phase only, like registration;
 // names held by other registrants (built-ins, connector operators) are
-// refused — connector operators are unregistered through the connector's own
+// refused; connector operators are unregistered through the connector's own
 // namespace.
 func (v *VM) expressionUnregister(call goja.FunctionCall) (goja.Value, error) {
 	if err := v.requireInitPhase("expression.unregister"); err != nil {

@@ -33,7 +33,7 @@ func (p *Parser) Parse(data []byte) (Expression, error) {
 // splitPathRoot recognizes a rooted path: a "$" (document) or "$$"
 // (subject) root followed by a child selector ("." or "["). It returns the
 // root and the "$"-rooted JSONPath addressing the field within that
-// context; ok is false for anything else — a string without a root is a
+// context; ok is false for anything else: a string without a root is a
 // literal, never a path.
 func splitPathRoot(s string) (root, path string, ok bool) {
 	rest, rooted := strings.CutPrefix(s, "$")

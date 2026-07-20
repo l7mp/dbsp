@@ -258,7 +258,7 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 		}
 		s.Projection = proj
 	case "@unwind":
-		// One form: a bare "$.path" string. Unwinding injects nothing —
+		// One form: a bare "$.path" string. Unwinding injects nothing;
 		// pipelines that need the element order (or row-distinct outputs)
 		// pair the list with @enumerate before unwinding.
 		var path string

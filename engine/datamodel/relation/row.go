@@ -179,7 +179,7 @@ func (r *Row) SetField(field string, value any) error {
 
 // columnKey translates a $-rooted JSONPath into the Row document model: a
 // row is a flat tuple of (possibly table-qualified) named columns, so a
-// path's child fragments name a column — $["t.a"] is the column "t.a", and
+// path's child fragments name a column: $["t.a"] is the column "t.a", and
 // $.t.a means the same because a dot in a Row path is the SQL table
 // qualifier, never nesting. The translation uses the standard JSONPath
 // parser; anything beyond child selection has no Row interpretation.

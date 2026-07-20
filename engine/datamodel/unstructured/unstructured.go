@@ -31,7 +31,7 @@ func New(fields map[string]any) *Unstructured {
 	return &Unstructured{fields: f}
 }
 
-// Wrap creates an Unstructured document sharing the provided fields map —
+// Wrap creates an Unstructured document sharing the provided fields map;
 // no copy is made, so mutations flow both ways. This adapts an existing
 // plain-map value to the Document interface (the expression engine wraps
 // plain-map subjects this way, so subject paths resolve exactly like
@@ -117,10 +117,10 @@ func (u *Unstructured) Fields() map[string]any {
 }
 
 // GetField returns the value for a field path. There is exactly one path
-// semantics — "$"-rooted JSONPath, evaluated by the standard evaluator; a
+// semantics: "$"-rooted JSONPath, evaluated by the standard evaluator; a
 // path without the "$" root is an error, not a bare field name. Map keys
 // containing dots (Kubernetes label, annotation and Secret data keys) are
-// addressed with bracket syntax: $["data"]["tls.crt"] — a dot in a path
+// addressed with bracket syntax: $["data"]["tls.crt"]; a dot in a path
 // always traverses.
 // It returns datamodel.ErrFieldNotFound when the path resolves to nothing.
 func (u *Unstructured) GetField(key string) (any, error) {

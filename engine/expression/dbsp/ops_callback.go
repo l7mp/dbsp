@@ -67,7 +67,7 @@ func (e *callbackExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e
 // The callback's execution model is the registrant's business: an in-process
 // Go function and a function that marshals the call to another goroutine
 // (the JS runtime services callbacks on its event loop) register the same
-// way — the engine only requires that the call is synchronous from its point
+// way; the engine only requires that the call is synchronous from its point
 // of view and a pure function of its arguments.
 func (r *Registry) RegisterCallback(name, registrant string, fn CallbackFunc) error {
 	r.mu.Lock()

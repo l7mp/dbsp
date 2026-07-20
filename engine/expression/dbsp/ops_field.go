@@ -61,7 +61,7 @@ func (e *getFieldExpr) String() string { return fmt.Sprintf("@getField(%v)", e.f
 
 // resolveFieldPath reads a rooted path from its document: "$$"-rooted paths
 // re-root at the subject, "$"-rooted paths read the document, anything else
-// is an error — a string without a root is a literal, never a path.
+// is an error: a string without a root is a literal, never a path.
 func resolveFieldPath(ctx *expression.EvalContext, fieldPath, opName string) (any, error) {
 	root, path, ok := splitPathRoot(fieldPath)
 	if !ok {
@@ -83,8 +83,8 @@ func resolveFieldPath(ctx *expression.EvalContext, fieldPath, opName string) (an
 
 // subjectDocument adapts the evaluation subject to the document interface,
 // so that subject paths resolve through the same GetField/SetField
-// semantics as document paths. Plain maps — e.g. the synthetic {a, b} pair
-// a @sortBy comparator is handed — are wrapped without copying, so
+// semantics as document paths. Plain maps (e.g. the synthetic {a, b} pair
+// a @sortBy comparator is handed) are wrapped without copying, so
 // @setField mutations reach the original value.
 func subjectDocument(ctx *expression.EvalContext, opName string) (datamodel.Document, error) {
 	subject := ctx.Subject()
@@ -104,8 +104,8 @@ func subjectDocument(ctx *expression.EvalContext, opName string) (datamodel.Docu
 // setFieldExpr implements @setField - writes a field through a $-rooted
 // JSONPath target, root-discriminated like @getField ("$" writes the
 // document and yields it, "$$" writes the subject and yields it). The
-// target is kept literal by the parser — in value position a "$"-rooted
-// string would be a read — so it arrives here as the path itself.
+// target is kept literal by the parser (in value position a "$"-rooted
+// string would be a read), so it arrives here as the path itself.
 type setFieldExpr struct{ binaryOp }
 
 func (e *setFieldExpr) Evaluate(ctx *expression.EvalContext) (any, error) {

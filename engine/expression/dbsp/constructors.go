@@ -28,7 +28,7 @@ func NewString(v string) Expression { return &stringExpr{operand: &constExpr{val
 
 // NewGetField creates a field-get expression. A "$"-rooted argument is
 // taken as the JSONPath it is; a bare field name F is canonicalized to the
-// JSONPath selecting the field literally named F — dot notation for plain
+// JSONPath selecting the field literally named F: dot notation for plain
 // names, bracket-quoted otherwise, so names containing dots (SQL-qualified
 // columns, Kubernetes label keys) stay single keys.
 func NewGetField(field string) Expression {

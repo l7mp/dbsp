@@ -9,7 +9,7 @@ import (
 )
 
 // isSecretDataPath reports whether a canonical $-rooted JSONPath addresses
-// a value under .data — both child forms: $.data.K and $["data"][...].
+// a value under .data, both child forms: $.data.K and $["data"][...].
 func isSecretDataPath(path string) bool {
 	return strings.HasPrefix(path, "$.data.") || strings.HasPrefix(path, `$["data"]`)
 }
