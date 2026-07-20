@@ -3,6 +3,7 @@ package aggregation
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // PipelineOp is a single pipeline stage serialized as {"@op": args}.
@@ -19,6 +20,20 @@ func (p PipelineOp) MarshalJSON() ([]byte, error) {
 }
 
 func (p *PipelineOp) UnmarshalJSON(data []byte) error {
+	// A bare string is a zero-argument stage: "@distinct" means
+	// {"@distinct": null}. Stage position is a closed grammar, so this
+	// never collides with string literals (those exist only in expression
+	// value position).
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		if !strings.HasPrefix(name, "@") {
+			return fmt.Errorf("pipeline op: bare stage name must start with @: %q", name)
+		}
+		p.Op = name
+		p.Args = json.RawMessage("null")
+		return nil
+	}
+
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"strings"
 )
 
 // marshalNullaryOp marshals a nullary operator as {"@op": null}.
@@ -224,7 +223,9 @@ func bareFloatRoundtrips(f float64) bool {
 func (e *floatExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
 // bareStringRoundtrips reports whether the bare JSON string s re-parses to
-// the same string constant.
+// the same string constant. The parser is the single authority on which
+// strings are read as paths or context shorthands; anything it would not
+// hand back verbatim must be escaped by the marshaler.
 func bareStringRoundtrips(s string) bool {
 	expr, err := NewParser().parseValue(s)
 	if err != nil {
@@ -262,7 +263,6 @@ func (e *listExpr) MarshalJSON() ([]byte, error) {
 }
 func (e *listExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
-// dictExpr: marshals as a bare JSON object {k: v, ...}.
 // dictExpr: marshals as a plain JSON object when that form re-parses as a
 // dict; a natural form the parser would read as something else (a single
 // "@"-prefixed key is an operator invocation) wraps in the explicit
@@ -281,35 +281,20 @@ func (e *dictExpr) MarshalJSON() ([]byte, error) {
 }
 func (e *dictExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
-// getExpr: marshals as "$.field" shorthand when the field is a constant string;
-// falls back to {"@get": <field>} for computed field names.
-func (e *getExpr) MarshalJSON() ([]byte, error) {
+// getFieldExpr: a constant path IS the shorthand form, so it marshals as
+// the bare rooted string ("$.field", "$$.field", "$[...]"); computed paths
+// fall back to the explicit {"@getField": <expr>} form.
+func (e *getFieldExpr) MarshalJSON() ([]byte, error) {
 	if c, ok := e.field.(*constExpr); ok {
 		if s, ok := c.value.(string); ok {
-			if strings.HasPrefix(s, "$") {
+			if _, _, rooted := splitPathRoot(s); rooted {
 				return json.Marshal(s)
 			}
-			return json.Marshal("$." + s)
 		}
 	}
-	return marshalUnaryOp("@get", e.field)
+	return marshalUnaryOp("@getField", e.field)
 }
-func (e *getExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
-
-// getSubExpr: marshals as "$$.field" shorthand when the field is a constant string;
-// falls back to {"@getsub": <field>} for computed field names.
-func (e *getSubExpr) MarshalJSON() ([]byte, error) {
-	if c, ok := e.field.(*constExpr); ok {
-		if s, ok := c.value.(string); ok {
-			if strings.HasPrefix(s, "$") {
-				return json.Marshal("$" + s)
-			}
-			return json.Marshal("$$." + s)
-		}
-	}
-	return marshalUnaryOp("@getsub", e.field)
-}
-func (e *getSubExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
+func (e *getFieldExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
 // condExpr: marshals as {"@cond": [cond, if-true, if-false]}.
 func (e *condExpr) MarshalJSON() ([]byte, error) {

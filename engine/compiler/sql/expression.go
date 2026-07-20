@@ -32,8 +32,8 @@ func compilePredicate(expr sqlparser.Expr, bindVars map[string]*querypb.BindVari
 		if err != nil {
 			return nil, err
 		}
-		leftIsNull := dbsp.NewIsNull(left)
-		rightIsNull := dbsp.NewIsNull(right)
+		leftIsNull := dbsp.NewIsNil(left)
+		rightIsNull := dbsp.NewIsNil(right)
 		leftIsFalse := dbsp.NewEq(left, dbsp.NewBool(false))
 		rightIsFalse := dbsp.NewEq(right, dbsp.NewBool(false))
 		falseExpr := dbsp.NewBool(false)
@@ -57,8 +57,8 @@ func compilePredicate(expr sqlparser.Expr, bindVars map[string]*querypb.BindVari
 		if err != nil {
 			return nil, err
 		}
-		leftIsNull := dbsp.NewIsNull(left)
-		rightIsNull := dbsp.NewIsNull(right)
+		leftIsNull := dbsp.NewIsNil(left)
+		rightIsNull := dbsp.NewIsNil(right)
 		leftIsTrue := dbsp.NewEq(left, dbsp.NewBool(true))
 		rightIsTrue := dbsp.NewEq(right, dbsp.NewBool(true))
 		trueExpr := dbsp.NewBool(true)
@@ -100,9 +100,9 @@ func compilePredicate(expr sqlparser.Expr, bindVars map[string]*querypb.BindVari
 		}
 		switch strings.ToLower(e.Operator) {
 		case "is null":
-			return dbsp.NewIsNull(inner), nil
+			return dbsp.NewIsNil(inner), nil
 		case "is not null":
-			return dbsp.NewNot(dbsp.NewIsNull(inner)), nil
+			return dbsp.NewNot(dbsp.NewIsNil(inner)), nil
 		default:
 			return nil, UnimplementedError{Feature: fmt.Sprintf("is expression %q", e.Operator)}
 		}
@@ -114,14 +114,14 @@ func compilePredicate(expr sqlparser.Expr, bindVars map[string]*querypb.BindVari
 }
 
 func compareWithNull(left, right, cmp dbsp.Expression) dbsp.Expression {
-	leftIsNull := dbsp.NewIsNull(left)
-	rightIsNull := dbsp.NewIsNull(right)
+	leftIsNull := dbsp.NewIsNil(left)
+	rightIsNull := dbsp.NewIsNil(right)
 	checkNull := dbsp.NewOr(leftIsNull, rightIsNull)
 	return dbsp.NewCond(checkNull, dbsp.NewNil(), cmp)
 }
 
 func sqlNot(expr dbsp.Expression) dbsp.Expression {
-	isNull := dbsp.NewIsNull(expr)
+	isNull := dbsp.NewIsNil(expr)
 	negated := dbsp.NewNot(expr)
 	return dbsp.NewCond(isNull, dbsp.NewNil(), negated)
 }
@@ -178,7 +178,7 @@ func compileExpr(expr sqlparser.Expr, bindVars map[string]*querypb.BindVariable)
 		if qualifier := e.Qualifier.Name.String(); qualifier != "" {
 			name = qualifier + "." + name
 		}
-		return dbsp.NewGet(name), nil
+		return dbsp.NewGetField(name), nil
 	case *sqlparser.ParenExpr:
 		return compileExpr(e.Expr, bindVars)
 	default:

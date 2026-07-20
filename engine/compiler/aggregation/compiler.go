@@ -284,7 +284,7 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 					return nil, fmt.Errorf("@join namespace: missing document")
 				}
 				return product.New(map[string]datamodel.Document{src: doc}), nil
-			}, dbspexpr.NewSet(dbspexpr.NewString(src), dbspexpr.NewCopy()))
+			}, dbspexpr.NewSetField(dbspexpr.NewConst(unstructured.ChildPath(src)), dbspexpr.NewCopy()))
 			if err := compiled.AddNode(circuit.Op(nsID, operator.NewProject(nsExpr))); err != nil {
 				return "", err
 			}
@@ -480,7 +480,7 @@ func wrapPredicateFieldNotFoundAsFalse(expr expression.Expression) expression.Ex
 func buildNamespaceProjection(names []string) expression.Expression {
 	originalEntries := make(map[string]expression.Expression, len(names))
 	for _, name := range names {
-		originalEntries[name] = dbspexpr.NewGet(name)
+		originalEntries[name] = dbspexpr.NewGetField(name)
 	}
 	original := dbspexpr.NewDict(originalEntries)
 
@@ -496,7 +496,7 @@ func buildNamespaceProjection(names []string) expression.Expression {
 func buildNamespaceProjectionWithNull(names []string, softName string) expression.Expression {
 	originalEntries := make(map[string]expression.Expression, len(names)+1)
 	for _, name := range names {
-		originalEntries[name] = dbspexpr.NewGet(name)
+		originalEntries[name] = dbspexpr.NewGetField(name)
 	}
 	originalEntries[softName] = dbspexpr.NewNil()
 	original := dbspexpr.NewDict(originalEntries)
@@ -517,7 +517,7 @@ func extractNamespaceParts(doc datamodel.Document, names []string) (map[string]d
 	}
 	parts := make(map[string]datamodel.Document, len(names))
 	for _, name := range names {
-		v, err := doc.GetField("$." + name)
+		v, err := doc.GetField(unstructured.ChildPath(name))
 		if err != nil {
 			if errors.Is(err, datamodel.ErrFieldNotFound) {
 				parts[name] = nil

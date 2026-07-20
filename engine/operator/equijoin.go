@@ -99,7 +99,7 @@ func marshalEquiJoin(typ, leftNS, rightNS string, leftKey, rightKey expression.E
 // canonically hashed. ok is false when the element cannot participate in the
 // join (missing namespace or unresolvable key).
 func joinKey(doc datamodel.Document, ns string, keyExpr expression.Expression) (string, bool, error) {
-	sub, err := doc.GetField("$." + ns)
+	sub, err := doc.GetField(unstructured.ChildPath(ns))
 	if err != nil {
 		if errors.Is(err, datamodel.ErrFieldNotFound) {
 			return "", false, nil

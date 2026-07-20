@@ -1,5 +1,11 @@
 package dbsp
 
+import (
+	"strings"
+
+	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
+)
+
 // Typed constructors for building expression trees programmatically.
 
 // NewNil creates a nil literal expression.
@@ -20,8 +26,17 @@ func NewFloat(v float64) Expression { return &floatExpr{operand: &constExpr{valu
 // NewString creates a string literal expression.
 func NewString(v string) Expression { return &stringExpr{operand: &constExpr{value: v}} }
 
-// NewGet creates a field-get expression from a literal field name.
-func NewGet(field string) Expression { return &getExpr{field: &constExpr{value: field}} }
+// NewGetField creates a field-get expression. A "$"-rooted argument is
+// taken as the JSONPath it is; a bare field name F is canonicalized to the
+// JSONPath selecting the field literally named F — dot notation for plain
+// names, bracket-quoted otherwise, so names containing dots (SQL-qualified
+// columns, Kubernetes label keys) stay single keys.
+func NewGetField(field string) Expression {
+	if !strings.HasPrefix(field, "$") {
+		field = unstructured.ChildPath(field)
+	}
+	return &getFieldExpr{field: &constExpr{value: field}}
+}
 
 // NewSubject creates an @subject expression.
 func NewSubject() Expression { return &subjectExpr{nullaryOp{"@subject"}} }
@@ -29,8 +44,11 @@ func NewSubject() Expression { return &subjectExpr{nullaryOp{"@subject"}} }
 // NewCopy creates an @copy expression.
 func NewCopy() Expression { return &copyExpr{nullaryOp{"@copy"}} }
 
-// NewSet creates a field-set expression.
-func NewSet(field, value Expression) Expression { return &setExpr{binaryOp{"@set", field, value}} }
+// NewSetField creates a field-set expression; the field expression must
+// evaluate to a $-rooted JSONPath.
+func NewSetField(field, value Expression) Expression {
+	return &setFieldExpr{binaryOp{"@setField", field, value}}
+}
 
 // NewList creates a list expression.
 func NewList(elems ...Expression) Expression { return &listExpr{elements: elems} }
@@ -100,8 +118,8 @@ func NewSortBy(compare, list Expression) Expression {
 	return &sortByExpr{binaryOp{"@sortBy", compare, list}}
 }
 
-// NewIsNull creates an is-null check expression.
-func NewIsNull(operand Expression) Expression { return &isNullExpr{unaryOp{"@isnull", operand}} }
+// NewIsNil creates a nil-check expression.
+func NewIsNil(operand Expression) Expression { return &isNilExpr{unaryOp{"@isnil", operand}} }
 
 // NewCond creates a conditional (if-then-else) expression.
 func NewCond(cond, ifTrue, ifFalse Expression) Expression {

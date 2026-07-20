@@ -90,7 +90,7 @@ func injectRegularizer(c *circuit.Circuit, output *circuit.Node) error {
 	}
 
 	regID := "_reg_" + output.ID
-	if err := c.AddNode(circuit.Op(regID, operator.NewProject(dbspexpr.NewLexMin(dbspexpr.NewGet("values"))))); err != nil {
+	if err := c.AddNode(circuit.Op(regID, operator.NewProject(dbspexpr.NewLexMin(dbspexpr.NewGetField("values"))))); err != nil {
 		return fmt.Errorf("regularizer: add lexmin project node: %w", err)
 	}
 

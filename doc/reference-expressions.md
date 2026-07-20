@@ -46,10 +46,21 @@ inside operators such as `@map`, `@filter`, and `@sortBy`.
 - `"$."` means copy the whole current document.
 - `"$$."` means return the current subject itself.
 
-The `"$."`, `"$$."`, `$$.field`, and related subject-aware forms are part of the surface syntax of
-the language. Internally they compile to operators such as `@copy`, `@subject`, `@getsub`, and
-`@setsub`, but in user-facing expressions the shorthand forms are usually the clearest way to write
-them.
+The `"$."`, `"$$."`, `$.field`, `$$.field` and related forms are part of the surface syntax of
+the language. Internally they compile to `@copy`, `@subject` and `@getField`, but in user-facing
+expressions the shorthand forms are usually the clearest way to write them.
+
+Path resolution has exactly one semantics: JSONPath. A string is either a pure literal (no `$`
+root, never interpreted as a path) or a `$`-rooted JSONPath evaluated by the standard evaluator;
+this holds for the shorthand forms and for the explicit path operators alike, so
+`{"@getField": "$.spec.replicas"}` is valid and `{"@getField": "spec.replicas"}` is a compile
+error. A dot in a path always traverses; map keys that themselves contain dots (Kubernetes labels,
+annotations, Secret data keys) are addressed with bracket syntax, e.g. `$["data"]["tls.crt"]`.
+Subject paths follow the identical rule on the `$$.` root: `$$.a.address` reads `address` inside
+the subject's `a` field (how a `@sortBy` comparator addresses its two candidates), and
+`$$["a.b"]` addresses a literal dotted key on the subject. The `@setField` *target* is
+kept literal by the parser for the same reason a `$`-rooted string in value position is a read:
+it is a path by the operator's contract, and it must carry its root like every other path.
 
 This is the most important thing to keep in mind when reading pipelines.
 
@@ -72,13 +83,13 @@ Supported constructors are `@nil`, `@bool`, `@int`, `@float`, `@string`, `@list`
 
 ### `@nil`
 
-Produces `null`.
+Produces `null`. A plain JSON/YAML `null` literal already parses to it, so in practice you write
+`null` directly, e.g. as a `@cond`/`@switch` branch, or as a field value that protojson should
+treat as unset:
 
 ```yaml
-"@nil": null
+"@cond": [{"@eq": ["$.protocol", "UDP"]}, "UDP", null]
 ```
-
-Use this when you want an explicit null branch in `@cond` or `@switch`.
 
 ### `@bool`, `@int`, `@float`, `@string`
 
@@ -154,6 +165,12 @@ typedConfig:
   "@literal":
     "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 ```
+
+Two notes on when you actually need it. A `"@type"` key only collides when it is the *single* key
+of a map (single-key `@`-maps are parsed as operator invocations); in a map with two or more keys
+it is a plain dictionary key and needs no escape. And since `@literal` swallows its argument whole,
+nothing inside it can be dynamic; mix literal and computed parts by merging separate fragments in
+a sequential `@project` instead (see the aggregation reference).
 
 ## Logical and conditional operators
 
@@ -350,21 +367,31 @@ String ordering is lexicographic, which is mostly useful in sorting logic.
 
 These operators read and write values in the current document or the current subject.
 
-### `@get` and `$.field`
+### `@getField`, `$.field` and `$$.field`
 
-Read a field from the current document.
+Read a field through a $-rooted JSONPath. The root selects the source: `$` reads the current
+document, `$$` reads the current subject (the element under iteration in `@map`/`@filter`/
+`@sortBy`).
 
 ```yaml
 "$.metadata.name"
 ```
 
-This is by far the most common form. The explicit version is:
-
 ```yaml
-"@get": "metadata.name"
+"@map":
+  - "$$.port"
+  - "$.spec.ports"
 ```
 
-When the path itself needs quoting, use bracket notation.
+The shorthand strings are by far the most common form; both compile to `@getField`. The explicit
+form takes the same rooted path (a bare field name is a compile error, not a path) and is the form
+to use when the path itself is computed:
+
+```yaml
+"@getField": "$.metadata.name"
+```
+
+When a key needs quoting (dots inside key names), use bracket notation.
 
 ```yaml
 "$[\"metadata\"][\"labels\"][\"app\"]"
@@ -382,29 +409,24 @@ Use this when you want to pass the original object through or start from a full 
 new fields. The explicit `@copy` form exists in the implementation, but the `"$."` shorthand is the
 form you should normally write in user-facing pipelines.
 
-### `@set`
+### `@setField`
 
-Mutates the current document by setting a field, then returns the modified document.
+Write a field through a $-rooted JSONPath target, root-discriminated exactly like `@getField`:
+a `$`-rooted target mutates the current document and returns it, a `$$`-rooted target mutates the
+current subject and returns it.
 
 ```yaml
-"@set": ["metadata.annotations.checked", true]
+"@setField": ["$.metadata.annotations.checked", true]
 ```
-
-Intuitively, this is an in-place annotation write on the current record.
-
-### `$$.field` and internal `@getsub`
-
-Read from the current subject instead of the main document.
 
 ```yaml
 "@map":
-  - "$$.port"
+  - {"@setField": ["$$.protocolSeen", true]}
   - "$.spec.ports"
 ```
 
-The document gives the list of ports, and `$$.port` reads the `port` field from each individual port
-object while iterating. Internally this is implemented by `@getsub`, but the shorthand is the
-natural surface syntax.
+The target stays literal (the parser never evaluates it): it is a path by the operator's
+contract, and in value position a `$`-rooted string would be a read.
 
 ### `"$$."` and internal `@subject`
 
@@ -419,27 +441,14 @@ Return the current subject itself.
 This is the identity mapping over the subject list. Internally this is represented as `@subject`,
 but in user-facing expressions the `"$$."` shorthand is preferred.
 
-### `@setsub`
-
-Mutates the current subject and returns it.
-
-```yaml
-"@map":
-  - {"@setsub": ["protocolSeen", true]}
-  - "$.spec.ports"
-```
-
-This is useful when the subject is already the object you want to enrich inside a list traversal.
-Unlike `@copy` and `@subject`, `@setsub` is not just an internal implementation detail: it is part
-of the current expression language and may be written explicitly when needed.
-
 ### `@exists`
 
-Checks whether a field resolves successfully. A `$$`-prefixed path tests the subject (the element
-under iteration in `@map`/`@filter`); every other path tests the document.
+Checks whether a field resolves successfully. Like every path argument, the field is
+root-discriminated: a `$$`-rooted path tests the subject (the element under iteration in
+`@map`/`@filter`), a `$`-rooted path tests the document, and anything else is an error.
 
 ```yaml
-"@exists": "metadata.labels.tier"
+"@exists": "$.metadata.labels.tier"
 ```
 
 ```yaml
@@ -639,16 +648,13 @@ This is the standard way to build annotation values, derived names, or log keys.
 
 These cover null checks, SQL-like truth handling, and a few helper functions.
 
-### `@isnull` and `@isnil`
+### `@isnil`
 
-Both check whether a value is null.
+Checks whether a value is null.
 
 ```yaml
-"@isnull": "$.metadata.annotations.owner"
 "@isnil": "$.metadata.annotations.owner"
 ```
-
-In the current implementation they are effectively the same kind of null test.
 
 ### `@sqlbool`
 
@@ -662,13 +668,12 @@ This is useful when a nullable expression feeds a strict boolean operator.
 
 ### `@noop`
 
-Returns `null` and does nothing.
+Returns `null` and does nothing: a placeholder when an operator invocation is syntactically
+required. In value position a plain `null` is usually what you want instead.
 
 ```yaml
 "@noop": null
 ```
-
-This is a placeholder branch result when you want “no value” explicitly.
 
 ### `@hash`
 

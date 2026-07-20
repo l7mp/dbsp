@@ -298,7 +298,7 @@ var _ = Describe("Operators", func() {
 
 	Describe("GroupBy", func() {
 		It("supports list grouping with values and documents output", func() {
-			op := NewGroupBy(dbspexpr.NewGet("id"), dbspexpr.NewGet("value"))
+			op := NewGroupBy(dbspexpr.NewGetField("id"), dbspexpr.NewGetField("value"))
 
 			r1 := testutils.Record{ID: "ns-a", Value: 1}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}
@@ -326,7 +326,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("supports distinct mode", func() {
-			op := NewGroupBy(dbspexpr.NewGet("id"), dbspexpr.NewGet("value")).WithDistinct(true)
+			op := NewGroupBy(dbspexpr.NewGetField("id"), dbspexpr.NewGetField("value")).WithDistinct(true)
 
 			r1 := testutils.Record{ID: "ns-a", Value: 2}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}
@@ -351,7 +351,7 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("is idempotent on full-state inputs", func() {
-			op := NewGroupBy(dbspexpr.NewGet("id"), dbspexpr.NewGet("value"))
+			op := NewGroupBy(dbspexpr.NewGetField("id"), dbspexpr.NewGetField("value"))
 
 			r1 := testutils.Record{ID: "ns-a", Value: 1}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}
@@ -370,7 +370,7 @@ var _ = Describe("Operators", func() {
 
 	Describe("GroupByIncremental", func() {
 		It("emits differential updates", func() {
-			op := NewGroupByIncremental(dbspexpr.NewGet("id"), dbspexpr.NewGet("value"))
+			op := NewGroupByIncremental(dbspexpr.NewGetField("id"), dbspexpr.NewGetField("value"))
 
 			r1 := testutils.Record{ID: "ns-a", Value: 1}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}
@@ -390,15 +390,15 @@ var _ = Describe("Operators", func() {
 		})
 
 		It("has primitive linearity", func() {
-			op := NewGroupByIncremental(dbspexpr.NewGet("id"), dbspexpr.NewGet("value"))
+			op := NewGroupByIncremental(dbspexpr.NewGetField("id"), dbspexpr.NewGetField("value"))
 			Expect(op.Kind()).To(Equal(KindGroupByIncremental))
 			Expect(op.Arity()).To(Equal(1))
 			Expect(op.Linearity()).To(Equal(Primitive))
 		})
 
 		It("matches old/new bucket materialization diff invariant", func() {
-			incr := NewGroupByIncremental(dbspexpr.NewGet("id"), dbspexpr.NewGet("value"))
-			sotw := NewGroupBy(dbspexpr.NewGet("id"), dbspexpr.NewGet("value"))
+			incr := NewGroupByIncremental(dbspexpr.NewGetField("id"), dbspexpr.NewGetField("value"))
+			sotw := NewGroupBy(dbspexpr.NewGetField("id"), dbspexpr.NewGetField("value"))
 
 			r1 := testutils.Record{ID: "ns-a", Value: 1}
 			r2 := testutils.Record{ID: "ns-a", Value: 2}

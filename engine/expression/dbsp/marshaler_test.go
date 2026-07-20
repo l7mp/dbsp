@@ -63,15 +63,15 @@ var _ = Describe("JSON round-trip", func() {
 			Expect(j2).To(Equal(j1))
 		})
 
-		It("@float integral value keeps the explicit form", func() {
-			j1, j2 := stableJSON(dbsp.NewFloat(1))
-			Expect(j1).To(Equal(`{"@float":1}`))
-			Expect(j2).To(Equal(j1))
-		})
-
 		It("@string plain", func() {
 			j1, j2 := stableJSON(dbsp.NewString("hello"))
 			Expect(j1).To(Equal(`"hello"`))
+			Expect(j2).To(Equal(j1))
+		})
+
+		It("@float integral value keeps the explicit form", func() {
+			j1, j2 := stableJSON(dbsp.NewFloat(1))
+			Expect(j1).To(Equal(`{"@float":1}`))
 			Expect(j2).To(Equal(j1))
 		})
 
@@ -116,13 +116,13 @@ var _ = Describe("JSON round-trip", func() {
 		})
 
 		It("@get", func() {
-			j1, j2 := stableJSON(dbsp.NewGet("fieldname"))
+			j1, j2 := stableJSON(dbsp.NewGetField("fieldname"))
 			Expect(j1).To(Equal(`"$.fieldname"`))
 			Expect(j2).To(Equal(j1))
 		})
 
 		It("@get bracketed JSONPath", func() {
-			j1, j2 := stableJSON(dbsp.NewGet(`$["fieldname"]`))
+			j1, j2 := stableJSON(dbsp.NewGetField(`$["fieldname"]`))
 			Expect(j1).To(Equal(`"$[\"fieldname\"]"`))
 			Expect(j2).To(Equal(j1))
 		})
@@ -182,44 +182,44 @@ var _ = Describe("JSON round-trip", func() {
 		})
 
 		It("@eq", func() {
-			j1, j2 := stableJSON(dbsp.NewEq(dbsp.NewGet("x"), dbsp.NewInt(1)))
+			j1, j2 := stableJSON(dbsp.NewEq(dbsp.NewGetField("x"), dbsp.NewInt(1)))
 			Expect(j1).To(Equal(`{"@eq":["$.x",1]}`))
 			Expect(j2).To(Equal(j1))
 		})
 
 		It("@neq", func() {
-			j1, j2 := stableJSON(dbsp.NewNeq(dbsp.NewGet("x"), dbsp.NewInt(0)))
+			j1, j2 := stableJSON(dbsp.NewNeq(dbsp.NewGetField("x"), dbsp.NewInt(0)))
 			Expect(j1).To(Equal(`{"@neq":["$.x",0]}`))
 			Expect(j2).To(Equal(j1))
 		})
 
 		It("@gt", func() {
-			j1, j2 := stableJSON(dbsp.NewGt(dbsp.NewGet("age"), dbsp.NewInt(18)))
+			j1, j2 := stableJSON(dbsp.NewGt(dbsp.NewGetField("age"), dbsp.NewInt(18)))
 			Expect(j1).To(Equal(`{"@gt":["$.age",18]}`))
 			Expect(j2).To(Equal(j1))
 		})
 
 		It("@gte", func() {
-			j1, j2 := stableJSON(dbsp.NewGte(dbsp.NewGet("age"), dbsp.NewInt(18)))
+			j1, j2 := stableJSON(dbsp.NewGte(dbsp.NewGetField("age"), dbsp.NewInt(18)))
 			Expect(j1).To(Equal(`{"@gte":["$.age",18]}`))
 			Expect(j2).To(Equal(j1))
 		})
 
 		It("@lt", func() {
-			j1, j2 := stableJSON(dbsp.NewLt(dbsp.NewGet("age"), dbsp.NewInt(65)))
+			j1, j2 := stableJSON(dbsp.NewLt(dbsp.NewGetField("age"), dbsp.NewInt(65)))
 			Expect(j1).To(Equal(`{"@lt":["$.age",65]}`))
 			Expect(j2).To(Equal(j1))
 		})
 
 		It("@lte", func() {
-			j1, j2 := stableJSON(dbsp.NewLte(dbsp.NewGet("age"), dbsp.NewInt(65)))
+			j1, j2 := stableJSON(dbsp.NewLte(dbsp.NewGetField("age"), dbsp.NewInt(65)))
 			Expect(j1).To(Equal(`{"@lte":["$.age",65]}`))
 			Expect(j2).To(Equal(j1))
 		})
 
-		It("@isnull", func() {
-			j1, j2 := stableJSON(dbsp.NewIsNull(dbsp.NewGet("field")))
-			Expect(j1).To(Equal(`{"@isnull":"$.field"}`))
+		It("@isnil", func() {
+			j1, j2 := stableJSON(dbsp.NewIsNil(dbsp.NewGetField("field")))
+			Expect(j1).To(Equal(`{"@isnil":"$.field"}`))
 			Expect(j2).To(Equal(j1))
 		})
 
@@ -234,7 +234,7 @@ var _ = Describe("JSON round-trip", func() {
 		})
 
 		It("@sqlbool", func() {
-			j1, j2 := stableJSON(dbsp.NewSqlBool(dbsp.NewGet("flag")))
+			j1, j2 := stableJSON(dbsp.NewSqlBool(dbsp.NewGetField("flag")))
 			Expect(j1).To(Equal(`{"@sqlbool":"$.flag"}`))
 			Expect(j2).To(Equal(j1))
 		})
@@ -242,7 +242,7 @@ var _ = Describe("JSON round-trip", func() {
 		It("nested expression", func() {
 			// @add($.x, @neg(1))
 			j1, j2 := stableJSON(dbsp.NewAdd(
-				dbsp.NewGet("x"),
+				dbsp.NewGetField("x"),
 				dbsp.NewNeg(dbsp.NewInt(1)),
 			))
 			Expect(j1).To(Equal(`{"@add":["$.x",{"@neg":1}]}`))
@@ -260,19 +260,19 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@bool false", `false`),
 			Entry("@int", `42`),
 			Entry("@float", `3.14`),
-			Entry("@float integral stays explicit", `{"@float":1}`),
 			Entry("@string plain", `"hello"`),
 			Entry("@string of a field read", `{"@string":"$.path"}`),
 			Entry("@string $.path literal escapes through @literal", `{"@string":{"@literal":"$.path"}}`),
 			Entry("@string $$.path literal escapes through @literal", `{"@string":{"@literal":"$$.path"}}`),
+			Entry("@float integral stays explicit", `{"@float":1}`),
+			Entry("@dict single @-key stays explicit", `{"@dict":{"@type":"x"}}`),
 			Entry("@list", `[1,2]`),
 			Entry("@list empty", `[]`),
-			Entry("@get", `"$.fieldname"`),
-			Entry("@getsub", `"$$.fieldname"`),
+			Entry("@getField document", `"$.fieldname"`),
+			Entry("@getField subject", `"$$.fieldname"`),
 			Entry("@get bracketed JSONPath", `"$[\"fieldname\"]"`),
-			Entry("@getsub bracketed JSONPath", `"$$[\"fieldname\"]"`),
+			Entry("@getField subject bracketed JSONPath", `"$$[\"fieldname\"]"`),
 			Entry("@dict plain", `{"key":1}`),
-			Entry("@dict single @-key stays explicit", `{"@dict":{"@type":"x"}}`),
 			Entry("@add binary", `{"@add":[1,2]}`),
 			Entry("@add variadic", `{"@add":[1,2,3]}`),
 			Entry("@sub", `{"@sub":[5,3]}`),
@@ -290,14 +290,14 @@ var _ = Describe("JSON round-trip", func() {
 			Entry("@gte", `{"@gte":["$.age",18]}`),
 			Entry("@lt", `{"@lt":["$.age",65]}`),
 			Entry("@lte", `{"@lte":["$.age",65]}`),
-			Entry("@isnull", `{"@isnull":"$.field"}`),
+			Entry("@isnil", `{"@isnil":"$.field"}`),
 			Entry("@cond", `{"@cond":[true,1,0]}`),
 			Entry("@switch", `{"@switch":[[true,1],[false,0]]}`),
 			Entry("@definedOr", `{"@definedOr":["$.a","$.b"]}`),
 			Entry("@sqlbool", `{"@sqlbool":"$.flag"}`),
-			Entry("@set", `{"@set":["field",42]}`),
-			Entry("@setsub", `{"@setsub":["field",42]}`),
-			Entry("@exists", `{"@exists":"field"}`),
+			Entry("@setField document", `{"@setField":["$.field",42]}`),
+			Entry("@setField subject", `{"@setField":["$$.field",42]}`),
+			Entry("@exists", `{"@exists":"$.field"}`),
 			Entry("@regexp", `{"@regexp":["^foo","$.name"]}`),
 			Entry("@upper", `{"@upper":"$.name"}`),
 			Entry("@lower", `{"@lower":"$.name"}`),
@@ -355,15 +355,15 @@ var _ = Describe("JSON round-trip", func() {
 		})
 
 		It("explicit @get form also parses (normalises to natural form)", func() {
-			Expect(canonicalJSON(`{"@get":"fieldname"}`)).To(Equal(`"$.fieldname"`))
+			Expect(canonicalJSON(`{"@getField":"$.fieldname"}`)).To(Equal(`"$.fieldname"`))
 		})
 
 		It("explicit @get bracketed JSONPath also parses", func() {
-			Expect(canonicalJSON(`{"@get":"$[\"fieldname\"]"}`)).To(Equal(`"$[\"fieldname\"]"`))
+			Expect(canonicalJSON(`{"@getField":"$[\"fieldname\"]"}`)).To(Equal(`"$[\"fieldname\"]"`))
 		})
 
-		It("explicit @getsub bracketed JSONPath also parses", func() {
-			Expect(canonicalJSON(`{"@getsub":"$[\"fieldname\"]"}`)).To(Equal(`"$$[\"fieldname\"]"`))
+		It("explicit subject bracketed JSONPath also parses", func() {
+			Expect(canonicalJSON(`{"@getField":"$$[\"fieldname\"]"}`)).To(Equal(`"$$[\"fieldname\"]"`))
 		})
 	})
 
@@ -393,7 +393,7 @@ var _ = Describe("JSON round-trip", func() {
 		})
 
 		It("marshals @list with nested @get expressions", func() {
-			expr, err := dbsp.CompileString(`[{"@get":"a"},{"@get":"b"}]`)
+			expr, err := dbsp.CompileString(`[{"@getField":"$.a"},{"@getField":"$.b"}]`)
 			Expect(err).NotTo(HaveOccurred())
 			b, err := json.Marshal(expr)
 			Expect(err).NotTo(HaveOccurred())
@@ -401,7 +401,7 @@ var _ = Describe("JSON round-trip", func() {
 		})
 
 		It("marshals @dict with nested expressions", func() {
-			expr, err := dbsp.CompileString(`{"name":{"@get":"fullname"},"age":30}`)
+			expr, err := dbsp.CompileString(`{"name":{"@getField":"$.fullname"},"age":30}`)
 			Expect(err).NotTo(HaveOccurred())
 			b, err := json.Marshal(expr)
 			Expect(err).NotTo(HaveOccurred())

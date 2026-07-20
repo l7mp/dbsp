@@ -40,10 +40,6 @@ func (d *TestDoc) Hash() string {
 	return "key"
 }
 
-func (d *TestDoc) PrimaryKey() (string, error) {
-	return "pk", nil
-}
-
 func (d *TestDoc) Copy() datamodel.Document {
 	newFields := make(map[string]any, len(d.fields))
 	for k, v := range d.fields {
@@ -86,7 +82,9 @@ func (d *TestDoc) GetField(key string) (any, error) {
 }
 
 func (d *TestDoc) SetField(key string, value any) error {
-	d.fields[key] = value
+	// TestDoc is a flat map document: the canonical "$."-rooted path names
+	// a top-level field.
+	d.fields[strings.TrimPrefix(key, "$.")] = value
 	return nil
 }
 
@@ -190,6 +188,32 @@ var _ = Describe("Literal Operators", func() {
 		result, err := expr.Evaluate(expression.NewContext(nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal([]any{int64(1), int64(2), int64(3)}))
+	})
+
+	It("should evaluate @literal verbatim, without interpretation", func() {
+		expr, err := dbsp.Compile([]byte(
+			`{"@literal": {"@type": "type.googleapis.com/T", "path": "$.not.a.path"}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(map[string]any{
+			"@type": "type.googleapis.com/T",
+			"path":  "$.not.a.path",
+		}))
+	})
+
+	It("should deep-copy @literal results per evaluation", func() {
+		expr, err := dbsp.Compile([]byte(`{"@literal": {"a": [1]}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		first, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		first.(map[string]any)["a"] = "mutated"
+
+		second, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(second).To(Equal(map[string]any{"a": []any{float64(1)}}))
 	})
 
 	It("should evaluate @list with nested expressions", func() {
@@ -419,7 +443,7 @@ var _ = Describe("Field Operators", func() {
 	})
 
 	It("should evaluate @get", func() {
-		expr, err := dbsp.Compile([]byte(`{"@get": "name"}`))
+		expr, err := dbsp.Compile([]byte(`{"@getField": "$.name"}`))
 		Expect(err).NotTo(HaveOccurred())
 
 		result, err := expr.Evaluate(expression.NewContext(doc))
@@ -466,70 +490,12 @@ var _ = Describe("Field Operators", func() {
 	})
 
 	It("should return error for missing field", func() {
-		expr, err := dbsp.Compile([]byte(`{"@get": "missing"}`))
+		expr, err := dbsp.Compile([]byte(`{"@getField": "$.missing"}`))
 		Expect(err).NotTo(HaveOccurred())
 
 		_, err = expr.Evaluate(expression.NewContext(doc))
 		Expect(err).To(HaveOccurred())
 		Expect(err).To(MatchError(datamodel.ErrFieldNotFound))
-	})
-
-	It("should evaluate @exists for existing field", func() {
-		expr, err := dbsp.Compile([]byte(`{"@exists": "name"}`))
-		Expect(err).NotTo(HaveOccurred())
-
-		result, err := expr.Evaluate(expression.NewContext(doc))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal(true))
-	})
-
-	It("should evaluate @exists for missing field", func() {
-		expr, err := dbsp.Compile([]byte(`{"@exists": "missing"}`))
-		Expect(err).NotTo(HaveOccurred())
-
-		result, err := expr.Evaluate(expression.NewContext(doc))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal(false))
-	})
-
-	It("should evaluate @exists against the subject in list context", func() {
-		expr, err := dbsp.Compile([]byte(
-			`{"@filter": [{"@exists": "$$.filters"}, "$.rules"]}`))
-		Expect(err).NotTo(HaveOccurred())
-
-		rulesDoc := unstructured.New(map[string]any{
-			"rules": []any{
-				map[string]any{"backendRefs": []any{}},
-				map[string]any{"filters": []any{"x"}},
-			},
-		})
-		result, err := expr.Evaluate(expression.NewContext(rulesDoc))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal([]any{map[string]any{"filters": []any{"x"}}}))
-	})
-
-	It("should evaluate @exists on nested subject paths", func() {
-		expr, err := dbsp.Compile([]byte(
-			`{"@filter": [{"@exists": "$$.a.b"}, "$.items"]}`))
-		Expect(err).NotTo(HaveOccurred())
-
-		itemsDoc := unstructured.New(map[string]any{
-			"items": []any{
-				map[string]any{"a": map[string]any{"b": 1}},
-				map[string]any{"a": map[string]any{"c": 2}},
-			},
-		})
-		result, err := expr.Evaluate(expression.NewContext(itemsDoc))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal([]any{map[string]any{"a": map[string]any{"b": 1}}}))
-	})
-
-	It("should propagate @exists errors instead of answering true", func() {
-		expr, err := dbsp.Compile([]byte(`{"@exists": "$[invalid"}`))
-		Expect(err).NotTo(HaveOccurred())
-
-		_, err = expr.Evaluate(expression.NewContext(doc))
-		Expect(err).To(HaveOccurred())
 	})
 
 	It("should evaluate @string arguments like every converter", func() {
@@ -641,34 +607,76 @@ var _ = Describe("Field Operators", func() {
 		Expect(result).To(Equal(int64(1)))
 	})
 
-	It("should evaluate @literal verbatim, without interpretation", func() {
-		expr, err := dbsp.Compile([]byte(
-			`{"@literal": {"@type": "type.googleapis.com/T", "path": "$.not.a.path"}}`))
+	It("should evaluate @exists for existing field", func() {
+		expr, err := dbsp.Compile([]byte(`{"@exists": "$.name"}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		result, err := expr.Evaluate(expression.NewContext(nil))
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal(map[string]any{
-			"@type": "type.googleapis.com/T",
-			"path":  "$.not.a.path",
-		}))
+		Expect(result).To(Equal(true))
 	})
 
-	It("should deep-copy @literal results per evaluation", func() {
-		expr, err := dbsp.Compile([]byte(`{"@literal": {"a": [1]}}`))
+	It("should evaluate @exists for missing field", func() {
+		expr, err := dbsp.Compile([]byte(`{"@exists": "$.missing"}`))
 		Expect(err).NotTo(HaveOccurred())
 
-		first, err := expr.Evaluate(expression.NewContext(nil))
+		result, err := expr.Evaluate(expression.NewContext(doc))
 		Expect(err).NotTo(HaveOccurred())
-		first.(map[string]any)["a"] = "mutated"
+		Expect(result).To(Equal(false))
+	})
 
-		second, err := expr.Evaluate(expression.NewContext(nil))
+	It("should evaluate @exists against the subject in list context", func() {
+		expr, err := dbsp.Compile([]byte(
+			`{"@filter": [{"@exists": "$$.filters"}, "$.rules"]}`))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(second).To(Equal(map[string]any{"a": []any{float64(1)}}))
+
+		rulesDoc := unstructured.New(map[string]any{
+			"rules": []any{
+				map[string]any{"backendRefs": []any{}},
+				map[string]any{"filters": []any{"x"}},
+			},
+		})
+		result, err := expr.Evaluate(expression.NewContext(rulesDoc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{map[string]any{"filters": []any{"x"}}}))
+	})
+
+	It("should evaluate @exists on nested subject paths", func() {
+		expr, err := dbsp.Compile([]byte(
+			`{"@filter": [{"@exists": "$$.a.b"}, "$.items"]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		itemsDoc := unstructured.New(map[string]any{
+			"items": []any{
+				map[string]any{"a": map[string]any{"b": 1}},
+				map[string]any{"a": map[string]any{"c": 2}},
+			},
+		})
+		result, err := expr.Evaluate(expression.NewContext(itemsDoc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{map[string]any{"a": map[string]any{"b": 1}}}))
+	})
+
+	It("should reject malformed constant paths at compile time", func() {
+		_, err := dbsp.Compile([]byte(`{"@getField": "$.a["}`))
+		Expect(err).To(MatchError(ContainSubstring("invalid JSONPath")))
+
+		_, err = dbsp.Compile([]byte(`{"@exists": "$$.a["}`))
+		Expect(err).To(MatchError(ContainSubstring("invalid JSONPath")))
+	})
+
+	It("should propagate @exists errors instead of answering true", func() {
+		// A computed path escapes compile-time validation; a malformed one
+		// must still surface as an error at evaluation.
+		expr, err := dbsp.Compile([]byte(`{"@exists": {"@concat": [{"@literal": "$["}, "invalid"]}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = expr.Evaluate(expression.NewContext(doc))
+		Expect(err).To(HaveOccurred())
 	})
 
 	It("should evaluate @set", func() {
-		expr, err := dbsp.Compile([]byte(`{"@set": ["newField", 42]}`))
+		expr, err := dbsp.Compile([]byte(`{"@setField": ["$.newField", 42]}`))
 		Expect(err).NotTo(HaveOccurred())
 
 		result, err := expr.Evaluate(expression.NewContext(doc))
@@ -677,7 +685,7 @@ var _ = Describe("Field Operators", func() {
 		Expect(result).To(Equal(doc))
 
 		// Verify field was set on the document.
-		v, _ := doc.GetField("newField")
+		v, _ := doc.GetField("$.newField")
 		Expect(v).To(Equal(int64(42)))
 	})
 
@@ -722,7 +730,7 @@ var _ = Describe("Field Operators", func() {
 
 	It("should evaluate @setsub", func() {
 		subject := map[string]any{"name": "pod-a"}
-		expr, err := dbsp.Compile([]byte(`{"@setsub": ["seen", true]}`))
+		expr, err := dbsp.Compile([]byte(`{"@setField": ["$$.seen", true]}`))
 		Expect(err).NotTo(HaveOccurred())
 
 		result, err := expr.Evaluate(expression.NewContext(nil).WithSubject(subject))
@@ -874,6 +882,57 @@ var _ = Describe("List Operators", func() {
 		Expect(result).To(Equal([]any{int64(1), int64(1), int64(3), int64(4), int64(5), int64(9)}))
 	})
 
+	It("should resolve nested subject paths in a @sortBy comparator", func() {
+		expr, err := dbsp.Compile([]byte(`{"@sortBy": [
+			{"@switch": [
+				[{"@lt": ["$$.a.address", "$$.b.address"]}, -1],
+				[{"@gt": ["$$.a.address", "$$.b.address"]}, 1],
+				[{"@lt": ["$$.a.port", "$$.b.port"]}, -1],
+				[{"@gt": ["$$.a.port", "$$.b.port"]}, 1],
+				[true, 0]
+			]},
+			[
+				{"address": "b", "port": 2},
+				{"address": "a", "port": 9},
+				{"address": "b", "port": 1}
+			]
+		]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{
+			map[string]any{"address": "a", "port": int64(9)},
+			map[string]any{"address": "b", "port": int64(1)},
+			map[string]any{"address": "b", "port": int64(2)},
+		}))
+	})
+
+	It("should resolve map subjects exactly like document paths", func() {
+		// A dot in a path always traverses; a literal dotted key never
+		// shadows the nested field and is reachable only via brackets.
+		expr, err := dbsp.Compile([]byte(`{"@map": [
+			{"@getField": "$$.x.y"},
+			[{"x.y": "literal", "x": {"y": "nested"}}, {"x": {"y": "nested"}}]
+		]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{"nested", "nested"}))
+
+		// JSONPath subject forms address literal dotted keys (@exists too).
+		expr, err = dbsp.Compile([]byte(`{"@filter": [
+			{"@exists": "$$[\"a.b\"]"},
+			[{"a.b": 1}, {"a": {"b": 2}}]
+		]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err = expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{map[string]any{"a.b": int64(1)}}))
+	})
+
 	It("should return error when @sortBy comparator does not return -1, 0 or 1", func() {
 		expr, err := dbsp.Compile([]byte(`{"@sortBy": [{"@add": ["$$.a", "$$.b"]}, [2, 1]]}`))
 		Expect(err).NotTo(HaveOccurred())
@@ -916,7 +975,7 @@ var _ = Describe("Conditional Operators", func() {
 
 var _ = Describe("Null And SQL Boolean Operators", func() {
 	It("should evaluate @isnull", func() {
-		expr, err := dbsp.Compile([]byte(`{"@isnull": null}`))
+		expr, err := dbsp.Compile([]byte(`{"@isnil": null}`))
 		Expect(err).NotTo(HaveOccurred())
 
 		result, err := expr.Evaluate(expression.NewContext(nil))

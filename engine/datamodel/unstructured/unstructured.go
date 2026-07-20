@@ -162,6 +162,20 @@ func parsePath(key string) (jp.Expr, error) {
 	return expr, nil
 }
 
+// ChildPath returns the canonical $-rooted JSONPath selecting the child
+// named by each element of names in turn, treating every name as a literal
+// key: plain names render in dot notation, anything else (dots, quotes,
+// spaces) renders in bracket form, so a composed path never re-interprets a
+// name as traversal. The rendering comes from the JSONPath library itself
+// and roundtrips through its parser.
+func ChildPath(names ...string) string {
+	x := jp.R()
+	for _, name := range names {
+		x = x.C(name)
+	}
+	return x.String()
+}
+
 // SetField sets the value for a field path, resolved with the same JSONPath
 // semantics as GetField; missing intermediate maps are created.
 func (u *Unstructured) SetField(key string, value any) error {

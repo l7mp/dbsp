@@ -588,11 +588,11 @@ var _ = Describe("Fixed-Point Circuits", func() {
 			incrCircuit := circuit.New("dk-incr")
 			incrCircuit.AddNode(circuit.Input("delta"))
 			incrCircuit.AddNode(circuit.Op("A", operator.NewGroupByIncremental(
-				dbspexpr.NewGet("id"),
+				dbspexpr.NewGetField("id"),
 				expression.Func(func(ctx *expression.EvalContext) (any, error) {
 					return ctx.Subject(), nil
 				}))))
-			incrCircuit.AddNode(circuit.Op("B", operator.NewProject(dbspexpr.NewLexMin(dbspexpr.NewGet("values")))))
+			incrCircuit.AddNode(circuit.Op("B", operator.NewProject(dbspexpr.NewLexMin(dbspexpr.NewGetField("values")))))
 			incrCircuit.AddNode(circuit.Output("out"))
 
 			incrCircuit.AddEdge(circuit.NewEdge("delta", "A", 0))

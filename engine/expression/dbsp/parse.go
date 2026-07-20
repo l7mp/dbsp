@@ -30,6 +30,26 @@ func (p *Parser) Parse(data []byte) (Expression, error) {
 	return p.parseValue(raw)
 }
 
+// splitPathRoot recognizes a rooted path: a "$" (document) or "$$"
+// (subject) root followed by a child selector ("." or "["). It returns the
+// root and the "$"-rooted JSONPath addressing the field within that
+// context; ok is false for anything else — a string without a root is a
+// literal, never a path.
+func splitPathRoot(s string) (root, path string, ok bool) {
+	rest, rooted := strings.CutPrefix(s, "$")
+	if !rooted {
+		return "", "", false
+	}
+	root = "$"
+	if r, subject := strings.CutPrefix(rest, "$"); subject {
+		root, rest = "$$", r
+	}
+	if !strings.HasPrefix(rest, ".") && !strings.HasPrefix(rest, "[") {
+		return "", "", false
+	}
+	return root, "$" + rest, true
+}
+
 // parseValue converts a raw JSON value to an Expression.
 func (p *Parser) parseValue(v any) (Expression, error) {
 	switch val := v.(type) {
@@ -53,21 +73,11 @@ func (p *Parser) parseValue(v any) (Expression, error) {
 		if val == "$$." {
 			return p.callFactory("@subject", nil)
 		}
-		// Check for $$.field shorthand (subject field).
-		if strings.HasPrefix(val, "$$.") {
-			return p.callFactory("@getsub", val[3:])
-		}
-		// Check for $$["field"] JSONPath shorthand (subject field).
-		if strings.HasPrefix(val, "$$[") {
-			return p.callFactory("@getsub", val[1:])
-		}
-		// Check for $.field shorthand (document field).
-		if strings.HasPrefix(val, "$.") {
-			return p.callFactory("@get", val[2:])
-		}
-		// Check for $["field"] JSONPath shorthand (document field).
-		if strings.HasPrefix(val, "$") && strings.HasPrefix(val, "$[") {
-			return p.callFactory("@get", val)
+		// Rooted paths compile to @getField carrying the path verbatim:
+		// the root discriminates ("$" reads the document, "$$" the
+		// subject). Everything else is a string literal.
+		if _, _, ok := splitPathRoot(val); ok {
+			return p.callFactory("@getField", val)
 		}
 		return p.callFactory("@string", val)
 
@@ -145,9 +155,17 @@ func (p *Parser) prepareArgs(opName string, rawArgs any) (any, error) {
 
 	switch args := rawArgs.(type) {
 	case []any:
-		// List of expressions.
+		// List of expressions. The @setField TARGET (first element) stays
+		// literal: it is a path by the operator's contract, and parsing it
+		// as a value would turn the "$"-rooted string into a read.
 		elements := make([]Expression, len(args))
 		for i, elem := range args {
+			if opName == "@setField" && i == 0 {
+				if s, ok := elem.(string); ok {
+					elements[i] = &constExpr{value: s}
+					continue
+				}
+			}
 			expr, err := p.parseValue(elem)
 			if err != nil {
 				return nil, fmt.Errorf("argument %d: %w", i, err)
@@ -184,10 +202,12 @@ func (p *Parser) prepareArgs(opName string, rawArgs any) (any, error) {
 
 	default:
 		// Scalar literal value (bool, float64, string from JSON).
-		// For most operators, scalar JSONPath-like strings should be treated as
-		// shorthand expressions (for example "$.a" -> @get("a"), "$$.x" ->
-		// @getsub("x")). Keep explicit string-path operators literal.
-		if s, ok := args.(string); ok && shouldParseScalarStringArg(opName, s) {
+		// For most operators, "$"-rooted scalar strings are path shorthands
+		// compiling to @getField. The operators whose argument IS the path
+		// (@getField, @exists) keep it literal: pre-resolving it would
+		// double-interpret.
+		if s, ok := args.(string); ok && strings.HasPrefix(s, "$") &&
+			opName != "@getField" && opName != "@exists" {
 			expr, err := p.parseValue(s)
 			if err != nil {
 				return nil, err
@@ -195,19 +215,6 @@ func (p *Parser) prepareArgs(opName string, rawArgs any) (any, error) {
 			return expr, nil
 		}
 		return args, nil
-	}
-}
-
-func shouldParseScalarStringArg(opName, arg string) bool {
-	if !strings.HasPrefix(arg, "$") {
-		return false
-	}
-
-	switch opName {
-	case "@get", "@getsub", "@exists":
-		return false
-	default:
-		return true
 	}
 }
 

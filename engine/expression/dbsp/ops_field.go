@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/expression"
 	"github.com/l7mp/dbsp/engine/internal/utils"
+	"github.com/ohler55/ojg/jp"
 )
 
 // copyExpr implements @copy - returns document fields as map[string]any.
@@ -34,149 +34,120 @@ func (e *copyExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return fields, nil
 }
 
-// getExpr implements @get - retrieves a field from the document.
-type getExpr struct {
+// getFieldExpr implements @getField - reads a field through a $-rooted
+// JSONPath. The path carries its root: "$"-rooted paths read the current
+// document, "$$"-rooted paths read the current subject (the element under
+// iteration in @map/@filter/@sortBy). The shorthand forms "$.x" and "$$.x"
+// compile to this operator.
+type getFieldExpr struct {
 	field Expression
 }
 
-func (e *getExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	fieldPath, err := evaluateFieldPath(ctx, e.field, "@get")
+func (e *getFieldExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	fieldPath, err := evaluateFieldPath(ctx, e.field, "@getField")
 	if err != nil {
 		return nil, err
 	}
-
-	doc := ctx.Document()
-	if doc == nil {
-		return nil, fmt.Errorf("@get: no document in context")
-	}
-
-	value, err := doc.GetField(fieldPath)
+	value, err := resolveFieldPath(ctx, fieldPath, "@getField")
 	if err != nil {
-		ctx.Logger().V(8).Info("eval", "op", "@get", "field", fieldPath, "error", err)
+		ctx.Logger().V(8).Info("eval", "op", "@getField", "field", fieldPath, "error", err)
 		return nil, err
 	}
-
-	ctx.Logger().V(8).Info("eval", "op", "@get", "field", fieldPath, "result", value)
+	ctx.Logger().V(8).Info("eval", "op", "@getField", "field", fieldPath, "result", value)
 	return value, nil
 }
 
-func (e *getExpr) String() string { return fmt.Sprintf("@get(%v)", e.field) }
+func (e *getFieldExpr) String() string { return fmt.Sprintf("@getField(%v)", e.field) }
 
-// setExpr implements @set - sets a field on the document (mutates in-place).
-type setExpr struct{ binaryOp }
-
-func (e *setExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	fieldPathVal, err := e.left.Evaluate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("@set: field path: %w", err)
+// resolveFieldPath reads a rooted path from its document: "$$"-rooted paths
+// re-root at the subject, "$"-rooted paths read the document, anything else
+// is an error — a string without a root is a literal, never a path.
+func resolveFieldPath(ctx *expression.EvalContext, fieldPath, opName string) (any, error) {
+	root, path, ok := splitPathRoot(fieldPath)
+	if !ok {
+		return nil, fmt.Errorf("%s: path %q must be a JSONPath rooted at $ (document) or $$ (subject)", opName, fieldPath)
 	}
-	fieldPath, err := AsString(fieldPathVal)
-	if err != nil {
-		return nil, fmt.Errorf("@set: field path must be string: %w", err)
+	if root == "$$" {
+		doc, err := subjectDocument(ctx, opName)
+		if err != nil {
+			return nil, err
+		}
+		return doc.GetField(path)
 	}
-
-	value, err := e.right.Evaluate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("@set: value: %w", err)
-	}
-
 	doc := ctx.Document()
 	if doc == nil {
-		return nil, fmt.Errorf("@set: no document in context")
+		return nil, fmt.Errorf("%s: no document in context", opName)
 	}
-
-	if err := doc.SetField(fieldPath, value); err != nil {
-		return nil, fmt.Errorf("@set: %w", err)
-	}
-
-	ctx.Logger().V(8).Info("eval", "op", "@set", "field", fieldPath, "value", value)
-	return doc, nil
+	return doc.GetField(path)
 }
 
-// getSubExpr implements @getsub - retrieves a field from the subject.
-type getSubExpr struct {
-	field Expression
+// subjectDocument adapts the evaluation subject to the document interface,
+// so that subject paths resolve through the same GetField/SetField
+// semantics as document paths. Plain maps — e.g. the synthetic {a, b} pair
+// a @sortBy comparator is handed — are wrapped without copying, so
+// @setField mutations reach the original value.
+func subjectDocument(ctx *expression.EvalContext, opName string) (datamodel.Document, error) {
+	subject := ctx.Subject()
+	if subject == nil {
+		return nil, fmt.Errorf("%s: no subject in context", opName)
+	}
+	switch s := subject.(type) {
+	case datamodel.Document:
+		return s, nil
+	case map[string]any:
+		return unstructured.Wrap(s), nil
+	default:
+		return nil, fmt.Errorf("%s: subject is not a document or map: %T", opName, subject)
+	}
 }
 
-func (e *getSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	fieldPath, err := evaluateFieldPath(ctx, e.field, "@getsub")
+// setFieldExpr implements @setField - writes a field through a $-rooted
+// JSONPath target, root-discriminated like @getField ("$" writes the
+// document and yields it, "$$" writes the subject and yields it). The
+// target is kept literal by the parser — in value position a "$"-rooted
+// string would be a read — so it arrives here as the path itself.
+type setFieldExpr struct{ binaryOp }
+
+func (e *setFieldExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	fieldPath, err := evaluateFieldPath(ctx, e.left, "@setField")
 	if err != nil {
 		return nil, err
 	}
 
-	subject := ctx.Subject()
-	if subject == nil {
-		return nil, fmt.Errorf("@getsub: no subject in context")
-	}
-
-	if doc, ok := subject.(datamodel.Document); ok {
-		value, err := doc.GetField(fieldPath)
-		if err != nil {
-			ctx.Logger().V(8).Info("eval", "op", "@getsub", "field", fieldPath, "error", err)
-			return nil, err
-		}
-		ctx.Logger().V(8).Info("eval", "op", "@getsub", "field", fieldPath, "result", value)
-		return value, nil
-	}
-
-	if m, ok := subject.(map[string]any); ok {
-		value, exists := m[fieldPath]
-		if !exists {
-			ctx.Logger().V(8).Info("eval", "op", "@getsub", "field", fieldPath, "error", "field not found")
-			return nil, datamodel.ErrFieldNotFound
-		}
-		ctx.Logger().V(8).Info("eval", "op", "@getsub", "field", fieldPath, "result", value)
-		return value, nil
-	}
-
-	return nil, fmt.Errorf("@getsub: subject is not a document or map: %T", subject)
-}
-
-func (e *getSubExpr) String() string { return fmt.Sprintf("@getsub(%v)", e.field) }
-
-// setSubExpr implements @setsub - sets a field on the subject (mutates in-place).
-type setSubExpr struct{ binaryOp }
-
-func (e *setSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	fieldPathVal, err := e.left.Evaluate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("@setsub: field path: %w", err)
-	}
-	fieldPath, err := AsString(fieldPathVal)
-	if err != nil {
-		return nil, fmt.Errorf("@setsub: field path must be string: %w", err)
-	}
-
 	value, err := e.right.Evaluate(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("@setsub: value: %w", err)
+		return nil, fmt.Errorf("@setField: value: %w", err)
 	}
 
-	subject := ctx.Subject()
-	if subject == nil {
-		return nil, fmt.Errorf("@setsub: no subject in context")
+	root, path, ok := splitPathRoot(fieldPath)
+	if !ok {
+		return nil, fmt.Errorf("@setField: path %q must be a JSONPath rooted at $ (document) or $$ (subject)", fieldPath)
 	}
-
-	if doc, ok := subject.(datamodel.Document); ok {
-		if err := doc.SetField(fieldPath, value); err != nil {
-			return nil, fmt.Errorf("@setsub: %w", err)
+	if root == "$$" {
+		doc, err := subjectDocument(ctx, "@setField")
+		if err != nil {
+			return nil, err
 		}
-		ctx.Logger().V(8).Info("eval", "op", "@setsub", "field", fieldPath, "value", value)
-		return doc, nil
+		if err := doc.SetField(path, value); err != nil {
+			return nil, fmt.Errorf("@setField: %w", err)
+		}
+		ctx.Logger().V(8).Info("eval", "op", "@setField", "field", fieldPath, "value", value)
+		return ctx.Subject(), nil
 	}
-
-	if m, ok := subject.(map[string]any); ok {
-		m[fieldPath] = value
-		ctx.Logger().V(8).Info("eval", "op", "@setsub", "field", fieldPath, "value", value)
-		return m, nil
+	doc := ctx.Document()
+	if doc == nil {
+		return nil, fmt.Errorf("@setField: no document in context")
 	}
-
-	return nil, fmt.Errorf("@setsub: subject is not a document or map: %T", subject)
+	if err := doc.SetField(path, value); err != nil {
+		return nil, fmt.Errorf("@setField: %w", err)
+	}
+	ctx.Logger().V(8).Info("eval", "op", "@setField", "field", fieldPath, "value", value)
+	return doc, nil
 }
 
-// existsExpr implements @exists, which checks if a field exists. Paths prefixed with "$$." or
-// "$$[" resolve against the subject (mirroring @getsub); every other path resolves against the
-// document.
+// existsExpr implements @exists - checks if a field exists. Like every path
+// argument, the field is a $-rooted JSONPath, root-discriminated exactly
+// like @getField.
 type existsExpr struct{ unaryOp }
 
 func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
@@ -185,35 +156,7 @@ func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, err
 	}
 
-	var fieldErr error
-	switch {
-	case strings.HasPrefix(fieldPath, "$$.") || strings.HasPrefix(fieldPath, "$$["):
-		subject := ctx.Subject()
-		if subject == nil {
-			return nil, fmt.Errorf("@exists: no subject in context")
-		}
-		path := fieldPath[3:]
-		if strings.HasPrefix(fieldPath, "$$[") {
-			path = fieldPath[1:]
-		}
-		switch s := subject.(type) {
-		case datamodel.Document:
-			_, fieldErr = s.GetField(path)
-		case map[string]any:
-			// Adapt the plain map so nested and JSONPath forms resolve
-			// exactly like document paths do.
-			_, fieldErr = unstructured.New(s).GetField(path)
-		default:
-			return nil, fmt.Errorf("@exists: subject is not a document or map: %T", subject)
-		}
-	default:
-		doc := ctx.Document()
-		if doc == nil {
-			return nil, fmt.Errorf("@exists: no document in context")
-		}
-		_, fieldErr = doc.GetField(fieldPath)
-	}
-
+	_, fieldErr := resolveFieldPath(ctx, fieldPath, "@exists")
 	if fieldErr != nil && !errors.Is(fieldErr, datamodel.ErrFieldNotFound) {
 		// An unresolvable path is an authoring error, not evidence of
 		// existence: propagate instead of silently answering true.
@@ -223,6 +166,31 @@ func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 
 	ctx.Logger().V(8).Info("eval", "op", "@exists", "field", fieldPath, "result", exists)
 	return exists, nil
+}
+
+// validatePathArg rejects constant path arguments that are not $-rooted at
+// compile time: a string without a root is a literal everywhere in the
+// language, and silently reading it as a path would blur that rule.
+// Computed paths are validated at evaluation time by resolveFieldPath.
+func validatePathArg(field Expression, opName string) error {
+	c, ok := field.(*constExpr)
+	if !ok {
+		return nil
+	}
+	s, ok := c.value.(string)
+	if !ok {
+		return nil // Non-string paths fail AsString at evaluation time.
+	}
+	_, path, ok := splitPathRoot(s)
+	if !ok {
+		return fmt.Errorf("%s: path %q must be a JSONPath rooted at $ (document) or $$ (subject)", opName, s)
+	}
+	// The root carries the intent; the JSONPath parser owns validity, so a
+	// malformed constant path is a compile error, not a runtime surprise.
+	if _, err := jp.ParseString(path); err != nil {
+		return fmt.Errorf("%s: invalid JSONPath %q: %w", opName, s, err)
+	}
+	return nil
 }
 
 // evaluateFieldPath evaluates a field path from an operand expression.
@@ -245,38 +213,33 @@ func init() {
 		}
 		return &copyExpr{nullaryOp{"@copy"}}, nil
 	})
-	MustRegister("@get", func(args any) (Expression, error) {
+	MustRegister("@getField", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
-			return nil, fmt.Errorf("@get: %w", err)
+			return nil, fmt.Errorf("@getField: %w", err)
 		}
-		return &getExpr{field: operand}, nil
+		if err := validatePathArg(operand, "@getField"); err != nil {
+			return nil, err
+		}
+		return &getFieldExpr{field: operand}, nil
 	})
-	MustRegister("@set", func(args any) (Expression, error) {
-		left, right, err := asBinaryExprs(args, "@set")
+	MustRegister("@setField", func(args any) (Expression, error) {
+		left, right, err := asBinaryExprs(args, "@setField")
 		if err != nil {
 			return nil, err
 		}
-		return &setExpr{binaryOp{"@set", left, right}}, nil
-	})
-	MustRegister("@getsub", func(args any) (Expression, error) {
-		operand, err := asUnaryExprOrLiteral(args)
-		if err != nil {
-			return nil, fmt.Errorf("@getsub: %w", err)
-		}
-		return &getSubExpr{field: operand}, nil
-	})
-	MustRegister("@setsub", func(args any) (Expression, error) {
-		left, right, err := asBinaryExprs(args, "@setsub")
-		if err != nil {
+		if err := validatePathArg(left, "@setField"); err != nil {
 			return nil, err
 		}
-		return &setSubExpr{binaryOp{"@setsub", left, right}}, nil
+		return &setFieldExpr{binaryOp{"@setField", left, right}}, nil
 	})
 	MustRegister("@exists", func(args any) (Expression, error) {
 		operand, err := asUnaryExprOrLiteral(args)
 		if err != nil {
 			return nil, fmt.Errorf("@exists: %w", err)
+		}
+		if err := validatePathArg(operand, "@exists"); err != nil {
+			return nil, err
 		}
 		return &existsExpr{unaryOp{"@exists", operand}}, nil
 	})
