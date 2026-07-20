@@ -17,7 +17,7 @@ func TestAdaptor(t *testing.T) {
 
 var _ = Describe("Adaptor", func() {
 	It("applies in transforms on get", func() {
-		doc := unstructured.New(map[string]any{"data": map[string]any{"username": base64.StdEncoding.EncodeToString([]byte("admin"))}}, nil)
+		doc := unstructured.New(map[string]any{"data": map[string]any{"username": base64.StdEncoding.EncodeToString([]byte("admin"))}})
 		a := adaptor.SecretDataAdaptor(doc)
 
 		v, err := a.GetField("data.username")
@@ -26,7 +26,7 @@ var _ = Describe("Adaptor", func() {
 	})
 
 	It("applies out transforms on set", func() {
-		doc := unstructured.New(map[string]any{"data": map[string]any{}}, nil)
+		doc := unstructured.New(map[string]any{"data": map[string]any{}})
 		a := adaptor.SecretDataAdaptor(doc)
 
 		Expect(a.SetField("data.password", "s3cr3t")).To(Succeed())
@@ -36,7 +36,7 @@ var _ = Describe("Adaptor", func() {
 	})
 
 	It("supports wildcard nested matches", func() {
-		doc := unstructured.New(map[string]any{"spec": map[string]any{"raw": int64(2)}}, nil)
+		doc := unstructured.New(map[string]any{"spec": map[string]any{"raw": int64(2)}})
 		a := adaptor.New(doc,
 			func(path string, v any) (any, error) {
 				if path != "spec.raw" {
@@ -56,7 +56,7 @@ var _ = Describe("Adaptor", func() {
 	})
 
 	It("supports chaining by wrapping adaptor on adaptor", func() {
-		doc := unstructured.New(map[string]any{"data": map[string]any{"username": base64.StdEncoding.EncodeToString([]byte("admin"))}}, nil)
+		doc := unstructured.New(map[string]any{"data": map[string]any{"username": base64.StdEncoding.EncodeToString([]byte("admin"))}})
 		secret := adaptor.SecretDataAdaptor(doc)
 		upper := adaptor.New(secret, func(path string, v any) (any, error) {
 			if path == "data.username" {

@@ -432,7 +432,7 @@ func buildGroupRow(
 		"key":       keyValue,
 		"values":    values,
 		"documents": documents,
-	}, nil), nil
+	}), nil
 }
 
 func digestKey(v any) (string, error) {

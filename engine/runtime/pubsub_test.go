@@ -10,7 +10,7 @@ import (
 )
 
 func doc(name, value string) *unstructured.Unstructured {
-	return unstructured.New(map[string]any{"name": name, "value": value}, nil)
+	return unstructured.New(map[string]any{"name": name, "value": value})
 }
 
 func delta(entries ...zset.Elem) zset.ZSet {

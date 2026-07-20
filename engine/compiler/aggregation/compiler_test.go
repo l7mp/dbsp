@@ -65,7 +65,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		in := zset.New()
-		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1"}}, nil), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1"}}), 1)
 		outs, err := exec.Execute(map[string]zset.ZSet{q.InputMap["test-op/foo/input"]: in})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(outs[q.OutputMap["test-op/bar/output"]].Size()).To(Equal(1))
@@ -83,7 +83,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		in := zset.New()
-		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "d1"}}, nil), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "d1"}}), 1)
 		outs, err := exec.Execute(map[string]zset.ZSet{q.InputMap["test-op/deployment/input"]: in})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(outs[q.OutputMap["test-op/deployment/output"]].Size()).To(Equal(1))
@@ -92,9 +92,9 @@ var _ = Describe("Aggregation compiler parity", func() {
 	It("evaluates select true/false and missing fields", func() {
 		exec, outID := makeExec([]string{"Pod"}, `[{"@select":{"@eq":["$.spec.b.c",2]}}]`)
 		in := zset.New()
-		in.Insert(unstructured.New(map[string]any{"spec": map[string]any{"b": map[string]any{"c": int64(2)}}}, nil), 1)
-		in.Insert(unstructured.New(map[string]any{"spec": map[string]any{"b": map[string]any{"c": int64(3)}}}, nil), 1)
-		in.Insert(unstructured.New(map[string]any{"spec": map[string]any{}}, nil), 1)
+		in.Insert(unstructured.New(map[string]any{"spec": map[string]any{"b": map[string]any{"c": int64(2)}}}), 1)
+		in.Insert(unstructured.New(map[string]any{"spec": map[string]any{"b": map[string]any{"c": int64(3)}}}), 1)
+		in.Insert(unstructured.New(map[string]any{"spec": map[string]any{}}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -107,7 +107,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		in.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{"name": "orig", "namespace": "orig-ns"},
 			"spec":     map[string]any{"b": map[string]any{"c": int64(2)}},
-		}, nil), 1)
+		}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -130,7 +130,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		in.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{"name": "pod1", "namespace": "default"},
 			"spec":     map[string]any{"x": int64(1)},
-		}, nil), 1)
+		}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -150,7 +150,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		in.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{"name": "name", "namespace": "default"},
 			"spec":     map[string]any{"list": []any{int64(1), "a", true}},
-		}, nil), 1)
+		}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -178,7 +178,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 				[]any{int64(1), int64(2), int64(3)},
 				[]any{int64(5), int64(6)},
 			}},
-		}, nil), 1)
+		}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -223,7 +223,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 					map[string]any{"addresses": []any{"192.0.2.3"}},
 				},
 			},
-		}, nil), 1)
+		}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_Service": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -265,9 +265,9 @@ var _ = Describe("Aggregation compiler parity", func() {
 
 		pods := zset.New()
 		deps := zset.New()
-		deps.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "dep1"}}, nil), 1)
-		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1"}, "spec": map[string]any{"parent": "dep1"}}, nil), 1)
-		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod2"}, "spec": map[string]any{"parent": "dep2"}}, nil), 1)
+		deps.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "dep1"}}), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1"}, "spec": map[string]any{"parent": "dep1"}}), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod2"}, "spec": map[string]any{"parent": "dep2"}}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": pods, "input_dep": deps})
 		Expect(err).NotTo(HaveOccurred())
@@ -287,9 +287,9 @@ var _ = Describe("Aggregation compiler parity", func() {
 		pods := zset.New()
 		deps := zset.New()
 		rs := zset.New()
-		deps.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "dep1"}}, nil), 1)
-		rs.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "rs1"}, "spec": map[string]any{"dep": "dep1"}}, nil), 1)
-		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1"}, "spec": map[string]any{"parent": "dep1"}}, nil), 1)
+		deps.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "dep1"}}), 1)
+		rs.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "rs1"}, "spec": map[string]any{"dep": "dep1"}}), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1"}, "spec": map[string]any{"parent": "dep1"}}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": pods, "input_dep": deps, "input_rs": rs})
 		Expect(err).NotTo(HaveOccurred())
@@ -412,9 +412,9 @@ var _ = Describe("Aggregation compiler parity", func() {
 
 		pods := zset.New()
 		services := zset.New()
-		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1", "namespace": "default"}}, nil), 1)
-		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod2", "namespace": "other"}}, nil), 1)
-		services.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "svc1", "namespace": "default"}}, nil), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1", "namespace": "default"}}), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod2", "namespace": "other"}}), 1)
+		services.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "svc1", "namespace": "default"}}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": pods, "input_svc": services})
 		Expect(err).NotTo(HaveOccurred())
@@ -473,7 +473,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		serviceViews.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{"name": "test-service", "namespace": "testnamespace"},
 			"spec":     map[string]any{"serviceName": "test-service"},
-		}, nil), 1)
+		}), 1)
 
 		endpointSlices.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{
@@ -483,7 +483,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 					"kubernetes.io/service-name": "test-service",
 				},
 			},
-		}, nil), 1)
+		}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{
 			"input_ServiceView":   serviceViews,
@@ -507,23 +507,15 @@ var _ = Describe("Aggregation compiler parity", func() {
 
 	It("supports @groupBy bag semantics", func() {
 		exec, outID := makeExec([]string{"pod"}, `[{"@groupBy":["$.metadata.namespace","$.spec.a"]}]`)
-		pkByName := func(doc datamodel.Document) (string, error) {
-			v, err := doc.GetField("metadata.name")
-			if err != nil {
-				return "", err
-			}
-			return v.(string), nil
-		}
-
 		in := zset.New()
 		in.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{"name": "name", "namespace": "default"},
 			"spec":     map[string]any{"a": int64(1)},
-		}, pkByName), 1)
+		}), 1)
 		in.Insert(unstructured.New(map[string]any{
 			"metadata": map[string]any{"name": "name2", "namespace": "default"},
 			"spec":     map[string]any{"a": int64(2)},
-		}, pkByName), 1)
+		}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -546,17 +538,9 @@ var _ = Describe("Aggregation compiler parity", func() {
 
 	It("supports @groupBy distinct option", func() {
 		exec, outID := makeExec([]string{"pod"}, `[{"@groupBy":["$.metadata.namespace","$.spec.a",{"distinct":true}]}]`)
-		pkByName := func(doc datamodel.Document) (string, error) {
-			v, err := doc.GetField("metadata.name")
-			if err != nil {
-				return "", err
-			}
-			return v.(string), nil
-		}
-
 		in := zset.New()
-		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "a", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}, pkByName), 1)
-		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "b", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}, pkByName), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "a", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "b", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -574,17 +558,9 @@ var _ = Describe("Aggregation compiler parity", func() {
 			{"@project":{"key":"$.key","items":"$.values"}}
 		]`)
 
-		pkByName := func(doc datamodel.Document) (string, error) {
-			v, err := doc.GetField("metadata.name")
-			if err != nil {
-				return "", err
-			}
-			return v.(string), nil
-		}
-
 		in := zset.New()
-		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "a", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}, pkByName), 1)
-		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "b", "namespace": "default"}, "spec": map[string]any{"a": int64(2)}}, pkByName), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "a", "namespace": "default"}, "spec": map[string]any{"a": int64(1)}}), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "b", "namespace": "default"}, "spec": map[string]any{"a": int64(2)}}), 1)
 
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_pod": in})
 		Expect(err).NotTo(HaveOccurred())
@@ -604,7 +580,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	It("supports @distinct with explicit null argument", func() {
 		exec, outID := makeExec([]string{"pod"}, `[{"@distinct":null}]`)
 
-		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
 		in := zset.New()
 		in.Insert(doc, 2)
 
@@ -617,7 +593,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 	It("supports @distinct with empty object argument", func() {
 		exec, outID := makeExec([]string{"pod"}, `[{"@distinct":{}}]`)
 
-		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
 		in := zset.New()
 		in.Insert(doc, 2)
 
@@ -649,7 +625,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 
 		inID := q.InputMap["pod"]
 		outID := q.OutputMap["output"]
-		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
 		steps := []zset.ZSet{
 			zset.New().WithElems(zset.Elem{Document: doc, Weight: 1}),
 			zset.New().WithElems(zset.Elem{Document: doc, Weight: 1}),
@@ -723,7 +699,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		exec, err := executor.New(q.Circuit, logger.DiscardLogger())
 		Expect(err).NotTo(HaveOccurred())
 		in := zset.New()
-		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "p1"}}, nil), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "p1"}}), 1)
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(outs[q.OutputMap["final"]].Size()).To(Equal(1))
@@ -760,13 +736,13 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		in := zset.New()
-		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "p1"}}, nil), 1)
+		in.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "p1"}}), 1)
 		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
 		Expect(err).NotTo(HaveOccurred())
 
 		out := outs[q.OutputMap["final"]]
 		Expect(out.Size()).To(Equal(1))
-		Expect(out.Lookup(unstructured.New(map[string]any{"name": "p1"}, nil).Hash())).To(Equal(zset.Weight(1)))
+		Expect(out.Lookup(unstructured.New(map[string]any{"name": "p1"}).Hash())).To(Equal(zset.Weight(1)))
 	})
 
 	It("rejects duplicate internal output producers", func() {
@@ -814,9 +790,9 @@ var _ = Describe("Aggregation compiler parity", func() {
 
 		pods := zset.New()
 		deps := zset.New()
-		deps.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "dep1"}}, nil), 1)
-		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1", "namespace": "default"}, "spec": map[string]any{"parent": "dep1"}}, nil), 1)
-		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod2", "namespace": "other"}, "spec": map[string]any{"parent": "dep1"}}, nil), 1)
+		deps.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "dep1"}}), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod1", "namespace": "default"}, "spec": map[string]any{"parent": "dep1"}}), 1)
+		pods.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod2", "namespace": "other"}, "spec": map[string]any{"parent": "dep1"}}), 1)
 
 		inputs := map[string]zset.ZSet{"input_pod": pods, "input_dep": deps}
 		outsOrig, err := execOrig.Execute(inputs)

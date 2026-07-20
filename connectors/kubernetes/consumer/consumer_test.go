@@ -592,14 +592,14 @@ func (c *recordingClient) Update(ctx context.Context, obj client.Object, opts ..
 
 func out(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {
 	z := zset.New()
-	z.Insert(dbspunstructured.New(doc, nil), w)
+	z.Insert(dbspunstructured.New(doc), w)
 	return dbspruntime.Event{Name: name, Data: z}
 }
 
 func outMany(name string, entries ...docWeight) dbspruntime.Event {
 	z := zset.New()
 	for _, e := range entries {
-		z.Insert(dbspunstructured.New(e.doc, nil), e.w)
+		z.Insert(dbspunstructured.New(e.doc), e.w)
 	}
 	return dbspruntime.Event{Name: name, Data: z}
 }

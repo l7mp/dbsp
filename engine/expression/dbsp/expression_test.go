@@ -557,7 +557,7 @@ var _ = Describe("Field Operators", func() {
 	})
 
 	It("should evaluate explicit @copy", func() {
-		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
 		expr, err := dbsp.Compile([]byte(`{"@copy": null}`))
 		Expect(err).NotTo(HaveOccurred())
 
@@ -569,7 +569,7 @@ var _ = Describe("Field Operators", func() {
 	})
 
 	It("should evaluate explicit @copy with empty object argument", func() {
-		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
 		expr, err := dbsp.Compile([]byte(`{"@copy": {}}`))
 		Expect(err).NotTo(HaveOccurred())
 

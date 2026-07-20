@@ -14,7 +14,7 @@ import (
 // lineZSet builds a Z-set with one {"line": s} document at weight 1.
 func lineZSet(s string) zset.ZSet {
 	z := zset.New()
-	z.Insert(dbspunstructured.New(map[string]any{"line": s}, nil), 1)
+	z.Insert(dbspunstructured.New(map[string]any{"line": s}), 1)
 	return z
 }
 
@@ -161,7 +161,7 @@ var _ = Describe("FormatFunc", func() {
 	It("serialises a document back to JSONL", func() {
 		fn := codec.FormatFunc(codec.FormatJSONL, nil)
 		z := zset.New()
-		z.Insert(dbspunstructured.New(map[string]any{"k": "v"}, nil), 1)
+		z.Insert(dbspunstructured.New(map[string]any{"k": "v"}), 1)
 		out, err := fn(z)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out.Size()).To(Equal(1))
@@ -173,7 +173,7 @@ var _ = Describe("FormatFunc", func() {
 	It("serialises a document to CSV", func() {
 		fn := codec.FormatFunc(codec.FormatCSV, nil)
 		z := zset.New()
-		z.Insert(dbspunstructured.New(map[string]any{"name": "alice", "age": "30"}, nil), 1)
+		z.Insert(dbspunstructured.New(map[string]any{"name": "alice", "age": "30"}), 1)
 		out, err := fn(z)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out.Size()).To(Equal(1))

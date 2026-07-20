@@ -17,18 +17,18 @@ func TestUnstructured(t *testing.T) {
 var _ = Describe("Unstructured", func() {
 	Describe("Copy", func() {
 		It("deep copies a flat document", func() {
-			orig := unstructured.New(map[string]any{"a": int64(1), "b": "hello"}, nil)
+			orig := unstructured.New(map[string]any{"a": int64(1), "b": "hello"})
 			cp := orig.Copy()
 			Expect(cp.Hash()).To(Equal(orig.Hash()))
 
 			// Mutating the copy must not affect the original.
 			Expect(cp.SetField("a", int64(99))).To(Succeed())
-			Expect(orig.Hash()).To(Equal(unstructured.New(map[string]any{"a": int64(1), "b": "hello"}, nil).Hash()))
+			Expect(orig.Hash()).To(Equal(unstructured.New(map[string]any{"a": int64(1), "b": "hello"}).Hash()))
 		})
 
 		It("deep copies nested maps", func() {
 			inner := map[string]any{"x": int64(1)}
-			orig := unstructured.New(map[string]any{"nested": inner}, nil)
+			orig := unstructured.New(map[string]any{"nested": inner})
 			cp := orig.Copy()
 
 			// Mutate the nested map inside the copy via GetField.
@@ -45,7 +45,7 @@ var _ = Describe("Unstructured", func() {
 		})
 
 		It("deep copies slices", func() {
-			orig := unstructured.New(map[string]any{"tags": []any{"a", "b"}}, nil)
+			orig := unstructured.New(map[string]any{"tags": []any{"a", "b"}})
 			cp := orig.Copy()
 
 			// Mutate the slice inside the copy.
@@ -69,7 +69,7 @@ var _ = Describe("Unstructured", func() {
 					},
 				},
 			}
-			orig := unstructured.New(deep, nil)
+			orig := unstructured.New(deep)
 			cp := orig.Copy()
 
 			// Drill into the copy and mutate the deepest level.
@@ -88,7 +88,7 @@ var _ = Describe("Unstructured", func() {
 		It("does not alias the caller's nested map", func() {
 			inner := map[string]any{"k": "orig"}
 			source := map[string]any{"sub": inner}
-			doc := unstructured.New(source, nil)
+			doc := unstructured.New(source)
 
 			// Mutate the caller's original map.
 			inner["k"] = "mutated"

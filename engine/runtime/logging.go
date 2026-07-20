@@ -156,27 +156,21 @@ func ZSetFullSummary(z zset.ZSet) []string {
 	return out
 }
 
+// logPrimaryKey returns a short, human-oriented identity for a document in
+// flow logs: the namespaced metadata name when the document has one, an
+// abbreviated content hash otherwise.
 func logPrimaryKey(doc datamodel.Document) string {
 	if doc == nil {
 		return "<nil>"
-	}
-
-	pk, err := doc.PrimaryKey()
-	hash := doc.Hash()
-	if err == nil && pk != "" && pk != hash {
-		return pk
 	}
 
 	if md := metadataNameKey(doc); md != "" {
 		return md
 	}
 
-	if err == nil && pk != "" {
-		return abbreviateHash(pk)
-	}
-
+	hash := doc.Hash()
 	if hash == "" {
-		return "<missing-pk>"
+		return "<missing-key>"
 	}
 	return abbreviateHash(hash)
 }

@@ -79,5 +79,5 @@ func toDocument(obj kobject.Object) *dbspunstructured.Unstructured {
 	unstructured.RemoveNestedField(content, "metadata", "managedFields")
 	unstructured.RemoveNestedField(content, "metadata", "generation")
 
-	return dbspunstructured.New(content, nil)
+	return dbspunstructured.New(content)
 }

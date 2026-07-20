@@ -30,7 +30,7 @@ func csvParseFunc(errFn func(error)) ZSetFunc {
 				continue
 			}
 			for _, row := range rows {
-				out.Insert(dbspunstructured.New(row, nil), entry.Weight)
+				out.Insert(dbspunstructured.New(row), entry.Weight)
 			}
 		}
 		return out, nil
@@ -70,7 +70,7 @@ func csvFormatFunc(errFn func(error)) ZSetFunc {
 				reportErr(errFn, fmt.Errorf("codec/csv format flush: %w", err))
 				continue
 			}
-			out.Insert(dbspunstructured.New(map[string]any{"line": sb.String()}, nil), entry.Weight)
+			out.Insert(dbspunstructured.New(map[string]any{"line": sb.String()}), entry.Weight)
 		}
 		return out, nil
 	}

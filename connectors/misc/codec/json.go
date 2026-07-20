@@ -29,7 +29,7 @@ func jsonlParseFunc(errFn func(error)) ZSetFunc {
 				reportErr(errFn, fmt.Errorf("codec/jsonl parse: %w", err))
 				continue
 			}
-			out.Insert(dbspunstructured.New(fields, nil), entry.Weight)
+			out.Insert(dbspunstructured.New(fields), entry.Weight)
 		}
 		return out, nil
 	}
@@ -51,7 +51,7 @@ func jsonlFormatFunc(errFn func(error)) ZSetFunc {
 				reportErr(errFn, fmt.Errorf("codec/jsonl format: %w", err))
 				continue
 			}
-			out.Insert(dbspunstructured.New(map[string]any{"line": string(b)}, nil), entry.Weight)
+			out.Insert(dbspunstructured.New(map[string]any{"line": string(b)}), entry.Weight)
 		}
 		return out, nil
 	}
@@ -76,13 +76,13 @@ func jsonParseFunc(errFn func(error)) ZSetFunc {
 			// Try object first, then array.
 			var obj map[string]any
 			if err := json.Unmarshal([]byte(line), &obj); err == nil {
-				out.Insert(dbspunstructured.New(obj, nil), entry.Weight)
+				out.Insert(dbspunstructured.New(obj), entry.Weight)
 				continue
 			}
 			var arr []map[string]any
 			if err := json.Unmarshal([]byte(line), &arr); err == nil {
 				for _, item := range arr {
-					out.Insert(dbspunstructured.New(item, nil), entry.Weight)
+					out.Insert(dbspunstructured.New(item), entry.Weight)
 				}
 				continue
 			}
@@ -132,7 +132,7 @@ func autoParseFunc(errFn func(error)) ZSetFunc {
 					continue
 				}
 				for _, d := range docs {
-					out.Insert(dbspunstructured.New(d, nil), entry.Weight)
+					out.Insert(dbspunstructured.New(d), entry.Weight)
 				}
 				continue
 			case FormatCSV:
@@ -142,12 +142,12 @@ func autoParseFunc(errFn func(error)) ZSetFunc {
 					continue
 				}
 				for _, row := range rows {
-					out.Insert(dbspunstructured.New(row, nil), entry.Weight)
+					out.Insert(dbspunstructured.New(row), entry.Weight)
 				}
 				continue
 			}
 			if fields != nil {
-				out.Insert(dbspunstructured.New(fields, nil), entry.Weight)
+				out.Insert(dbspunstructured.New(fields), entry.Weight)
 			}
 		}
 		return out, nil

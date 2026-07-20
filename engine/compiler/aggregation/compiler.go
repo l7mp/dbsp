@@ -530,7 +530,7 @@ func extractNamespaceParts(doc datamodel.Document, names []string) (map[string]d
 		case datamodel.Document:
 			parts[name] = vv
 		case map[string]any:
-			parts[name] = unstructured.New(vv, nil)
+			parts[name] = unstructured.New(vv)
 		default:
 			return nil, fmt.Errorf("@join projection: namespace %q must be document/map/null, got %T", name, v)
 		}
@@ -714,9 +714,9 @@ func compileProjectExpression(args json.RawMessage, stageIndex int, stageOp stri
 			setNestedMap(accum, asg.path, val)
 		}
 		if !hasCopy && len(assignments) == 0 {
-			return unstructured.New(map[string]any{}, nil), nil
+			return unstructured.New(map[string]any{}), nil
 		}
-		return unstructured.New(accum, nil), nil
+		return unstructured.New(accum), nil
 	}, original), nil
 }
 

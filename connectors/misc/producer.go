@@ -276,7 +276,7 @@ func (p *baseProducer) triggerDocument() *dbspunstructured.Unstructured {
 	if p.namespace != "" {
 		fields[VirtualSourceNamespaceField] = p.namespace
 	}
-	return dbspunstructured.New(fields, nil)
+	return dbspunstructured.New(fields)
 }
 
 func (p *baseProducer) reportError(err error) {

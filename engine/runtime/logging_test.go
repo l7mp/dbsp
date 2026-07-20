@@ -14,8 +14,8 @@ import (
 var _ = Describe("Runtime logging helpers", func() {
 	buildTestZSet := func() zset.ZSet {
 		zs := zset.New()
-		zs.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "b", "namespace": "default"}}, nil), 1)
-		zs.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "a", "namespace": "default"}}, nil), -1)
+		zs.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "b", "namespace": "default"}}), 1)
+		zs.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "a", "namespace": "default"}}), -1)
 		return zs
 	}
 

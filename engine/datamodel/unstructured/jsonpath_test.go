@@ -31,7 +31,7 @@ var _ = Describe("Unstructured JSONPath", func() {
 					map[string]any{"name": "tcp-ok", "protocol": "TCP", "port": int64(2)},
 				},
 			},
-		}, nil)
+		})
 	})
 
 	It("gets values with dot and bracket JSONPath", func() {

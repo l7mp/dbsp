@@ -186,7 +186,7 @@ func (p *LogProducer) stream(ctx context.Context) error {
 	scanner := bufio.NewScanner(rc)
 	for scanner.Scan() {
 		line := scanner.Text()
-		doc := dbspunstructured.New(map[string]any{"line": line}, nil)
+		doc := dbspunstructured.New(map[string]any{"line": line})
 		z := zset.New()
 		z.Insert(doc, 1)
 		if err := p.Publish(dbspruntime.Event{Name: p.inputName, Data: z}); err != nil {

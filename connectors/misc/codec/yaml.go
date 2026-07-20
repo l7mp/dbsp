@@ -30,7 +30,7 @@ func yamlParseFunc(errFn func(error)) ZSetFunc {
 				continue
 			}
 			for _, d := range docs {
-				out.Insert(dbspunstructured.New(d, nil), entry.Weight)
+				out.Insert(dbspunstructured.New(d), entry.Weight)
 			}
 		}
 		return out, nil
@@ -53,7 +53,7 @@ func yamlFormatFunc(errFn func(error)) ZSetFunc {
 				reportErr(errFn, fmt.Errorf("codec/yaml format: %w", err))
 				continue
 			}
-			out.Insert(dbspunstructured.New(map[string]any{"line": string(b)}, nil), entry.Weight)
+			out.Insert(dbspunstructured.New(map[string]any{"line": string(b)}), entry.Weight)
 		}
 		return out, nil
 	}

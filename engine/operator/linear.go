@@ -167,7 +167,7 @@ func (o *Project) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error
 		newElem, ok := val.(datamodel.Document)
 		if !ok {
 			if m, ok := val.(map[string]any); ok {
-				u := unstructured.New(map[string]any{}, nil)
+				u := unstructured.New(map[string]any{})
 				for k, v := range m {
 					if err := u.SetField(k, v); err != nil {
 						evalErr = fmt.Errorf("projection map field %s: %w", k, err)

@@ -584,7 +584,7 @@ func (v *VM) fromJSEntries(value goja.Value) (zset.ZSet, error) {
 			return set, fmt.Errorf("entry %d document: %w", i, err)
 		}
 
-		doc := dbspunstructured.New(map[string]any{}, nil)
+		doc := dbspunstructured.New(map[string]any{})
 		if err := doc.UnmarshalJSON(docJSON); err != nil {
 			return set, fmt.Errorf("entry %d document decode: %w", i, err)
 		}

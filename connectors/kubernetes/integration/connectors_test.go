@@ -306,8 +306,8 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 		Expect(pub.Publish(output("late-out", doc1, 1))).To(Succeed())
 		Expect(pub.Publish(output("late-out", doc2Old, 1))).To(Succeed())
 		upd := zset.New()
-		upd.Insert(dbspunstructured.New(doc2Old, nil), -1)
-		upd.Insert(dbspunstructured.New(doc2New, nil), 1)
+		upd.Insert(dbspunstructured.New(doc2Old), -1)
+		upd.Insert(dbspunstructured.New(doc2New), 1)
 		Expect(pub.Publish(dbspruntime.Event{Name: "late-out", Data: upd})).To(Succeed())
 
 		// The updater joins late: it subscribes only now, at construction.
@@ -567,7 +567,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 
 func output(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {
 	z := zset.New()
-	z.Insert(dbspunstructured.New(doc, nil), w)
+	z.Insert(dbspunstructured.New(doc), w)
 	return dbspruntime.Event{Name: name, Data: z}
 }
 

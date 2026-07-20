@@ -262,7 +262,7 @@ func compileProjection(selectExprs sqlparser.SelectExprs, bindVars map[string]*q
 		if ctx == nil || ctx.Document() == nil {
 			return nil, fmt.Errorf("projection: missing document")
 		}
-		newDoc := unstructured.New(map[string]any{}, nil)
+		newDoc := unstructured.New(map[string]any{})
 		// Evaluate each expression in the original input context so that
 		// field lookups read from the input document, not from the (empty)
 		// output document.

@@ -28,7 +28,7 @@ var _ = Describe("Circuit", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		delta := zset.New()
-		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil)
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
 		delta.Insert(doc, 1)
 
 		outs, err := c.Execute(runtime.Event{Name: "Pod", Data: delta})
@@ -61,7 +61,7 @@ var _ = Describe("Circuit", func() {
 		Eventually(func() bool {
 			producer := rt.NewPublisher()
 			delta := zset.New()
-			delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
+			delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}), 1)
 			_ = producer.Publish(runtime.Event{Name: "Pod", Data: delta})
 			select {
 			case out = <-consumer.GetChannel():
@@ -261,7 +261,7 @@ var _ = Describe("Circuit", func() {
 
 		Eventually(func() bool {
 			delta := zset.New()
-			delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}, nil), 1)
+			delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}}), 1)
 			if err := rt.NewPublisher().Publish(runtime.Event{Name: "Pod", Data: delta}); err != nil {
 				return false
 			}
@@ -320,7 +320,7 @@ func newBroadcasterQuery(name, inA, inB, outA, outB string) *compiler.Query {
 
 func oneDocZSet(tag string) zset.ZSet {
 	z := zset.New()
-	z.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": tag}}, nil), 1)
+	z.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": tag}}), 1)
 	return z
 }
 

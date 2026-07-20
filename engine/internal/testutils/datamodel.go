@@ -10,10 +10,9 @@ import (
 // StringElem is a simple string-based document for testing.
 type StringElem string
 
-func (s StringElem) Hash() string                { return string(s) }
-func (s StringElem) PrimaryKey() (string, error) { return string(s), nil }
-func (s StringElem) String() string              { return string(s) }
-func (s StringElem) Copy() datamodel.Document    { return s }
+func (s StringElem) Hash() string             { return string(s) }
+func (s StringElem) String() string           { return string(s) }
+func (s StringElem) Copy() datamodel.Document { return s }
 func (s StringElem) Merge(other datamodel.Document) datamodel.Document {
 	if o, ok := other.(StringElem); ok {
 		return StringElem(string(s) + "," + string(o))
@@ -44,10 +43,9 @@ type Record struct {
 	Value int
 }
 
-func (r Record) Hash() string                { return r.String() }
-func (r Record) PrimaryKey() (string, error) { return r.ID, nil }
-func (r Record) String() string              { return fmt.Sprintf("{ID:%s, Value:%d}", r.ID, r.Value) }
-func (r Record) Copy() datamodel.Document    { return r }
+func (r Record) Hash() string             { return r.String() }
+func (r Record) String() string           { return fmt.Sprintf("{ID:%s, Value:%d}", r.ID, r.Value) }
+func (r Record) Copy() datamodel.Document { return r }
 func (r Record) Merge(other datamodel.Document) datamodel.Document {
 	return Record{ID: r.ID + "," + other.Hash(), Value: r.Value}
 }
@@ -90,9 +88,8 @@ type ArrayRecord struct {
 	Values []any
 }
 
-func (r ArrayRecord) Hash() string                { return r.String() }
-func (r ArrayRecord) PrimaryKey() (string, error) { return r.ID, nil }
-func (r ArrayRecord) String() string              { return fmt.Sprintf("{ID:%s, Values:%v}", r.ID, r.Values) }
+func (r ArrayRecord) Hash() string   { return r.String() }
+func (r ArrayRecord) String() string { return fmt.Sprintf("{ID:%s, Values:%v}", r.ID, r.Values) }
 func (r ArrayRecord) Copy() datamodel.Document {
 	values := make([]any, len(r.Values))
 	copy(values, r.Values)
@@ -147,10 +144,6 @@ func NewMutableRecord(fields map[string]any) *MutableRecord {
 }
 
 func (r *MutableRecord) Hash() string { return r.String() }
-func (r *MutableRecord) PrimaryKey() (string, error) {
-	return r.Hash(), nil
-}
-
 func (r *MutableRecord) String() string {
 	return fmt.Sprintf("%v", r.FieldMap)
 }

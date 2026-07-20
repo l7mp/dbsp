@@ -23,8 +23,6 @@ func New(base datamodel.Document, in, out TransformFunc) *Adaptor {
 
 func (a *Adaptor) Hash() string { return a.base.Hash() }
 
-func (a *Adaptor) PrimaryKey() (string, error) { return a.base.PrimaryKey() }
-
 func (a *Adaptor) String() string { return a.base.String() }
 
 func (a *Adaptor) Merge(other datamodel.Document) datamodel.Document {
@@ -76,7 +74,7 @@ func (a *Adaptor) MarshalJSON() ([]byte, error) { return a.base.MarshalJSON() }
 
 func (a *Adaptor) UnmarshalJSON(data []byte) error {
 	if a.base == nil {
-		a.base = unstructured.New(map[string]any{}, nil)
+		a.base = unstructured.New(map[string]any{})
 	}
 	return a.base.UnmarshalJSON(data)
 }

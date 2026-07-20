@@ -13,32 +13,29 @@ import (
 
 // Unstructured implements datamodel.Document over a map[string]any (JSON object).
 // Fields are stored as a plain Go map and serialised as a JSON object.
-// The primary key is computed by an optional function; when that function is
-// nil it falls back to Hash().
 type Unstructured struct {
 	fields map[string]any
-	pkFunc func(datamodel.Document) (string, error)
 }
 
 // Ensure Unstructured implements datamodel.Document.
 var _ datamodel.Document = (*Unstructured)(nil)
 
-// New creates a new Unstructured document. pkFunc may be nil, in which case
-// PrimaryKey falls back to Hash(). The provided fields map is deep copied so
-// that subsequent mutations of the caller's map do not affect the document.
-func New(fields map[string]any, pkFunc func(datamodel.Document) (string, error)) *Unstructured {
+// New creates a new Unstructured document. The provided fields map is deep
+// copied so that subsequent mutations of the caller's map do not affect the
+// document.
+func New(fields map[string]any) *Unstructured {
 	f := make(map[string]any, len(fields))
 	for k, v := range fields {
 		f[k] = deepCopyAny(v)
 	}
-	return &Unstructured{fields: f, pkFunc: pkFunc}
+	return &Unstructured{fields: f}
 }
 
 // Merge combines two unstructured documents, with right side overwriting key collisions.
 func Merge(left, right *Unstructured) *Unstructured {
 	if left == nil {
 		if right == nil {
-			return New(map[string]any{}, nil)
+			return New(map[string]any{})
 		}
 		return right.Copy().(*Unstructured)
 	}
@@ -72,26 +69,17 @@ func (u *Unstructured) Hash() string {
 	return string(b)
 }
 
-// PrimaryKey calls pkFunc if it is set; otherwise returns Hash().
-func (u *Unstructured) PrimaryKey() (string, error) {
-	if u.pkFunc != nil {
-		return u.pkFunc(u)
-	}
-	return u.Hash(), nil
-}
-
 // String returns the canonical JSON representation of the document.
 func (u *Unstructured) String() string {
 	return u.Hash()
 }
 
-// Copy returns a deep copy of the document with the same pkFunc. Nested
-// map[string]any and []any values are recursively cloned so that mutations
-// of the copy never alias back to the original.
+// Copy returns a deep copy of the document. Nested map[string]any and []any
+// values are recursively cloned so that mutations of the copy never alias
+// back to the original.
 func (u *Unstructured) Copy() datamodel.Document {
 	cp := &Unstructured{
 		fields: make(map[string]any, len(u.fields)),
-		pkFunc: u.pkFunc,
 	}
 	for k, v := range u.fields {
 		cp.fields[k] = deepCopyAny(v)
@@ -99,12 +87,10 @@ func (u *Unstructured) Copy() datamodel.Document {
 	return cp
 }
 
-// New returns a new empty Unstructured document preserving the pkFunc so that
-// documents produced by operators carry the same primary-key logic.
+// New returns a new empty Unstructured document.
 func (u *Unstructured) New() datamodel.Document {
 	return &Unstructured{
 		fields: make(map[string]any),
-		pkFunc: u.pkFunc,
 	}
 }
 
