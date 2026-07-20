@@ -300,9 +300,11 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 		}
 
 		current = hardInputs[0].nodeID
+		joinedNames := []string{hardInputs[0].name}
 		for i := 1; i < len(hardInputs); i++ {
 			cartID := fmt.Sprintf("b%d_join_cart_%d", b.Index, i)
-			if err := compiled.AddNode(circuit.Op(cartID, operator.NewCartesianProduct())); err != nil {
+			core := indexedJoinCore(b.Stages[0].IndexKeys, joinedNames, hardInputs[i].name)
+			if err := compiled.AddNode(circuit.Op(cartID, core)); err != nil {
 				return "", err
 			}
 			if err := compiled.AddEdge(circuit.NewEdge(current, cartID, 0)); err != nil {
@@ -312,6 +314,7 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 				return "", err
 			}
 			current = cartID
+			joinedNames = append(joinedNames, hardInputs[i].name)
 		}
 
 		predExpr := wrapPredicateFieldNotFoundAsFalse(b.Stages[0].Predicate)
@@ -331,7 +334,7 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 			leftNames = append(leftNames, in.name)
 		}
 		for i, soft := range softInputs {
-			resultID, updatedNames, err := c.compileLeftJoinFold(compiled, b.Index, i, current, leftNames, soft.name, soft.nodeID, predExpr)
+			resultID, updatedNames, err := c.compileLeftJoinFold(compiled, b.Index, i, current, leftNames, soft.name, soft.nodeID, predExpr, b.Stages[0].IndexKeys)
 			if err != nil {
 				return "", err
 			}
@@ -538,6 +541,23 @@ func extractNamespaceParts(doc datamodel.Document, names []string) (map[string]d
 	return parts, nil
 }
 
+// indexedJoinCore returns the join core for a site combining the
+// already-joined left names with one new right input: an EquiJoin when the
+// @join index names the right input and one of the left names, a
+// CartesianProduct otherwise.
+func indexedJoinCore(indexKeys map[string]expression.Expression, leftNames []string, rightName string) operator.Operator {
+	rightKey, ok := indexKeys[rightName]
+	if !ok {
+		return operator.NewCartesianProduct()
+	}
+	for _, leftName := range leftNames {
+		if leftKey, ok := indexKeys[leftName]; ok {
+			return operator.NewEquiJoin(leftName, leftKey, rightName, rightKey)
+		}
+	}
+	return operator.NewCartesianProduct()
+}
+
 func (c *Compiler) compileLeftJoinFold(
 	compiled *circuit.Circuit,
 	branchIdx int,
@@ -547,11 +567,12 @@ func (c *Compiler) compileLeftJoinFold(
 	softName string,
 	softNodeID string,
 	predicate expression.Expression,
+	indexKeys map[string]expression.Expression,
 ) (string, []string, error) {
 	prefix := fmt.Sprintf("b%d_lj%d", branchIdx, foldIdx)
 
 	cartID := prefix + "_cart"
-	if err := compiled.AddNode(circuit.Op(cartID, operator.NewCartesianProduct())); err != nil {
+	if err := compiled.AddNode(circuit.Op(cartID, indexedJoinCore(indexKeys, leftNames, softName))); err != nil {
 		return "", nil, err
 	}
 	if err := compiled.AddEdge(circuit.NewEdge(leftNodeID, cartID, 0)); err != nil {

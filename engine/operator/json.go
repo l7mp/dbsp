@@ -23,6 +23,10 @@ type jsonOp struct {
 	KeyExpr    json.RawMessage `json:"keyExpr,omitempty"`
 	ValueExpr  json.RawMessage `json:"valueExpr,omitempty"`
 	Distinct   bool            `json:"distinct,omitempty"`
+	LeftNS     string          `json:"leftNs,omitempty"`
+	RightNS    string          `json:"rightNs,omitempty"`
+	LeftKey    json.RawMessage `json:"leftKey,omitempty"`
+	RightKey   json.RawMessage `json:"rightKey,omitempty"`
 }
 
 // MarshalJSON implements json.Marshaler. Uses a local type alias to avoid
@@ -163,6 +167,23 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		return NewLinearCombination(p.Coeffs), nil
 	case "cartesian":
 		return NewCartesianProduct(), nil
+	case "equi_join", "equi_join_incremental":
+		if p.LeftNS == "" || p.RightNS == "" || len(p.LeftKey) == 0 || len(p.RightKey) == 0 {
+			return nil, fmt.Errorf("%s operator: leftNS, rightNS, leftKey and rightKey are required", p.Type)
+		}
+		leftKey, err := dbspexpr.Compile(p.LeftKey)
+		if err != nil {
+			return nil, fmt.Errorf("%s operator: compile leftKey: %w", p.Type, err)
+		}
+		rightKey, err := dbspexpr.Compile(p.RightKey)
+		if err != nil {
+			return nil, fmt.Errorf("%s operator: compile rightKey: %w", p.Type, err)
+		}
+		ej := NewEquiJoin(p.LeftNS, leftKey, p.RightNS, rightKey)
+		if p.Type == "equi_join_incremental" {
+			return ej.Incremental(), nil
+		}
+		return ej, nil
 	case "distinct":
 		return NewDistinct(), nil
 	case "group_by":

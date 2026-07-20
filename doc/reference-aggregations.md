@@ -484,6 +484,55 @@ pipeline:
 
 Intuition: attach each pod to its parent deployment.
 
+### Join options: `soft` and `index`
+
+The two-element form `["@join": [predicate, options]]` takes an options object next to the
+predicate.
+
+`soft` turns the named inputs into left-join sides: rows of the other (hard) inputs are kept even
+when no partner matches, with the soft input's namespace set to `null` (test it with `@isnull`, or
+default fields with `@definedOr`).
+
+```yaml
+"@join":
+  - {"@eq": ["$.listeners.gateway", "$.counts.key"]}
+  - soft: [counts]
+```
+
+`index` makes a join **indexed**: it names exactly two participants and gives each a join-key
+expression, evaluated against *that input's own document* (so `$.` is the Service, the Gateway,
+not the compound join document). The pair is joined by key equality through a hash index instead of
+filtering the full Cartesian product, and after incrementalization the index is persistent: a delta
+on either side only touches the rows with the same key, instead of re-scanning the whole other
+side.
+
+Semantically the index adds a key-equality condition `AND`-ed with the predicate, so the equality
+it expresses can be dropped from the predicate. In the example below the gw-gwc equality lives
+entirely in the index and the predicate carries only the residual controller-name filter (use
+`true` as the predicate when nothing is left):
+
+```yaml
+"@join":
+  - {"@eq": ["$.gwc.spec.controllerName", "example.com/our-controller"]}
+  - index:
+      gw: "$.spec.gatewayClassName"      # gw.spec.gatewayClassName ==
+      gwc: "$.metadata.name"             #   gwc.metadata.name
+```
+ Keys may be arbitrary expressions, including
+composite objects: two keys are equal when their canonical serializations are equal, so both sides
+should build the same shape:
+
+```yaml
+index:
+  backends: {name: "$.backendService.name", namespace: "$.backendService.namespace"}
+  svcports: {name: "$.service.name", namespace: "$.service.namespace"}
+```
+
+`index` composes with `soft` (the indexed pair may be the hard/soft pair of a left join), and with
+three or more participants it accelerates the one join site where the two named inputs meet; the
+remaining sites stay Cartesian. Rows whose key expression does not resolve simply never match,
+mirroring the field-not-found-is-false convention of predicates.
+
 ### Join with extra filtering
 
 ```yaml

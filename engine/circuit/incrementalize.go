@@ -84,6 +84,17 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 		incrID := incrementalID(id)
 		result.AddNode(Op(incrID, incrOp))
 		return incrID, incrID
+	case op.Kind() == operator.KindEquiJoin:
+		// The indexed join incrementalizes into a single stateful operator
+		// that keeps both sides indexed by join key (no generic bilinear
+		// expansion: the integrals live inside the operator's indexes).
+		ej, ok := op.(*operator.EquiJoin)
+		if !ok {
+			return "", ""
+		}
+		incrID := incrementalID(id)
+		result.AddNode(Op(incrID, ej.Incremental()))
+		return incrID, incrID
 	case op.Kind() == operator.KindDistinct:
 		prefix := incrementalID(id)
 		noOpNode := prefix + "_noop"

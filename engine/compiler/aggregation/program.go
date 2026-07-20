@@ -36,6 +36,11 @@ type stageSpec struct {
 	Predicate  expression.Expression
 	JoinInputs []string // explicit @join participants list (hard ∪ soft); nil means "default to all of branch's @inputs"
 	SoftInputs []string
+	// IndexKeys maps exactly two @join participants to their join-key
+	// expressions (evaluated against that participant's document): the join
+	// site where the two meet uses an indexed equi-join instead of a
+	// Cartesian product. nil means no index.
+	IndexKeys  map[string]expression.Expression
 	Projection expression.Expression
 	UnwindPath string
 	GroupBy    operator.Operator
@@ -217,6 +222,12 @@ func parseBranch(index int, pipeline Pipeline, sources, outputs []string, explic
 		if len(participantSet)-len(seenSoft) < 1 {
 			return b, fmt.Errorf("branch[%d]: @join must include at least one hard input", index)
 		}
+
+		for name := range b.Stages[0].IndexKeys {
+			if !participantSet[name] {
+				return b, fmt.Errorf("branch[%d]: @join index input %q is not a join participant", index, name)
+			}
+		}
 	}
 
 	return b, nil
@@ -226,13 +237,14 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 	s := stageSpec{Index: i, Op: stage.Op, RawArgs: stage.Args}
 	switch stage.Op {
 	case "@join":
-		pred, hard, soft, err := parseJoinArgs(stage.Args)
+		pred, hard, soft, index, err := parseJoinArgs(stage.Args)
 		if err != nil {
 			return s, wrapStageErr(i, stage.Op, "predicate", stage.Args, err)
 		}
 		s.Predicate = pred
 		s.JoinInputs = hard
 		s.SoftInputs = soft
+		s.IndexKeys = index
 	case "@select":
 		expr, err := dbspexpr.NewParser().Parse(stage.Args)
 		if err != nil {
@@ -282,38 +294,53 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 // specify one, in which case the caller defaults to "all of branch's
 // @inputs"), and the soft-input list (a strict subset of the participants
 // list when both are given).
-func parseJoinArgs(args json.RawMessage) (expression.Expression, []string, []string, error) {
+func parseJoinArgs(args json.RawMessage) (expression.Expression, []string, []string, map[string]expression.Expression, error) {
 	var list []json.RawMessage
 	if err := json.Unmarshal(args, &list); err == nil {
 		if len(list) < 1 || len(list) > 2 {
-			return nil, nil, nil, fmt.Errorf("@join array form expects [predicate] or [predicate, options]")
+			return nil, nil, nil, nil, fmt.Errorf("@join array form expects [predicate] or [predicate, options]")
 		}
 		pred, err := dbspexpr.NewParser().Parse(list[0])
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		if len(list) == 1 {
-			return pred, nil, nil, nil
+			return pred, nil, nil, nil, nil
 		}
 		opts := struct {
-			Inputs *[]string `json:"inputs"`
-			Soft   []string  `json:"soft"`
+			Inputs *[]string                  `json:"inputs"`
+			Soft   []string                   `json:"soft"`
+			Index  map[string]json.RawMessage `json:"index"`
 		}{}
 		if err := json.Unmarshal(list[1], &opts); err != nil {
-			return nil, nil, nil, fmt.Errorf("@join options must be an object")
+			return nil, nil, nil, nil, fmt.Errorf("@join options must be an object")
 		}
 		var hard []string
 		if opts.Inputs != nil {
 			hard = append([]string(nil), (*opts.Inputs)...)
 		}
-		return pred, hard, append([]string(nil), opts.Soft...), nil
+		var index map[string]expression.Expression
+		if opts.Index != nil {
+			if len(opts.Index) != 2 {
+				return nil, nil, nil, nil, fmt.Errorf("@join index must name exactly two inputs, got %d", len(opts.Index))
+			}
+			index = make(map[string]expression.Expression, len(opts.Index))
+			for name, raw := range opts.Index {
+				keyExpr, err := dbspexpr.NewParser().Parse(raw)
+				if err != nil {
+					return nil, nil, nil, nil, fmt.Errorf("@join index key for %q: %w", name, err)
+				}
+				index[name] = keyExpr
+			}
+		}
+		return pred, hard, append([]string(nil), opts.Soft...), index, nil
 	}
 
 	pred, err := dbspexpr.NewParser().Parse(args)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return pred, nil, nil, nil
+	return pred, nil, nil, nil, nil
 }
 
 func firstOutput(outputs []string) string {
