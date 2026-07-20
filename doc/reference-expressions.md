@@ -417,13 +417,22 @@ of the current expression language and may be written explicitly when needed.
 
 ### `@exists`
 
-Checks whether a document field resolves successfully.
+Checks whether a field resolves successfully. A `$$`-prefixed path tests the subject (the element
+under iteration in `@map`/`@filter`); every other path tests the document.
 
 ```yaml
 "@exists": "metadata.labels.tier"
 ```
 
-This is the cleanest presence test for optional fields.
+```yaml
+# Keep the rules that carry filters.
+"@filter":
+  - {"@exists": "$$.filters"}
+  - "$.spec.rules"
+```
+
+A malformed path is an error, not `false` (and not `true`): expression errors abort the circuit
+step, so they surface instead of silently skewing a predicate.
 
 ## List operators
 

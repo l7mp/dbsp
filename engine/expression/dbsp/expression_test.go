@@ -492,6 +492,46 @@ var _ = Describe("Field Operators", func() {
 		Expect(result).To(Equal(false))
 	})
 
+	It("should evaluate @exists against the subject in list context", func() {
+		expr, err := dbsp.Compile([]byte(
+			`{"@filter": [{"@exists": "$$.filters"}, "$.rules"]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		rulesDoc := unstructured.New(map[string]any{
+			"rules": []any{
+				map[string]any{"backendRefs": []any{}},
+				map[string]any{"filters": []any{"x"}},
+			},
+		})
+		result, err := expr.Evaluate(expression.NewContext(rulesDoc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{map[string]any{"filters": []any{"x"}}}))
+	})
+
+	It("should evaluate @exists on nested subject paths", func() {
+		expr, err := dbsp.Compile([]byte(
+			`{"@filter": [{"@exists": "$$.a.b"}, "$.items"]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		itemsDoc := unstructured.New(map[string]any{
+			"items": []any{
+				map[string]any{"a": map[string]any{"b": 1}},
+				map[string]any{"a": map[string]any{"c": 2}},
+			},
+		})
+		result, err := expr.Evaluate(expression.NewContext(itemsDoc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{map[string]any{"a": map[string]any{"b": 1}}}))
+	})
+
+	It("should propagate @exists errors instead of answering true", func() {
+		expr, err := dbsp.Compile([]byte(`{"@exists": "$[invalid"}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = expr.Evaluate(expression.NewContext(doc))
+		Expect(err).To(HaveOccurred())
+	})
+
 	It("should evaluate @set", func() {
 		expr, err := dbsp.Compile([]byte(`{"@set": ["newField", 42]}`))
 		Expect(err).NotTo(HaveOccurred())

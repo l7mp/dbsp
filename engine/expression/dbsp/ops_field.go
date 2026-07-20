@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
+	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/expression"
 	"github.com/l7mp/dbsp/engine/internal/utils"
 )
@@ -172,7 +174,9 @@ func (e *setSubExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return nil, fmt.Errorf("@setsub: subject is not a document or map: %T", subject)
 }
 
-// existsExpr implements @exists - checks if a field exists in the document.
+// existsExpr implements @exists, which checks if a field exists. Paths prefixed with "$$." or
+// "$$[" resolve against the subject (mirroring @getsub); every other path resolves against the
+// document.
 type existsExpr struct{ unaryOp }
 
 func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
@@ -181,13 +185,41 @@ func (e *existsExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, err
 	}
 
-	doc := ctx.Document()
-	if doc == nil {
-		return nil, fmt.Errorf("@exists: no document in context")
+	var fieldErr error
+	switch {
+	case strings.HasPrefix(fieldPath, "$$.") || strings.HasPrefix(fieldPath, "$$["):
+		subject := ctx.Subject()
+		if subject == nil {
+			return nil, fmt.Errorf("@exists: no subject in context")
+		}
+		path := fieldPath[3:]
+		if strings.HasPrefix(fieldPath, "$$[") {
+			path = fieldPath[1:]
+		}
+		switch s := subject.(type) {
+		case datamodel.Document:
+			_, fieldErr = s.GetField(path)
+		case map[string]any:
+			// Adapt the plain map so nested and JSONPath forms resolve
+			// exactly like document paths do.
+			_, fieldErr = unstructured.New(s).GetField(path)
+		default:
+			return nil, fmt.Errorf("@exists: subject is not a document or map: %T", subject)
+		}
+	default:
+		doc := ctx.Document()
+		if doc == nil {
+			return nil, fmt.Errorf("@exists: no document in context")
+		}
+		_, fieldErr = doc.GetField(fieldPath)
 	}
 
-	_, fieldErr := doc.GetField(fieldPath)
-	exists := !errors.Is(fieldErr, datamodel.ErrFieldNotFound)
+	if fieldErr != nil && !errors.Is(fieldErr, datamodel.ErrFieldNotFound) {
+		// An unresolvable path is an authoring error, not evidence of
+		// existence: propagate instead of silently answering true.
+		return nil, fmt.Errorf("@exists: %w", fieldErr)
+	}
+	exists := fieldErr == nil
 
 	ctx.Logger().V(8).Info("eval", "op", "@exists", "field", fieldPath, "result", exists)
 	return exists, nil
