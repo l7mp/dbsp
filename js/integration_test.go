@@ -100,7 +100,7 @@ func runScriptAsModule(vm *VM, script string) error {
 func zsetRowsByField(ev dbspruntime.Event, field string) []string {
 	rows := make([]string, 0, ev.Data.Size())
 	ev.Data.Iter(func(doc datamodel.Document, weight zset.Weight) bool {
-		v, err := doc.GetField(field)
+		v, err := doc.GetField("$." + field)
 		if err == nil {
 			rows = append(rows, fmt.Sprintf("%d:%v", weight, v))
 		}
@@ -820,9 +820,9 @@ runtime.onError((e) => {
 
 		entries := first.Data.Entries()
 		Expect(entries).NotTo(BeEmpty())
-		origin, err := entries[0].Document.GetField("origin")
+		origin, err := entries[0].Document.GetField("$.origin")
 		Expect(err).NotTo(HaveOccurred())
-		message, err := entries[0].Document.GetField("message")
+		message, err := entries[0].Document.GetField("$.message")
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(origin).To(Equal("emitter-1"))
@@ -939,11 +939,11 @@ c.validate();
 
 		entries := first.Data.Entries()
 		Expect(entries).NotTo(BeEmpty())
-		node, err := entries[0].Document.GetField("node")
+		node, err := entries[0].Document.GetField("$.node")
 		Expect(err).NotTo(HaveOccurred())
-		kind, err := entries[0].Document.GetField("kind")
+		kind, err := entries[0].Document.GetField("$.kind")
 		Expect(err).NotTo(HaveOccurred())
-		scheduleLen, err := entries[0].Document.GetField("scheduleLen")
+		scheduleLen, err := entries[0].Document.GetField("$.scheduleLen")
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(fmt.Sprint(node)).NotTo(BeEmpty())
@@ -1003,7 +1003,7 @@ runtime.observe("aggregation", (e) => {
 
 		entries := first.Data.Entries()
 		Expect(entries).NotTo(BeEmpty())
-		node, err := entries[0].Document.GetField("node")
+		node, err := entries[0].Document.GetField("$.node")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fmt.Sprint(node)).NotTo(BeEmpty())
 	})
@@ -1044,7 +1044,7 @@ publish("obs-custom-in", [[{id: 303}, 1]]);
 			if len(entries) == 0 {
 				return false
 			}
-			node, err := entries[0].Document.GetField("node")
+			node, err := entries[0].Document.GetField("$.node")
 			if err != nil {
 				return false
 			}

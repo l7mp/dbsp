@@ -517,7 +517,7 @@ func extractNamespaceParts(doc datamodel.Document, names []string) (map[string]d
 	}
 	parts := make(map[string]datamodel.Document, len(names))
 	for _, name := range names {
-		v, err := doc.GetField(name)
+		v, err := doc.GetField("$." + name)
 		if err != nil {
 			if errors.Is(err, datamodel.ErrFieldNotFound) {
 				parts[name] = nil

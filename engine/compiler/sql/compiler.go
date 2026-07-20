@@ -271,7 +271,7 @@ func compileProjection(selectExprs sqlparser.SelectExprs, bindVars map[string]*q
 			if err != nil {
 				return nil, fmt.Errorf("projection %s: %w", key, err)
 			}
-			if err := newDoc.SetField(key, val); err != nil {
+			if err := newDoc.SetField("$."+key, val); err != nil {
 				return nil, fmt.Errorf("set field %s: %w", key, err)
 			}
 		}

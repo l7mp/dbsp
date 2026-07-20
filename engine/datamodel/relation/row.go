@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/orderedcode"
+	"github.com/ohler55/ojg/jp"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 )
@@ -128,6 +129,10 @@ func (r *Row) New() datamodel.Document {
 }
 
 func (r *Row) GetField(field string) (any, error) {
+	field, err := columnKey(field)
+	if err != nil {
+		return nil, err
+	}
 	schema := r.Table.Schema
 
 	for i, col := range schema.Columns {
@@ -148,6 +153,10 @@ func (r *Row) GetField(field string) (any, error) {
 }
 
 func (r *Row) SetField(field string, value any) error {
+	field, err := columnKey(field)
+	if err != nil {
+		return err
+	}
 	schema := r.Table.Schema
 	for i, col := range schema.Columns {
 		if strings.EqualFold(col.QualifiedName, field) || strings.EqualFold(col.Name, field) {
@@ -166,6 +175,37 @@ func (r *Row) SetField(field string, value any) error {
 		}
 	}
 	return fmt.Errorf("%w: column %s not found", datamodel.ErrFieldNotFound, field)
+}
+
+// columnKey translates a $-rooted JSONPath into the Row document model: a
+// row is a flat tuple of (possibly table-qualified) named columns, so a
+// path's child fragments name a column — $["t.a"] is the column "t.a", and
+// $.t.a means the same because a dot in a Row path is the SQL table
+// qualifier, never nesting. The translation uses the standard JSONPath
+// parser; anything beyond child selection has no Row interpretation.
+func columnKey(field string) (string, error) {
+	if !strings.HasPrefix(field, "$") {
+		return "", fmt.Errorf("field path %q is not a $-rooted JSONPath", field)
+	}
+	expr, err := jp.ParseString(field)
+	if err != nil {
+		return "", fmt.Errorf("invalid JSONPath %q: %w", field, err)
+	}
+	segments := make([]string, 0, len(expr))
+	for _, frag := range expr {
+		switch f := frag.(type) {
+		case jp.Root:
+			// Skip the root.
+		case jp.Child:
+			segments = append(segments, string(f))
+		default:
+			return "", fmt.Errorf("path %q has no Row interpretation: rows are flat named columns", field)
+		}
+	}
+	if len(segments) == 0 {
+		return "", fmt.Errorf("path %q names no column", field)
+	}
+	return strings.Join(segments, "."), nil
 }
 
 // Fields returns a deep copy of row fields as a map.

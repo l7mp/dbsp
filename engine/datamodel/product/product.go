@@ -77,11 +77,14 @@ func (p *Product) Merge(other datamodel.Document) datamodel.Document {
 
 func (p *Product) New() datamodel.Document { return &Product{parts: map[string]datamodel.Document{}} }
 
+// GetField resolves a $-rooted JSONPath against the product: the first
+// child fragment names the join input (the namespace), and the rest of the
+// path delegates to that member document with the member evaluating its own
+// share of the path.
 func (p *Product) GetField(key string) (any, error) {
 	if strings.HasPrefix(key, "$[") {
 		return p.getJSONPath(key)
 	}
-
 	if key == "$" || key == "$." {
 		root := map[string]any{}
 		for k, v := range p.parts {
@@ -89,8 +92,10 @@ func (p *Product) GetField(key string) (any, error) {
 		}
 		return root, nil
 	}
-	k := strings.TrimPrefix(key, "$.")
-	parts := strings.SplitN(k, ".", 2)
+	if !strings.HasPrefix(key, "$.") {
+		return nil, fmt.Errorf("field path %q is not a $-rooted JSONPath", key)
+	}
+	parts := strings.SplitN(key[2:], ".", 2)
 	d, ok := p.parts[parts[0]]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
@@ -101,7 +106,7 @@ func (p *Product) GetField(key string) (any, error) {
 	if d == nil {
 		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
 	}
-	return d.GetField(parts[1])
+	return d.GetField("$." + parts[1])
 }
 
 func (p *Product) getJSONPath(key string) (any, error) {
@@ -131,8 +136,10 @@ func (p *Product) getJSONPath(key string) (any, error) {
 }
 
 func (p *Product) SetField(key string, value any) error {
-	k := strings.TrimPrefix(key, "$.")
-	parts := strings.SplitN(k, ".", 2)
+	if !strings.HasPrefix(key, "$.") {
+		return fmt.Errorf("field path %q is not a $-rooted JSONPath", key)
+	}
+	parts := strings.SplitN(key[2:], ".", 2)
 	if len(parts) == 1 {
 		d, ok := value.(datamodel.Document)
 		if !ok {
@@ -145,7 +152,7 @@ func (p *Product) SetField(key string, value any) error {
 	if !ok {
 		return fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, parts[0])
 	}
-	return d.SetField(parts[1], value)
+	return d.SetField("$."+parts[1], value)
 }
 
 func (p *Product) Fields() map[string]any {

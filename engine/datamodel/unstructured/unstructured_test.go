@@ -22,7 +22,7 @@ var _ = Describe("Unstructured", func() {
 			Expect(cp.Hash()).To(Equal(orig.Hash()))
 
 			// Mutating the copy must not affect the original.
-			Expect(cp.SetField("a", int64(99))).To(Succeed())
+			Expect(cp.SetField("$.a", int64(99))).To(Succeed())
 			Expect(orig.Hash()).To(Equal(unstructured.New(map[string]any{"a": int64(1), "b": "hello"}).Hash()))
 		})
 
@@ -32,14 +32,14 @@ var _ = Describe("Unstructured", func() {
 			cp := orig.Copy()
 
 			// Mutate the nested map inside the copy via GetField.
-			nested, err := cp.GetField("nested")
+			nested, err := cp.GetField("$.nested")
 			Expect(err).NotTo(HaveOccurred())
 			nestedMap, ok := nested.(map[string]any)
 			Expect(ok).To(BeTrue())
 			nestedMap["x"] = int64(42)
 
 			// Original must be unaffected.
-			origNested, err := orig.GetField("nested")
+			origNested, err := orig.GetField("$.nested")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(origNested.(map[string]any)["x"]).To(Equal(int64(1)))
 		})
@@ -49,14 +49,14 @@ var _ = Describe("Unstructured", func() {
 			cp := orig.Copy()
 
 			// Mutate the slice inside the copy.
-			tags, err := cp.GetField("tags")
+			tags, err := cp.GetField("$.tags")
 			Expect(err).NotTo(HaveOccurred())
 			tagSlice, ok := tags.([]any)
 			Expect(ok).To(BeTrue())
 			tagSlice[0] = "z"
 
 			// Original must be unaffected.
-			origTags, err := orig.GetField("tags")
+			origTags, err := orig.GetField("$.tags")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(origTags.([]any)[0]).To(Equal("a"))
 		})
@@ -73,12 +73,12 @@ var _ = Describe("Unstructured", func() {
 			cp := orig.Copy()
 
 			// Drill into the copy and mutate the deepest level.
-			l1, _ := cp.GetField("level1")
+			l1, _ := cp.GetField("$.level1")
 			l2, _ := l1.(map[string]any)["level2"].(map[string]any)
 			l2["level3"] = "mutated"
 
 			// Original must be unaffected.
-			origL1, _ := orig.GetField("level1")
+			origL1, _ := orig.GetField("$.level1")
 			origL2 := origL1.(map[string]any)["level2"].(map[string]any)
 			Expect(origL2["level3"]).To(Equal("original"))
 		})
@@ -94,7 +94,7 @@ var _ = Describe("Unstructured", func() {
 			inner["k"] = "mutated"
 
 			// Document must be unaffected.
-			sub, err := doc.GetField("sub")
+			sub, err := doc.GetField("$.sub")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(sub.(map[string]any)["k"]).To(Equal("orig"))
 		})

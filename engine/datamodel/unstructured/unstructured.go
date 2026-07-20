@@ -2,9 +2,9 @@ package unstructured
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/ohler55/ojg/jp"
 
@@ -29,6 +29,15 @@ func New(fields map[string]any) *Unstructured {
 		f[k] = deepCopyAny(v)
 	}
 	return &Unstructured{fields: f}
+}
+
+// Wrap creates an Unstructured document sharing the provided fields map —
+// no copy is made, so mutations flow both ways. This adapts an existing
+// plain-map value to the Document interface (the expression engine wraps
+// plain-map subjects this way, so subject paths resolve exactly like
+// document paths); use New when the document must own its fields.
+func Wrap(fields map[string]any) *Unstructured {
+	return &Unstructured{fields: fields}
 }
 
 // Merge combines two unstructured documents, with right side overwriting key collisions.
@@ -71,7 +80,11 @@ func (u *Unstructured) Hash() string {
 
 // String returns the canonical JSON representation of the document.
 func (u *Unstructured) String() string {
-	return u.Hash()
+	b, err := json.Marshal(u.fields)
+	if err != nil {
+		return fmt.Sprintf("%v", u.fields)
+	}
+	return string(b)
 }
 
 // Copy returns a deep copy of the document. Nested map[string]any and []any
@@ -103,53 +116,17 @@ func (u *Unstructured) Fields() map[string]any {
 	return f
 }
 
-// GetField returns the value for a (possibly dotted) field path.
-// It returns datamodel.ErrFieldNotFound when the field does not exist.
+// GetField returns the value for a field path. There is exactly one path
+// semantics — "$"-rooted JSONPath, evaluated by the standard evaluator; a
+// path without the "$" root is an error, not a bare field name. Map keys
+// containing dots (Kubernetes label, annotation and Secret data keys) are
+// addressed with bracket syntax: $["data"]["tls.crt"] — a dot in a path
+// always traverses.
+// It returns datamodel.ErrFieldNotFound when the path resolves to nothing.
 func (u *Unstructured) GetField(key string) (any, error) {
-	if strings.HasPrefix(key, "$") {
-		return u.getJSONPath(key)
-	}
-
-	if v, ok := u.fields[key]; ok {
-		return v, nil
-	}
-
-	parts := strings.SplitN(key, ".", 2)
-	v, ok := u.fields[parts[0]]
-	if !ok {
-		err := fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
-		if val, fbErr, used := u.tryRelativeJSONPath(key, err); used {
-			return val, fbErr
-		}
-		return nil, err
-	}
-	if len(parts) == 1 {
-		return v, nil
-	}
-	// Traverse into a nested map.
-	nested, ok := v.(map[string]any)
-	if !ok {
-		err := fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
-		if val, fbErr, used := u.tryRelativeJSONPath(key, err); used {
-			return val, fbErr
-		}
-		return nil, err
-	}
-	sub := &Unstructured{fields: nested}
-	value, err := sub.GetField(parts[1])
-	if err == nil {
-		return value, nil
-	}
-	if val, fbErr, used := u.tryRelativeJSONPath(key, err); used {
-		return val, fbErr
-	}
-	return nil, err
-}
-
-func (u *Unstructured) getJSONPath(key string) (any, error) {
-	expr, err := jp.ParseString(key)
+	expr, err := parsePath(key)
 	if err != nil {
-		return nil, fmt.Errorf("invalid JSONPath %q: %w", key, err)
+		return nil, err
 	}
 	results := expr.Get(u.fields)
 	if len(results) == 0 {
@@ -161,48 +138,40 @@ func (u *Unstructured) getJSONPath(key string) (any, error) {
 	return results, nil
 }
 
-func (u *Unstructured) tryRelativeJSONPath(key string, originalErr error) (any, error, bool) {
-	if !errors.Is(originalErr, datamodel.ErrFieldNotFound) {
-		return nil, nil, false
-	}
-	if !strings.Contains(key, "[") {
-		return nil, nil, false
-	}
+// parsedPaths caches compiled JSONPath expressions. Field paths come from
+// compiled expression programs, so the live set is small and hot; jp.Expr
+// values are read-only during Get/Set and safe to share.
+var parsedPaths sync.Map // string -> jp.Expr
 
-	value, err := u.getJSONPath("$." + key)
-	if err != nil {
-		if errors.Is(err, datamodel.ErrFieldNotFound) {
-			return nil, nil, false
-		}
-		return nil, originalErr, false
+// parsePath compiles a field path to a JSONPath expression, caching the
+// result. The path must be "$"-rooted: constructing the path (with bracket
+// quoting for literal keys) is the caller's business, and silently reading
+// a bare string as a path would blur the literal/path distinction.
+func parsePath(key string) (jp.Expr, error) {
+	if !strings.HasPrefix(key, "$") {
+		return nil, fmt.Errorf("field path %q is not a $-rooted JSONPath", key)
 	}
-	return value, nil, true
+	if cached, ok := parsedPaths.Load(key); ok {
+		return cached.(jp.Expr), nil
+	}
+	expr, err := jp.ParseString(key)
+	if err != nil {
+		return nil, fmt.Errorf("invalid JSONPath %q: %w", key, err)
+	}
+	parsedPaths.Store(key, expr)
+	return expr, nil
 }
 
-// SetField sets the value for a top-level field name, dotted path, or JSONPath.
+// SetField sets the value for a field path, resolved with the same JSONPath
+// semantics as GetField; missing intermediate maps are created.
 func (u *Unstructured) SetField(key string, value any) error {
-	if strings.HasPrefix(key, "$") {
-		expr, err := jp.ParseString(key)
-		if err != nil {
-			return fmt.Errorf("invalid JSONPath %q: %w", key, err)
-		}
-		if err := expr.Set(u.fields, value); err != nil {
-			return fmt.Errorf("set JSONPath %q: %w", key, err)
-		}
-		return nil
+	expr, err := parsePath(key)
+	if err != nil {
+		return err
 	}
-
-	if strings.Contains(key, ".") {
-		parts := strings.SplitN(key, ".", 2)
-		next, ok := u.fields[parts[0]].(map[string]any)
-		if !ok {
-			next = map[string]any{}
-			u.fields[parts[0]] = next
-		}
-		return (&Unstructured{fields: next}).SetField(parts[1], value)
+	if err := expr.Set(u.fields, value); err != nil {
+		return fmt.Errorf("set JSONPath %q: %w", key, err)
 	}
-
-	u.fields[key] = value
 	return nil
 }
 

@@ -176,7 +176,7 @@ func logPrimaryKey(doc datamodel.Document) string {
 }
 
 func metadataNameKey(doc datamodel.Document) string {
-	nameVal, err := doc.GetField("metadata.name")
+	nameVal, err := doc.GetField("$.metadata.name")
 	if err != nil {
 		return ""
 	}
@@ -184,7 +184,7 @@ func metadataNameKey(doc datamodel.Document) string {
 	if !ok || name == "" {
 		return ""
 	}
-	nsVal, err := doc.GetField("metadata.namespace")
+	nsVal, err := doc.GetField("$.metadata.namespace")
 	if err == nil {
 		if ns, ok := nsVal.(string); ok {
 			if ns != "" {

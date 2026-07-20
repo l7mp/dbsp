@@ -2,6 +2,7 @@ package operator
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
@@ -169,7 +170,7 @@ func (o *Project) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error
 			if m, ok := val.(map[string]any); ok {
 				u := unstructured.New(map[string]any{})
 				for k, v := range m {
-					if err := u.SetField(k, v); err != nil {
+					if err := u.SetField(canonicalPath(k), v); err != nil {
 						evalErr = fmt.Errorf("projection map field %s: %w", k, err)
 						return false
 					}
@@ -242,13 +243,23 @@ func (o *Unwind) String() string {
 }
 
 // Apply implements Operator.
+// canonicalPath maps a legacy bare field path onto the strict $-rooted
+// document API: a bare path K reads as $.K. Transitional shim for the
+// operators that still carry bare paths (Unwind, map projections).
+func canonicalPath(path string) string {
+	if strings.HasPrefix(path, "$") {
+		return path
+	}
+	return "$." + path
+}
+
 func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := zset.New()
 
 	var err error
 	inputs[0].Iter(func(doc datamodel.Document, weight zset.Weight) bool {
 		// Get the array field.
-		arrayVal, e := doc.GetField(o.fieldPath)
+		arrayVal, e := doc.GetField(canonicalPath(o.fieldPath))
 		if e != nil {
 			// Field not found - skip this document.
 			o.logger.V(2).Info("unwind-skip", "elem", doc.String(), "field", o.fieldPath, "error", e)
@@ -268,13 +279,13 @@ func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 		// For each element, create a copy with the field replaced.
 		for i, arrElem := range array {
 			newDoc := doc.Copy()
-			if e := newDoc.SetField(o.fieldPath, arrElem); e != nil {
+			if e := newDoc.SetField(canonicalPath(o.fieldPath), arrElem); e != nil {
 				err = fmt.Errorf("failed to set field %q: %w", o.fieldPath, e)
 				return false
 			}
 
 			if o.nameAppend {
-				nameRaw, e := newDoc.GetField("metadata.name")
+				nameRaw, e := newDoc.GetField("$.metadata.name")
 				if e != nil {
 					err = fmt.Errorf("failed to read metadata.name for name append: %w", e)
 					return false
@@ -284,7 +295,7 @@ func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 					err = fmt.Errorf("metadata.name must be string for name append, got %T", nameRaw)
 					return false
 				}
-				if e := newDoc.SetField("metadata.name", fmt.Sprintf("%s-%d", name, i)); e != nil {
+				if e := newDoc.SetField("$.metadata.name", fmt.Sprintf("%s-%d", name, i)); e != nil {
 					err = fmt.Errorf("failed to append index to metadata.name: %w", e)
 					return false
 				}
@@ -292,7 +303,7 @@ func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 
 			// Optionally set the index field.
 			if o.indexField != "" {
-				if e := newDoc.SetField(o.indexField, int64(i)); e != nil {
+				if e := newDoc.SetField(canonicalPath(o.indexField), int64(i)); e != nil {
 					err = fmt.Errorf("failed to set index field %q: %w", o.indexField, e)
 					return false
 				}

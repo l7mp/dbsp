@@ -3,6 +3,7 @@ package testutils
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 )
@@ -51,11 +52,14 @@ func (r Record) Merge(other datamodel.Document) datamodel.Document {
 }
 func (r Record) New() datamodel.Document { return Record{} }
 
+// GetField resolves the canonical $-rooted JSONPath spellings of the two
+// fields; being a fixed two-field struct, Record enumerates them instead of
+// parsing paths.
 func (r Record) GetField(key string) (any, error) {
 	switch key {
-	case "id", "ID":
+	case "$.id", "$.ID", `$["id"]`, `$["ID"]`:
 		return r.ID, nil
-	case "value", "Value":
+	case "$.value", "$.Value", `$["value"]`, `$["Value"]`:
 		return r.Value, nil
 	default:
 		return nil, datamodel.ErrFieldNotFound
@@ -144,6 +148,7 @@ func NewMutableRecord(fields map[string]any) *MutableRecord {
 }
 
 func (r *MutableRecord) Hash() string { return r.String() }
+
 func (r *MutableRecord) String() string {
 	return fmt.Sprintf("%v", r.FieldMap)
 }
@@ -171,8 +176,10 @@ func (r *MutableRecord) New() datamodel.Document {
 	return &MutableRecord{FieldMap: make(map[string]any)}
 }
 
+// GetField resolves the canonical "$."-rooted path against the flat field
+// map (MutableRecord has no nesting: the path names a top-level field).
 func (r *MutableRecord) GetField(key string) (any, error) {
-	v, ok := r.FieldMap[key]
+	v, ok := r.FieldMap[strings.TrimPrefix(key, "$.")]
 	if !ok {
 		return nil, datamodel.ErrFieldNotFound
 	}
@@ -180,7 +187,7 @@ func (r *MutableRecord) GetField(key string) (any, error) {
 }
 
 func (r *MutableRecord) SetField(key string, value any) error {
-	r.FieldMap[key] = value
+	r.FieldMap[strings.TrimPrefix(key, "$.")] = value
 	return nil
 }
 func (r *MutableRecord) Fields() map[string]any {

@@ -19,7 +19,7 @@ var _ = Describe("Database DML", func() {
 		Expect(row.Data[1]).To(Equal("alice"))
 
 		updated, err := db.Update("t", pk, func(r *Row) error {
-			return r.SetField("name", "bob")
+			return r.SetField("$.name", "bob")
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(updated.Data[1]).To(Equal("bob"))

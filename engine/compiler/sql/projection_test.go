@@ -44,11 +44,11 @@ var _ = Describe("Projection helpers", func() {
 		newDoc, ok := result.(datamodel.Document)
 		Expect(ok).To(BeTrue())
 
-		aVal, err := newDoc.GetField("a")
+		aVal, err := newDoc.GetField("$.a")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(aVal).To(Equal(int64(1)))
 
-		bVal, err := newDoc.GetField("b")
+		bVal, err := newDoc.GetField("$.b")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(bVal).To(Equal(int64(2)))
 	})

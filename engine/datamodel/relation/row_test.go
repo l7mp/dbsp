@@ -103,12 +103,12 @@ var _ = Describe("Row", func() {
 			table := makeTable("people", schema)
 			row := makeRow(table, 1, "Alice")
 
-			value, err := row.GetField("name")
+			value, err := row.GetField("$.name")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(value).To(Equal("Alice"))
 
-			Expect(row.SetField("name", "Bob")).To(Succeed())
-			value, err = row.GetField("name")
+			Expect(row.SetField("$.name", "Bob")).To(Succeed())
+			value, err = row.GetField("$.name")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(value).To(Equal("Bob"))
 		})
@@ -122,12 +122,12 @@ var _ = Describe("Row", func() {
 			table := makeTable("people", schema)
 			row := makeRow(table, 1, "Alice")
 
-			value, err := row.GetField("name")
+			value, err := row.GetField("$.name")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(value).To(Equal("Alice"))
 
-			Expect(row.SetField("name", "Bob")).To(Succeed())
-			value, err = row.GetField("full_name")
+			Expect(row.SetField("$.name", "Bob")).To(Succeed())
+			value, err = row.GetField("$.full_name")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(value).To(Equal("Bob"))
 		})
@@ -137,11 +137,11 @@ var _ = Describe("Row", func() {
 			table := makeTable("people", schema)
 			row := makeRow(table, 1)
 
-			_, err := row.GetField("missing")
+			_, err := row.GetField("$.missing")
 			Expect(err).To(HaveOccurred())
 			Expect(err).To(MatchError(ContainSubstring(datamodel.ErrFieldNotFound.Error())))
 
-			err = row.SetField("missing", 2)
+			err = row.SetField("$.missing", 2)
 			Expect(err).To(HaveOccurred())
 			Expect(err).To(MatchError(ContainSubstring(datamodel.ErrFieldNotFound.Error())))
 		})

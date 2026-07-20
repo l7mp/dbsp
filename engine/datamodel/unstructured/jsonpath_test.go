@@ -164,8 +164,11 @@ var _ = Describe("Unstructured JSONPath", func() {
 		Expect(v).To(Equal("changed"))
 	})
 
-	It("supports dotted-path getter compatibility for nested values", func() {
-		v, err := doc.GetField("spec.b.c")
+	It("rejects bare field paths: there is exactly one path semantics", func() {
+		_, err := doc.GetField("spec.b.c")
+		Expect(err).To(MatchError(ContainSubstring("not a $-rooted JSONPath")))
+
+		v, err := doc.GetField("$.spec.b.c")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v).To(Equal(int64(2)))
 	})
@@ -184,11 +187,12 @@ var _ = Describe("Unstructured JSONPath", func() {
 		Expect(errors.Is(err, datamodel.ErrFieldNotFound)).To(BeTrue())
 	})
 
-	It("keeps dotted-path setter compatibility", func() {
+	It("rejects bare field paths on set too", func() {
 		err := doc.SetField("metadata.name", "fixed")
-		Expect(err).NotTo(HaveOccurred())
+		Expect(err).To(MatchError(ContainSubstring("not a $-rooted JSONPath")))
 
-		v, err := doc.GetField("metadata.name")
+		Expect(doc.SetField("$.metadata.name", "fixed")).To(Succeed())
+		v, err := doc.GetField("$.metadata.name")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v).To(Equal("fixed"))
 	})

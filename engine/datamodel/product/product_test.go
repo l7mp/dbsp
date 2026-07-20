@@ -22,12 +22,12 @@ var _ = Describe("Product", func() {
 			"dep": unstructured.New(map[string]any{"metadata": map[string]any{"name": "d1"}}),
 		})
 
-		v, err := p.GetField("pod.metadata.name")
+		v, err := p.GetField("$.pod.metadata.name")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v).To(Equal("p1"))
 
-		Expect(p.SetField("dep.metadata.name", "d2")).To(Succeed())
-		v, err = p.GetField("dep.metadata.name")
+		Expect(p.SetField("$.dep.metadata.name", "d2")).To(Succeed())
+		v, err = p.GetField("$.dep.metadata.name")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v).To(Equal("d2"))
 	})
@@ -38,11 +38,11 @@ var _ = Describe("Product", func() {
 			"svc": nil,
 		})
 
-		svc, err := p.GetField("svc")
+		svc, err := p.GetField("$.svc")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(svc).To(BeNil())
 
-		_, err = p.GetField("svc.metadata.name")
+		_, err = p.GetField("$.svc.metadata.name")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("field not found"))
 	})

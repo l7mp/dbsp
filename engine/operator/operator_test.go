@@ -317,9 +317,9 @@ var _ = Describe("Operators", func() {
 				return false
 			})
 
-			k, _ := row.GetField("key")
-			vals, _ := row.GetField("values")
-			docs, _ := row.GetField("documents")
+			k, _ := row.GetField("$.key")
+			vals, _ := row.GetField("$.values")
+			docs, _ := row.GetField("$.documents")
 			Expect(k).To(Equal("ns-a"))
 			Expect(vals.([]any)).To(ConsistOf(1, 2))
 			Expect(docs.([]any)).To(HaveLen(2))
@@ -345,7 +345,7 @@ var _ = Describe("Operators", func() {
 				return false
 			})
 
-			v, err := out.GetField("values")
+			v, err := out.GetField("$.values")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(v.([]any)).To(Equal([]any{2}))
 		})
@@ -477,7 +477,7 @@ var _ = Describe("Operators", func() {
 			// Verify each unwound element.
 			values := []any{}
 			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				v, _ := elem.GetField("values")
+				v, _ := elem.GetField("$.values")
 				values = append(values, v)
 				Expect(weight).To(Equal(zset.Weight(1)))
 				return true
@@ -520,8 +520,8 @@ var _ = Describe("Operators", func() {
 			Expect(result.Size()).To(Equal(2))
 
 			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				id, _ := elem.GetField("id")
-				name, _ := elem.GetField("name")
+				id, _ := elem.GetField("$.id")
+				name, _ := elem.GetField("$.name")
 				Expect(id).To(Equal("doc1"))
 				Expect(name).To(Equal("Test"))
 				return true
@@ -543,7 +543,7 @@ var _ = Describe("Operators", func() {
 
 			indices := []int64{}
 			result.Iter(func(elem datamodel.Document, weight zset.Weight) bool {
-				idx, _ := elem.GetField("idx")
+				idx, _ := elem.GetField("$.idx")
 				indices = append(indices, idx.(int64))
 				return true
 			})
