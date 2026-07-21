@@ -1,6 +1,7 @@
 package transform
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -17,6 +18,26 @@ func TestTransform(t *testing.T) {
 }
 
 var _ = Describe("Incrementalize", func() {
+	It("creates every edge exactly once", func() {
+		c := circuit.New("dup-edges")
+		Expect(c.AddNode(circuit.Input("input_x"))).To(Succeed())
+		Expect(c.AddNode(circuit.Op("a", operator.NewSelect(expression.Func(func(_ *expression.EvalContext) (any, error) { return true, nil }))))).To(Succeed())
+		Expect(c.AddNode(circuit.Op("b", operator.NewProject(expression.Func(func(ctx *expression.EvalContext) (any, error) { return ctx.Document(), nil }))))).To(Succeed())
+		Expect(c.AddNode(circuit.Output("output_x"))).To(Succeed())
+		Expect(c.AddEdge(circuit.NewEdge("input_x", "a", 0))).To(Succeed())
+		Expect(c.AddEdge(circuit.NewEdge("a", "b", 0))).To(Succeed())
+		Expect(c.AddEdge(circuit.NewEdge("b", "output_x", 0))).To(Succeed())
+
+		incr, err := NewIncrementalizer().Transform(c)
+		Expect(err).NotTo(HaveOccurred())
+		seen := map[string]int{}
+		for _, e := range incr.Edges() {
+			seen[fmt.Sprintf("%s->%s:%d", e.From, e.To, e.Port)]++
+		}
+		for k, n := range seen {
+			Expect(n).To(Equal(1), "edge %s appears %d times", k, n)
+		}
+	})
 	Describe("Linear operators", func() {
 		It("passes through unchanged", func() {
 			// in -> select -> out.

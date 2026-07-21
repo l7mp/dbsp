@@ -97,10 +97,9 @@ func (t *incrementalizer) Transform(c *circuit.Circuit) (*circuit.Circuit, error
 			createOperatorEdges(c, result, toNode, e, mapping)
 		}
 		if isUserOp(fromNode) {
-			// For bilinear targets, skip - already handled above.
-			if isUserOp(toNode) && toNode.Operator != nil &&
-				toNode.Operator.Linearity() == operator.Bilinear {
-				// Bilinear incoming edges are fully handled by the target.
+			// A user-op target already created this edge above; adding it
+			// from the source side too would duplicate it.
+			if isUserOp(toNode) {
 				continue
 			}
 			createOperatorEdges(c, result, fromNode, e, mapping)
