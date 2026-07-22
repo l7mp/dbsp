@@ -185,12 +185,27 @@ func (o *IntegrateOp) Set(v zset.ZSet) {
 	o.acc = v
 }
 
-// Apply adds in to the accumulator and returns the running sum.
+// Apply folds in into the accumulator in place and returns the running sum:
+// O(|in|) per step, no state copy (Insert allocates fresh entry structs, so
+// nothing of the input container is retained).
+//
+// The emitted accumulator is step-scoped: the same container is advanced in
+// place on the next step, so consumers must not retain it across steps.
+// Consumers that need the previous integral must not read the accumulator
+// through a plain reference-holding delay (the value would advance under
+// the delay); delay the deltas BEFORE integrating instead (z⁻¹ then ∫, as
+// the incrementalizer wires it; the two commute).
 func (o *IntegrateOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	in := inputs[0]
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.acc = o.acc.Add(in)
+	if in.IsZero() {
+		return o.acc, nil
+	}
+	in.Iter(func(doc datamodel.Document, w zset.Weight) bool {
+		o.acc.Insert(doc, w)
+		return true
+	})
 	if o.logger.V(2).Enabled() {
 		o.logger.V(2).Info("operator", "op", o.String(), "input", in.String(), "acc", o.acc.String())
 	}

@@ -1,3 +1,61 @@
+// Package executor runs DBSP circuits one step at a time.
+//
+// # Value-passing contract
+//
+// The executor and the operators share Z-set containers and the documents
+// inside them by reference; correctness rests on the following rules, which
+// every operator and every embedder must follow.
+//
+// Document level:
+//
+//  1. Documents stored in a Z-set are immutable. Nothing may modify a
+//     document after it has been inserted anywhere: containers share
+//     document pointers freely (zset.ShallowCopy copies entries, not
+//     documents), so a single mutation would be visible in accumulators,
+//     delay cells and published outputs alike.
+//  2. The invariant is enforced at the expression boundary: operators that
+//     evaluate user expressions over stored elements (Select, Project) do so
+//     against a per-element deep copy (elem.Copy()), so even the mutating
+//     expression operators (@set, @setsub) only ever touch a private copy.
+//     Code that hands documents to a mutating consumer uses zset.DeepCopy.
+//
+// Container level (the mutator pays):
+//
+//  3. A container, once emitted, is immutable for the rest of the step.
+//     Most operators emit freshly built containers, immutable forever
+//     (stateful operators like GroupByIncremental and EquiJoinH keep their
+//     state private and emit fresh result sets; OutputOp sums its inputs
+//     into a fresh container, so even boundary consumers always receive
+//     frozen values). The one exception is the integrator: IntegrateOp
+//     folds its input into its accumulator in place at the start of Apply,
+//     before emission, so dataflow order alone guarantees readers see the
+//     folded value, and re-emits the same container next step. Its output
+//     is therefore step-scoped: consumers must not retain it across steps,
+//     and wiring ∫ into a plain reference-holding delay does NOT yield the
+//     previous integral (the value advances under the delay). To read the
+//     previous integral, delay the deltas BEFORE integrating (z⁻¹ then ∫;
+//     the operators commute), as the incrementalizer wires it: the delay
+//     then holds only a frozen delta and the accumulator never leaves the
+//     integrator.
+//  4. Consumers treat received containers as read-only and build fresh
+//     outputs. Under rules 3-4, passing by reference, fanning one container
+//     out to several consumers, and retaining it across steps (the delay
+//     cell stores and re-emits the received reference) are all safe and
+//     free.
+//
+// Boundary rules:
+//
+//  5. Input Z-sets passed to Execute are borrowed for the step and remain
+//     caller-owned; anything retained from them must be copied (the runtime
+//     shallow-clones bus events before injection, DifferentiateOp
+//     shallow-clones the prev it keeps).
+//  6. Outputs returned by Execute follow rule 3: they are frozen, and the
+//     runtime may publish them to any number of subscribers by reference.
+//  7. Observers receive live references in a shallow map snapshot; an
+//     observer that retains values across steps must copy them.
+//
+// Under these rules incremental circuits run in O(delta) per step: both
+// integrators fold in place and copy nothing.
 package executor
 
 import (

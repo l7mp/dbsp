@@ -172,30 +172,30 @@ func createOperatorEdges(_ *circuit.Circuit, result *circuit.Circuit, node *circ
 			fromMapping := mapping[e.From]
 			actualFrom := fromMapping.outputNode
 
-			intLeft := prefix + "_int_left"
-			intRight := prefix + "_int_right"
 			delayLeft := prefix + "_delay_left"
 			delayRight := prefix + "_delay_right"
+			intLeft := prefix + "_int_left"
+			intRight := prefix + "_int_right"
 			term1 := prefix + "_t1"
 			term2 := prefix + "_t2"
 			term3 := prefix + "_t3"
 
 			if e.Port == 0 {
 				// Left input (Δa).
-				// Connect to: integrator, term1 port 0, term3 port 0.
-				result.AddEdge(circuit.NewEdge(actualFrom, intLeft, 0))
+				// Connect to: z⁻¹ (then ∫), term1 port 0, term3 port 0.
+				result.AddEdge(circuit.NewEdge(actualFrom, delayLeft, 0))
 				result.AddEdge(circuit.NewEdge(actualFrom, term1, 0))
 				result.AddEdge(circuit.NewEdge(actualFrom, term3, 0))
-				// delayLeft (∫a[t-1]) -> term2 port 0.
-				result.AddEdge(circuit.NewEdge(delayLeft, term2, 0))
+				// intLeft (∫z⁻¹a = A[t-1]) -> term2 port 0.
+				result.AddEdge(circuit.NewEdge(intLeft, term2, 0))
 			} else {
 				// Right input (Δb).
-				// Connect to: integrator, term2 port 1, term3 port 1.
-				result.AddEdge(circuit.NewEdge(actualFrom, intRight, 0))
+				// Connect to: z⁻¹ (then ∫), term2 port 1, term3 port 1.
+				result.AddEdge(circuit.NewEdge(actualFrom, delayRight, 0))
 				result.AddEdge(circuit.NewEdge(actualFrom, term2, 1))
 				result.AddEdge(circuit.NewEdge(actualFrom, term3, 1))
-				// delayRight (∫b[t-1]) -> term1 port 1.
-				result.AddEdge(circuit.NewEdge(delayRight, term1, 1))
+				// intRight (∫z⁻¹b = B[t-1]) -> term1 port 1.
+				result.AddEdge(circuit.NewEdge(intRight, term1, 1))
 			}
 		} else if e.From == node.ID {
 			// Outgoing edge from bilinear operator.

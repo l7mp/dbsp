@@ -43,29 +43,34 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 		result.AddNode(Op(incrID, op))
 		return incrID, incrID
 	case op.Linearity() == operator.Bilinear:
+		// Three-term expansion. The pre-state sides A_{t-1}, B_{t-1} are
+		// computed as z⁻¹ THEN ∫ (the operators commute): the delay holds
+		// only the frozen delta, and the integrator folds it in place before
+		// emitting, so integration costs the delta, not the state, and no
+		// aliasing of the accumulator ever leaves the integrator.
 		prefix := incrementalID(id)
-		intLeft := prefix + "_int_left"
-		intRight := prefix + "_int_right"
 		delayLeft := prefix + "_delay_left"
 		delayRight := prefix + "_delay_right"
+		intLeft := prefix + "_int_left"
+		intRight := prefix + "_int_right"
 		term1 := prefix + "_t1"
 		term2 := prefix + "_t2"
 		term3 := prefix + "_t3"
 		sum12 := prefix + "_sum12"
 		sumAll := prefix + "_sum"
 
-		result.AddNode(Integrate(intLeft))
-		result.AddNode(Integrate(intRight))
 		result.AddNode(Delay(delayLeft))
 		result.AddNode(Delay(delayRight))
+		result.AddNode(Integrate(intLeft))
+		result.AddNode(Integrate(intRight))
 		result.AddNode(Op(term1, op))
 		result.AddNode(Op(term2, op))
 		result.AddNode(Op(term3, op))
 		result.AddNode(Op(sum12, operator.NewPlus()))
 		result.AddNode(Op(sumAll, operator.NewPlus()))
 
-		result.AddEdge(NewEdge(intLeft, delayLeft, 0))
-		result.AddEdge(NewEdge(intRight, delayRight, 0))
+		result.AddEdge(NewEdge(delayLeft, intLeft, 0))
+		result.AddEdge(NewEdge(delayRight, intRight, 0))
 		result.AddEdge(NewEdge(term1, sum12, 0))
 		result.AddEdge(NewEdge(term2, sum12, 1))
 		result.AddEdge(NewEdge(sum12, sumAll, 0))
@@ -98,18 +103,18 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 	case op.Kind() == operator.KindDistinct:
 		prefix := incrementalID(id)
 		noOpNode := prefix + "_noop"
-		intNode := prefix + "_int"
 		delayNode := prefix + "_delay"
+		intNode := prefix + "_int"
 		hNode := prefix + "_H_func"
 
 		result.AddNode(Op(noOpNode, operator.NewNoOp()))   // NoOp: represents a single input node
-		result.AddNode(Integrate(intNode))                 // I: accumulates full state
-		result.AddNode(Delay(delayNode))                   // z⁻¹: previous integrated state
-		result.AddNode(Op(hNode, operator.NewDistinctH())) // H(z⁻¹, δ)
+		result.AddNode(Delay(delayNode))                   // z⁻¹: previous delta
+		result.AddNode(Integrate(intNode))                 // ∫: previous integrated state (z⁻¹ then ∫)
+		result.AddNode(Op(hNode, operator.NewDistinctH())) // H(z⁻¹∫, δ)
 
-		result.AddEdge(NewEdge(noOpNode, intNode, 0))
-		result.AddEdge(NewEdge(intNode, delayNode, 0))
-		result.AddEdge(NewEdge(delayNode, hNode, 0)) // i = previous state
+		result.AddEdge(NewEdge(noOpNode, delayNode, 0))
+		result.AddEdge(NewEdge(delayNode, intNode, 0))
+		result.AddEdge(NewEdge(intNode, hNode, 0)) // i = previous state
 		result.AddEdge(NewEdge(noOpNode, hNode, 1))
 
 		return noOpNode, hNode

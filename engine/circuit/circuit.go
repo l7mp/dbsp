@@ -335,11 +335,28 @@ func (c *Circuit) BypassNode(id string) error {
 // Validate checks that the circuit is a DAG (no cycles). A properly constructed
 // circuit using delay nodes (which are split into emit/absorb pairs) will always
 // be a DAG. Cycles indicate a missing delay.
+//
+// Validate also rejects edges from an integrator into a delay: the
+// integrator's emitted accumulator is step-scoped (it advances in place on
+// the next step), so a delay retaining it would emit the advanced value,
+// not the previous integral. The equivalent safe composition delays the
+// deltas before integrating (z⁻¹ then ∫; the operators commute).
 func (c *Circuit) Validate() []error {
 	var errs []error
 	for _, scc := range c.FindSCCs() {
 		if len(scc) > 1 {
 			errs = append(errs, fmt.Errorf("circuit has a cycle %v; use delay nodes to break cycles", scc))
+		}
+	}
+	for _, e := range c.Edges() {
+		from, to := c.Node(e.From), c.Node(e.To)
+		if from == nil || to == nil {
+			continue
+		}
+		if from.Kind() == operator.KindIntegrate && to.Kind() == operator.KindDelayAbsorb {
+			errs = append(errs, fmt.Errorf(
+				"edge %s -> %s stores an integrator's accumulator in a delay: the integral is step-scoped and advances under the delay",
+				e.From, strings.TrimSuffix(e.To, "_absorb")))
 		}
 	}
 	return errs

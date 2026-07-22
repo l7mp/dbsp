@@ -697,3 +697,150 @@ var _ = Describe("Fixed-Point Circuits", func() {
 		})
 	})
 })
+
+// Value-passing invariant corner cases: the theory says the in-place
+// integrator, the by-reference delay and the re-containering output compose
+// safely; these tests pin the invariants down against scheduling and
+// aliasing surprises in the implementation.
+var _ = Describe("Value-passing invariants", func() {
+	record := func(id string, v int) testutils.Record { return testutils.Record{ID: id, Value: v} }
+	delta := func(entries ...zset.Elem) zset.ZSet {
+		z := zset.New()
+		for _, e := range entries {
+			z.Insert(e.Document, e.Weight)
+		}
+		return z
+	}
+
+	It("z⁻¹ then ∫ emits the previous integral through inserts, retractions and idle steps", func() {
+		// in -> z⁻¹ -> ∫ -> out: out_t must equal the integral of everything
+		// received strictly before step t.
+		c := circuit.New("delayed-integral")
+		c.AddNode(circuit.Input("in"))
+		c.AddNode(circuit.Delay("z"))
+		c.AddNode(circuit.Integrate("int"))
+		c.AddNode(circuit.Output("out"))
+		c.AddEdge(circuit.NewEdge("in", "z", 0))
+		c.AddEdge(circuit.NewEdge("z", "int", 0))
+		c.AddEdge(circuit.NewEdge("int", "out", 0))
+
+		exec, err := New(c, logger.NewZapLogger(logLevel))
+		Expect(err).NotTo(HaveOccurred())
+
+		a, b := record("a", 1), record("b", 2)
+		steps := []zset.ZSet{
+			delta(zset.Elem{Document: a, Weight: 1}),  // δ1 = +a
+			delta(zset.Elem{Document: b, Weight: 1}),  // δ2 = +b
+			zset.New(),                                // δ3 = idle
+			delta(zset.Elem{Document: a, Weight: -1}), // δ4 = -a
+			zset.New(), // δ5 = idle
+		}
+		// Expected out_t = δ1 + ... + δ_{t-1}.
+		expected := []zset.ZSet{
+			zset.New(),
+			delta(zset.Elem{Document: a, Weight: 1}),
+			delta(zset.Elem{Document: a, Weight: 1}, zset.Elem{Document: b, Weight: 1}),
+			delta(zset.Elem{Document: a, Weight: 1}, zset.Elem{Document: b, Weight: 1}),
+			delta(zset.Elem{Document: b, Weight: 1}),
+		}
+		for i, in := range steps {
+			out, err := exec.Execute(map[string]zset.ZSet{"in": in})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out["out"].Equal(expected[i])).To(BeTrue(),
+				"step %d: got %s want %s", i+1, out["out"].String(), expected[i].String())
+		}
+	})
+
+	It("output containers stay frozen while integrator state advances", func() {
+		// in -> ∫ -> out. The container returned by Execute must not change
+		// content when later steps advance the accumulator in place: OutputOp
+		// re-containers, protecting boundary consumers.
+		c := circuit.New("frozen-outputs")
+		c.AddNode(circuit.Input("in"))
+		c.AddNode(circuit.Integrate("int"))
+		c.AddNode(circuit.Output("out"))
+		c.AddEdge(circuit.NewEdge("in", "int", 0))
+		c.AddEdge(circuit.NewEdge("int", "out", 0))
+
+		exec, err := New(c, logger.NewZapLogger(logLevel))
+		Expect(err).NotTo(HaveOccurred())
+
+		a, b := record("a", 1), record("b", 2)
+		out1, err := exec.Execute(map[string]zset.ZSet{"in": delta(zset.Elem{Document: a, Weight: 1})})
+		Expect(err).NotTo(HaveOccurred())
+		captured := out1["out"] // retained across steps, as a bus subscriber would
+		Expect(captured.Size()).To(Equal(1))
+
+		out2, err := exec.Execute(map[string]zset.ZSet{"in": delta(zset.Elem{Document: b, Weight: 1})})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out2["out"].Size()).To(Equal(2))
+
+		// The step-1 container must still hold exactly {a@1}.
+		Expect(captured.Size()).To(Equal(1))
+		Expect(captured.Lookup(a.Hash())).To(Equal(zset.Weight(1)))
+	})
+
+	It("a feedback loop with an off-loop reader sees the delayed value regardless of schedule order", func() {
+		// Running sum via feedback: z(emit) -> plus <- in; plus -> z(absorb).
+		// The off-loop reader is wired straight off the emit and NAMED so it
+		// sorts after the absorb in the alphabetical tie-breaking ("zz_out"),
+		// maximizing the chance of running after the absorb stored the new
+		// value. Because the absorb replaces the stored pointer (never
+		// mutating the previously emitted container), the reader must see the
+		// PREVIOUS sum in every step.
+		c := circuit.New("feedback-tap")
+		c.AddNode(circuit.Input("in"))
+		c.AddNode(circuit.Delay("d"))
+		c.AddNode(circuit.Op("p", operator.NewPlus()))
+		c.AddNode(circuit.Output("out_sum"))
+		c.AddNode(circuit.Output("zz_out"))
+		c.AddEdge(circuit.NewEdge("in", "p", 0))
+		c.AddEdge(circuit.NewEdge("d", "p", 1))
+		c.AddEdge(circuit.NewEdge("p", "d", 0)) // rewritten onto d_absorb
+		c.AddEdge(circuit.NewEdge("p", "out_sum", 0))
+		c.AddEdge(circuit.NewEdge("d", "zz_out", 0))
+
+		exec, err := New(c, logger.NewZapLogger(logLevel))
+		Expect(err).NotTo(HaveOccurred())
+
+		a, b := record("a", 1), record("b", 2)
+		// Step 1: sum {a}; delayed view empty.
+		r1, err := exec.Execute(map[string]zset.ZSet{"in": delta(zset.Elem{Document: a, Weight: 1})})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r1["out_sum"].Lookup(a.Hash())).To(Equal(zset.Weight(1)))
+		Expect(r1["zz_out"].IsZero()).To(BeTrue())
+
+		// Step 2: sum {a,b}; delayed view must be exactly step 1's sum {a}.
+		r2, err := exec.Execute(map[string]zset.ZSet{"in": delta(zset.Elem{Document: b, Weight: 1})})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r2["out_sum"].Size()).To(Equal(2))
+		Expect(r2["zz_out"].Size()).To(Equal(1))
+		Expect(r2["zz_out"].Lookup(a.Hash())).To(Equal(zset.Weight(1)))
+
+		// Step 3 (idle): delayed view is step 2's sum {a,b}.
+		r3, err := exec.Execute(map[string]zset.ZSet{"in": zset.New()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r3["zz_out"].Size()).To(Equal(2))
+	})
+
+	It("reset clears in-place integrator state", func() {
+		c := circuit.New("reset-int")
+		c.AddNode(circuit.Input("in"))
+		c.AddNode(circuit.Integrate("int"))
+		c.AddNode(circuit.Output("out"))
+		c.AddEdge(circuit.NewEdge("in", "int", 0))
+		c.AddEdge(circuit.NewEdge("int", "out", 0))
+
+		exec, err := New(c, logger.NewZapLogger(logLevel))
+		Expect(err).NotTo(HaveOccurred())
+
+		a := record("a", 1)
+		_, err = exec.Execute(map[string]zset.ZSet{"in": delta(zset.Elem{Document: a, Weight: 1})})
+		Expect(err).NotTo(HaveOccurred())
+
+		exec.Reset()
+		out, err := exec.Execute(map[string]zset.ZSet{"in": zset.New()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out["out"].IsZero()).To(BeTrue())
+	})
+})

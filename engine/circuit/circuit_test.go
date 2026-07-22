@@ -226,6 +226,34 @@ var _ = Describe("Circuit", func() {
 			Expect(errs).To(BeEmpty())
 		})
 
+		It("rejects an integrator feeding a delay", func() {
+			c := New("int-into-delay")
+			c.AddNode(Input("in"))
+			c.AddNode(Integrate("int"))
+			c.AddNode(Delay("z"))
+			c.AddNode(Output("out"))
+			c.AddEdge(NewEdge("in", "int", 0))
+			c.AddEdge(NewEdge("int", "z", 0)) // Rewritten onto z_absorb; retains the live accumulator.
+			c.AddEdge(NewEdge("z", "out", 0))
+
+			errs := c.Validate()
+			Expect(errs).To(HaveLen(1))
+			Expect(errs[0].Error()).To(ContainSubstring("step-scoped"))
+		})
+
+		It("accepts a delay feeding an integrator", func() {
+			c := New("delay-into-int")
+			c.AddNode(Input("in"))
+			c.AddNode(Delay("z"))
+			c.AddNode(Integrate("int"))
+			c.AddNode(Output("out"))
+			c.AddEdge(NewEdge("in", "z", 0))
+			c.AddEdge(NewEdge("z", "int", 0))
+			c.AddEdge(NewEdge("int", "out", 0))
+
+			Expect(c.Validate()).To(BeEmpty())
+		})
+
 		It("rejects cycles without delay", func() {
 			c := New("no-delay-cycle")
 			c.AddNode(Input("a"))
@@ -478,8 +506,8 @@ var _ = Describe("Circuit", func() {
 
 				prefix := incrementalID("distinct")
 				Expect(c.Node(prefix + "_noop").Kind()).To(Equal(operator.KindNoOp))
-				Expect(c.Node(prefix + "_int").Kind()).To(Equal(operator.KindIntegrate))
 				Expect(c.Node(prefix + "_delay").Kind()).To(Equal(operator.KindDelay))
+				Expect(c.Node(prefix + "_int").Kind()).To(Equal(operator.KindIntegrate))
 				Expect(c.Node(prefix + "_H_func").Kind()).To(Equal(operator.KindDistinctH))
 			})
 
