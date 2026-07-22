@@ -21,6 +21,26 @@ func delta(entries ...zset.Elem) zset.ZSet {
 	return zs
 }
 
+var _ = Describe("PubSub queue introspection", func() {
+	It("reports the number of queued events", func() {
+		ps := runtime.NewPubSub()
+		pub := ps.NewPublisher()
+
+		sub := ps.NewSubscriber()
+		sub.Subscribe("t")
+		Expect(sub.QueueSize()).To(Equal(0))
+
+		for i := 0; i < 3; i++ {
+			Expect(pub.Publish(runtime.Event{Name: "t", Data: delta(zset.Elem{Document: doc("a", "1"), Weight: 1})})).To(Succeed())
+		}
+		Expect(sub.QueueSize()).To(Equal(3))
+
+		_, ok := sub.Next()
+		Expect(ok).To(BeTrue())
+		Expect(sub.QueueSize()).To(Equal(2))
+	})
+})
+
 var _ = Describe("PubSub state retention", func() {
 	It("replays the retained integral to a late subscriber", func() {
 		ps := runtime.NewPubSub()

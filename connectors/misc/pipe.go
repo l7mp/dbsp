@@ -36,6 +36,7 @@ func (s *pipeSubscriber) Next() (dbspruntime.Event, bool) {
 	e, ok := <-s.ch
 	return e, ok
 }
+func (s *pipeSubscriber) QueueSize() int { return len(s.ch) }
 
 var _ dbspruntime.Producer = (*PipeProducer)(nil)
 var _ dbspruntime.Consumer = (*PipeConsumer)(nil)

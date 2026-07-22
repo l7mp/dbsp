@@ -111,6 +111,10 @@ type Subscriber interface {
 	// unsubscribed. Returns (event, true) on success and (zero, false) when
 	// the subscriber is done.
 	Next() (Event, bool)
+	// QueueSize returns the number of events currently queued for delivery.
+	// The owning consumer is the only reader of the delivery channel, so
+	// Next is guaranteed not to block for this many consecutive calls.
+	QueueSize() int
 }
 
 type subscriber struct {
@@ -196,6 +200,9 @@ func (s *subscriber) Next() (Event, bool) {
 	event, ok := <-s.ch
 	return event, ok
 }
+
+// QueueSize returns the number of events currently queued for delivery.
+func (s *subscriber) QueueSize() int { return len(s.ch) }
 
 // GetChannel returns the underlying delivery channel. This is a low-level
 // escape hatch for callers that need to select on the channel directly (e.g.

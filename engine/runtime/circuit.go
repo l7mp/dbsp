@@ -11,6 +11,7 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/l7mp/dbsp/engine/compiler"
+	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/executor"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -117,10 +118,21 @@ func (c *Circuit) SetObserver(observer executor.ObserverFunc) {
 	c.observer = observer
 }
 
+// maxStepEntries bounds how many Z-set entries a single step may fold from
+// the event backlog: draining stops once the running total reaches the cap
+// and the remaining events wait for the next step.
+const maxStepEntries = 128
+
 // Start subscribes to all query inputs and forwards outputs via Publisher.
 // Execute and publish errors are non-critical: they are reported via the
 // runtime error channel and the circuit continues processing subsequent events.
 // Start only returns a non-nil error on context cancellation-related issues.
+//
+// Each step folds the entire queued backlog into one execution: deltas for
+// the same input topic add up as Z-sets (opposite weights cancel) and
+// distinct inputs step together. Incremental circuits are correct for any
+// per-step input delta, and ∫∘C^Δ = C∘∫ preserves the cumulative output
+// (but only cumulative output!).
 func (c *Circuit) Start(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, c.Subscriber.UnsubscribeAll)
 	defer stop()
@@ -130,17 +142,31 @@ func (c *Circuit) Start(ctx context.Context) error {
 		if !ok {
 			return nil
 		}
-		logical, ok := c.topicToInput[in.Name]
-		if !ok {
+
+		inputs := map[string]zset.ZSet{}
+		total := c.foldInput(inputs, in, 0)
+		for n := c.Subscriber.QueueSize(); n > 0 && total < maxStepEntries; n-- {
+			ev, ok := c.Subscriber.Next()
+			if !ok {
+				return nil
+			}
+			total = c.foldInput(inputs, ev, total)
+		}
+		if len(inputs) == 0 {
 			continue
 		}
-		in.Name = logical
-		outs, err := c.Execute(in)
+
+		outs, err := c.Execute(inputs)
 		if err != nil {
 			c.rt.ReportError(c.name, err)
 			continue
 		}
 		for _, out := range outs {
+			// An empty delta carries no information: suppress it instead of
+			// waking every subscriber of the output topic.
+			if out.Data.IsZero() {
+				continue
+			}
 			var docs []string
 			if c.docsFormatter != nil && c.logger.V(2).Enabled() {
 				docs = c.docsFormatter(out)
@@ -153,9 +179,32 @@ func (c *Circuit) Start(ctx context.Context) error {
 	}
 }
 
-// Execute applies one runtime event to the compiled circuit.
-func (c *Circuit) Execute(in Event) ([]Event, error) {
-	result, err := c.exec.ExecuteWithObserver(c.buildStepInputs(in), c.getObserver())
+// foldInput folds one received event into the per-input step deltas and
+// returns the updated entry total. Events for unknown topics are skipped.
+// The first event per input is shallow-cloned before folding: event payloads
+// are shared with every other subscriber of the topic and must never be
+// mutated.
+func (c *Circuit) foldInput(inputs map[string]zset.ZSet, in Event, total int) int {
+	logical, ok := c.topicToInput[in.Name]
+	if !ok {
+		return total
+	}
+	if acc, ok := inputs[logical]; ok {
+		in.Data.Iter(func(doc datamodel.Document, w zset.Weight) bool {
+			acc.Insert(doc, w)
+			return true
+		})
+	} else {
+		inputs[logical] = in.Data.ShallowCopy()
+	}
+	return total + in.Data.Size()
+}
+
+// Execute applies one step to the compiled circuit. inputs maps logical
+// input names to their deltas; absent inputs step with the empty Z-set.
+// Execute takes ownership of the passed Z-sets.
+func (c *Circuit) Execute(inputs map[string]zset.ZSet) ([]Event, error) {
+	result, err := c.exec.ExecuteWithObserver(c.buildStepInputs(inputs), c.getObserver())
 	if err != nil {
 		return nil, fmt.Errorf("runtime step: %w", err)
 	}
@@ -178,12 +227,14 @@ func (c *Circuit) Reset() {
 	c.exec.Reset()
 }
 
-func (c *Circuit) buildStepInputs(in Event) map[string]zset.ZSet {
+func (c *Circuit) buildStepInputs(folded map[string]zset.ZSet) map[string]zset.ZSet {
 	inputs := make(map[string]zset.ZSet, len(c.inputMap))
 	for _, logical := range c.inputNames {
 		inputs[c.inputMap[logical]] = zset.New()
 	}
-	inputs[c.inputMap[in.Name]] = in.Data.ShallowCopy()
+	for logical, delta := range folded {
+		inputs[c.inputMap[logical]] = delta
+	}
 	return inputs
 }
 

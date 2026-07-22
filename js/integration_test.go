@@ -1549,10 +1549,15 @@ const c = aggregate.compile([
 ], {inputs: "pods", outputs: ["distinct-pods"]});
 c.transform("Incrementalizer").validate();
 
+// The retractions go out in a later step: circuits fold the queued
+// backlog, so a single burst would cancel to a net-zero delta and the
+// membership transitions would never surface.
 publish("pods", [[{metadata:{name:"pod-a"}}, 1]]);
 publish("pods", [[{metadata:{name:"pod-a"}}, 1]]);
-publish("pods", [[{metadata:{name:"pod-a"}}, -1]]);
-publish("pods", [[{metadata:{name:"pod-a"}}, -1]]);
+setTimeout(() => {
+  publish("pods", [[{metadata:{name:"pod-a"}}, -1]]);
+  publish("pods", [[{metadata:{name:"pod-a"}}, -1]]);
+}, 100);
 `
 		Expect(runScript(vm, script)).To(Succeed())
 

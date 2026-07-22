@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/compiler/aggregation"
+	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/operator"
 	"github.com/l7mp/dbsp/engine/runtime"
@@ -31,11 +33,76 @@ var _ = Describe("Circuit", func() {
 		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
 		delta.Insert(doc, 1)
 
-		outs, err := c.Execute(runtime.Event{Name: "Pod", Data: delta})
+		outs, err := c.Execute(map[string]zset.ZSet{"Pod": delta})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(outs).To(HaveLen(1))
 		Expect(outs[0].Name).To(Equal("output"))
 		Expect(outs[0].Data.Equal(delta)).To(BeTrue())
+	})
+
+	It("folds the queued backlog into a single step", func() {
+		q := mustCompileCircuitQuery()
+		rt := runtime.NewRuntime(logr.Discard())
+		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+
+		consumer := rt.NewSubscriber()
+		consumer.Subscribe("output")
+		defer consumer.Unsubscribe("output")
+
+		// Queue a backlog before the circuit starts: the circuit
+		// pre-subscribes at construction, so all events land in its channel
+		// and the first step must fold them into one delta.
+		pub := rt.NewPublisher()
+		const k = 10
+		for i := 0; i < k; i++ {
+			delta := zset.New()
+			delta.Insert(unstructured.New(map[string]any{"metadata": map[string]any{"name": fmt.Sprintf("pod-%d", i)}}), 1)
+			Expect(pub.Publish(runtime.Event{Name: "Pod", Data: delta})).To(Succeed())
+		}
+
+		Expect(rt.Add(c)).To(Succeed())
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() { errCh <- rt.Start(ctx) }()
+
+		var out runtime.Event
+		Eventually(consumer.GetChannel(), time.Second).Should(Receive(&out))
+		Expect(out.Name).To(Equal("output"))
+		Expect(out.Data.Size()).To(Equal(k))
+		Consistently(consumer.GetChannel(), 200*time.Millisecond).ShouldNot(Receive())
+
+		cancel()
+		Eventually(errCh, time.Second).Should(Receive(BeNil()))
+	})
+
+	It("cancels opposite weights within a folded step and suppresses the empty output", func() {
+		q := mustCompileCircuitQuery()
+		rt := runtime.NewRuntime(logr.Discard())
+		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+
+		consumer := rt.NewSubscriber()
+		consumer.Subscribe("output")
+		defer consumer.Unsubscribe("output")
+
+		pub := rt.NewPublisher()
+		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
+		add, del := zset.New(), zset.New()
+		add.Insert(doc, 1)
+		del.Insert(doc, -1)
+		Expect(pub.Publish(runtime.Event{Name: "Pod", Data: add})).To(Succeed())
+		Expect(pub.Publish(runtime.Event{Name: "Pod", Data: del})).To(Succeed())
+
+		Expect(rt.Add(c)).To(Succeed())
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() { errCh <- rt.Start(ctx) }()
+
+		Consistently(consumer.GetChannel(), 300*time.Millisecond).ShouldNot(Receive())
+
+		cancel()
+		Eventually(errCh, time.Second).Should(Receive(BeNil()))
 	})
 
 	It("subscribes inputs and publishes outputs", func() {
@@ -399,8 +466,16 @@ func (c *countingConsumer) Start(ctx context.Context) error {
 		if !ok {
 			return nil
 		}
+		// Count delivered Z-set mass, not events: circuit steps fold the
+		// queued backlog, so the number of delivery events is timing
+		// dependent while the cumulative weight is conserved exactly.
+		mass := 0
+		e.Data.Iter(func(_ datamodel.Document, w zset.Weight) bool {
+			mass += int(w)
+			return true
+		})
 		c.mu.Lock()
-		c.counts[e.Name]++
+		c.counts[e.Name] += mass
 		c.mu.Unlock()
 	}
 }

@@ -57,6 +57,7 @@ func (f *fakeSubscriber) Next() (runtime.Event, bool) {
 	e, ok := <-f.ch
 	return e, ok
 }
+func (f *fakeSubscriber) QueueSize() int { return len(f.ch) }
 
 type fakeConsumer struct {
 	fakeRunnable
