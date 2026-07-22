@@ -69,7 +69,7 @@ func (c *Updater) String() string {
 	return fmt.Sprintf("consumer<k8s-updater>{name=%q, topic=%q}", c.Name(), c.outputName)
 }
 
-func (c *Updater) upsert(ctx context.Context, desired *unstructured.Unstructured) error {
+func (c *baseConsumer) upsert(ctx context.Context, desired *unstructured.Unstructured) error {
 	key := client.ObjectKeyFromObject(desired)
 	isView := isViewObject(desired)
 	mainContent := runtime.DeepCopyJSON(desired.UnstructuredContent())
@@ -104,7 +104,7 @@ func (c *Updater) upsert(ctx context.Context, desired *unstructured.Unstructured
 		return c.client.Update(ctx, obj)
 	})
 	if err != nil {
-		return fmt.Errorf("consumer updater %s: %w", key.String(), err)
+		return fmt.Errorf("consumer upsert %s: %w", key.String(), err)
 	}
 
 	if hasStatus && !isView {
@@ -127,7 +127,7 @@ func (c *Updater) upsert(ctx context.Context, desired *unstructured.Unstructured
 
 			return c.client.Status().Update(ctx, statusObj)
 		}); err != nil {
-			return fmt.Errorf("consumer updater %s status: %w", key.String(), err)
+			return fmt.Errorf("consumer upsert %s status: %w", key.String(), err)
 		}
 	}
 

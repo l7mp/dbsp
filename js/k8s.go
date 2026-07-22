@@ -233,20 +233,21 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 }
 
 func (v *VM) k8sPatch(call goja.FunctionCall) (goja.Value, error) {
-	return v.installK8sConsumer(call, true)
+	return v.installK8sConsumer(call, "patcher")
 }
 
 func (v *VM) k8sUpdate(call goja.FunctionCall) (goja.Value, error) {
-	return v.installK8sConsumer(call, false)
+	return v.installK8sConsumer(call, "updater")
 }
 
-// installK8sConsumer implements kubernetes.patch(topic, {gvk}) and
-// kubernetes.update(topic, {gvk}).
-func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Value, error) {
-	kind := "kubernetes.update"
-	if patcher {
-		kind = "kubernetes.patch"
-	}
+func (v *VM) k8sSet(call goja.FunctionCall) (goja.Value, error) {
+	return v.installK8sConsumer(call, "setter")
+}
+
+// installK8sConsumer implements kubernetes.patch(topic, {gvk}),
+// kubernetes.update(topic, {gvk}), and kubernetes.set(topic, {gvk}).
+func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (goja.Value, error) {
+	kind := "kubernetes." + map[string]string{"updater": "update", "patcher": "patch", "setter": "set"}[consumerKind]
 
 	if len(call.Arguments) < 2 {
 		return nil, fmt.Errorf("%s(topic, {gvk}): expected (string topic, object opts), got %s", kind, describeCall(call))
@@ -275,11 +276,6 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
-	consumerKind := "updater"
-	if patcher {
-		consumerKind = "patcher"
-	}
-
 	name := fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, topic, strings.ToLower(gvk.String()))
 	baseCfg := k8sconsumer.Config{
 		Client:     krt.GetClient(),
@@ -290,28 +286,24 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, patcher bool) (goja.Valu
 		Logger:     v.logger,
 	}
 
-	var runnable dbspruntime.Runnable
-	if patcher {
-		p, err := k8sconsumer.NewPatcher(baseCfg)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", kind, err)
-		}
-		if err := v.runtime.Add(p); err != nil {
-			return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
-		}
-		runnable = p
-	} else {
-		u, err := k8sconsumer.NewUpdater(baseCfg)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", kind, err)
-		}
-		if err := v.runtime.Add(u); err != nil {
-			return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
-		}
-		runnable = u
+	var consumer dbspruntime.Runnable
+	var newErr error
+	switch consumerKind {
+	case "patcher":
+		consumer, newErr = k8sconsumer.NewPatcher(baseCfg)
+	case "setter":
+		consumer, newErr = k8sconsumer.NewSetter(baseCfg)
+	default:
+		consumer, newErr = k8sconsumer.NewUpdater(baseCfg)
+	}
+	if newErr != nil {
+		return nil, fmt.Errorf("%s: %w", kind, newErr)
+	}
+	if err := v.runtime.Add(consumer); err != nil {
+		return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
 	}
 
-	return v.runnableHandle(runnable), nil
+	return v.runnableHandle(consumer), nil
 }
 
 func (v *VM) ensureK8sRuntime() (*k8sruntime.Runtime, error) {

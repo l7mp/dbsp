@@ -727,6 +727,9 @@ func (v *VM) injectGlobals() error {
 	if err := kubeObj.Set("update", v.wrap(v.k8sUpdate)); err != nil {
 		return err
 	}
+	if err := kubeObj.Set("set", v.wrap(v.k8sSet)); err != nil {
+		return err
+	}
 	kubeRuntimeObj, err := v.newK8sRuntimeNamespace()
 	if err != nil {
 		return err

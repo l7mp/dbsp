@@ -611,3 +611,157 @@ func keyObject(gvk schema.GroupVersionKind, namespace, name string) *unstructure
 	obj.SetName(name)
 	return obj
 }
+
+var _ = Describe("Kubernetes setter", func() {
+	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+	cm := func(name string, labels map[string]any, data map[string]any) map[string]any {
+		meta := map[string]any{"name": name, "namespace": "default"}
+		if labels != nil {
+			meta["labels"] = labels
+		}
+		return map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   meta,
+			"data":       data,
+		}
+	}
+
+	level := func(topic string, docs ...map[string]any) dbspruntime.Event {
+		z := zset.New()
+		for _, d := range docs {
+			z.Insert(dbspunstructured.New(d), 1)
+		}
+		return dbspruntime.Event{Name: topic, Data: z}
+	}
+
+	seed := func(content map[string]any) *unstructured.Unstructured {
+		obj := &unstructured.Unstructured{}
+		obj.SetUnstructuredContent(content)
+		obj.SetGroupVersionKind(gvk)
+		return obj
+	}
+
+	It("reconciles the managed scope to the level", func() {
+		ctx := context.Background()
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(
+				seed(cm("stale", nil, map[string]any{"a": "old"})),
+				seed(cm("extra", nil, map[string]any{"b": "1"})),
+			).Build()
+
+		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(st.Consume(ctx, level("out",
+			cm("stale", nil, map[string]any{"a": "new"}),
+			cm("fresh", nil, map[string]any{"c": "1"}),
+		))).To(Succeed())
+
+		obj := keyObject(gvk, "default", "stale")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		got, _, err := unstructured.NestedString(obj.Object, "data", "a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal("new"))
+
+		obj = keyObject(gvk, "default", "fresh")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+
+		obj = keyObject(gvk, "default", "extra")
+		err = c.Get(ctx, client.ObjectKeyFromObject(obj), obj)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "extra object must be deleted")
+	})
+
+	It("skips the write when the content already matches", func() {
+		ctx := context.Background()
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(seed(cm("same", nil, map[string]any{"a": "1"}))).Build()
+
+		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		obj := keyObject(gvk, "default", "same")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		before := obj.GetResourceVersion()
+
+		Expect(st.Consume(ctx, level("out", cm("same", nil, map[string]any{"a": "1"})))).To(Succeed())
+
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		Expect(obj.GetResourceVersion()).To(Equal(before), "identical content must not be rewritten")
+	})
+
+	It("owns the entire target kind", func() {
+		ctx := context.Background()
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(
+				seed(cm("one", map[string]any{"app": "x"}, map[string]any{"a": "1"})),
+				seed(cm("other", nil, map[string]any{"b": "1"})),
+			).Build()
+
+		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		// An empty level empties the whole kind: the Setter owns it.
+		Expect(st.Consume(ctx, dbspruntime.Event{Name: "out", Data: zset.New()})).To(Succeed())
+
+		obj := keyObject(gvk, "default", "one")
+		Expect(apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue())
+		obj = keyObject(gvk, "default", "other")
+		Expect(apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue())
+	})
+
+	It("compares wholesale: a status difference triggers the write", func() {
+		ctx := context.Background()
+		dgvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
+
+		seedObj := &unstructured.Unstructured{}
+		seedObj.SetUnstructuredContent(map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata":   map[string]any{"name": "app", "namespace": "default"},
+			"spec":       map[string]any{"replicas": int64(1)},
+			"status":     map[string]any{"readyReplicas": int64(0)},
+		})
+
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seedObj).WithObjects(seedObj).Build()
+
+		st, err := NewSetter(Config{Name: "test-setter-status", Client: c, OutputName: "out", TargetGVK: dgvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Same spec, different status: wholesale comparison must write it.
+		z := zset.New()
+		z.Insert(dbspunstructured.New(map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata":   map[string]any{"name": "app", "namespace": "default"},
+			"spec":       map[string]any{"replicas": int64(1)},
+			"status":     map[string]any{"readyReplicas": int64(1)},
+		}), 1)
+		Expect(st.Consume(ctx, dbspruntime.Event{Name: "out", Data: z})).To(Succeed())
+
+		obj := keyObject(dgvk, "default", "app")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		ready, _, err := unstructured.NestedInt64(obj.Object, "status", "readyReplicas")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ready).To(Equal(int64(1)))
+	})
+
+	It("rejects retractions in level events", func() {
+		ctx := context.Background()
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		z := zset.New()
+		z.Insert(dbspunstructured.New(cm("neg", nil, nil)), -1)
+		err = st.Consume(ctx, dbspruntime.Event{Name: "out", Data: z})
+		Expect(err).To(MatchError(ContainSubstring("no retractions")))
+	})
+})
