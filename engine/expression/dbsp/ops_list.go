@@ -536,6 +536,11 @@ func asComparatorResult(v any) (int, error) {
 	return int(cmp), nil
 }
 
+// lexKey returns the ordering key @lexmin and @lexmax compare by.
+// Documents order by their content digest: the order is deterministic but
+// not meaningful, which is exactly what the canonical use needs (a stable
+// representative pick from a set). Scalars order by their canonical JSON
+// serialization, where lexicographic order is real.
 func lexKey(v any) (string, error) {
 	type hasher interface{ Hash() string }
 	if h, ok := v.(hasher); ok {

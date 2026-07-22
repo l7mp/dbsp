@@ -1,8 +1,10 @@
 package unstructured
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"sync"
 
@@ -15,6 +17,18 @@ import (
 // Fields are stored as a plain Go map and serialised as a JSON object.
 type Unstructured struct {
 	fields map[string]any
+
+	// hash caches the content digest returned by Hash. An empty string means
+	// the digest has not been computed since the last mutation. Every method
+	// that mutates fields must reset it; documents created by Wrap share
+	// their fields map with the caller and therefore never cache (see
+	// shared).
+	hash string
+
+	// shared marks documents whose fields map is aliased by outside code
+	// (Wrap). Such documents cannot cache their hash: the map can mutate
+	// behind the document's back.
+	shared bool
 }
 
 // Ensure Unstructured implements datamodel.Document.
@@ -37,7 +51,7 @@ func New(fields map[string]any) *Unstructured {
 // plain-map subjects this way, so subject paths resolve exactly like
 // document paths); use New when the document must own its fields.
 func Wrap(fields map[string]any) *Unstructured {
-	return &Unstructured{fields: fields}
+	return &Unstructured{fields: fields, shared: true}
 }
 
 // Merge combines two unstructured documents, with right side overwriting key collisions.
@@ -55,6 +69,7 @@ func Merge(left, right *Unstructured) *Unstructured {
 	for k, v := range right.fields {
 		res.fields[k] = deepCopyAny(v)
 	}
+	res.hash = ""
 	return res
 }
 
@@ -67,15 +82,23 @@ func (u *Unstructured) Merge(other datamodel.Document) datamodel.Document {
 	return Merge(u, ou)
 }
 
-// Hash returns a canonical JSON representation of the document's fields.
-// encoding/json marshals map keys in sorted order (since Go 1.12), so this
-// is deterministic.
+// Hash returns the content digest of the document: an FNV-1a 128-bit hash of
+// the canonical JSON serialization (encoding/json marshals map keys in
+// sorted order, so the serialization is deterministic). The digest is cached
+// and reused until the document mutates; Wrap-shared documents recompute on
+// every call because their fields map can change behind the document's
+// back.
 func (u *Unstructured) Hash() string {
-	b, err := json.Marshal(u.fields)
-	if err != nil {
-		return fmt.Sprintf("%v", u.fields)
+	if u.hash != "" && !u.shared {
+		return u.hash
 	}
-	return string(b)
+	h := fnv.New128a()
+	h.Write([]byte(u.String()))
+	digest := hex.EncodeToString(h.Sum(nil))
+	if !u.shared {
+		u.hash = digest
+	}
+	return digest
 }
 
 // String returns the canonical JSON representation of the document.
@@ -96,6 +119,11 @@ func (u *Unstructured) Copy() datamodel.Document {
 	}
 	for k, v := range u.fields {
 		cp.fields[k] = deepCopyAny(v)
+	}
+	// The copy owns its fields and has identical content: a cached digest
+	// carries over (it is empty for shared documents, which never cache).
+	if !u.shared {
+		cp.hash = u.hash
 	}
 	return cp
 }
@@ -186,6 +214,7 @@ func (u *Unstructured) SetField(key string, value any) error {
 	if err := expr.Set(u.fields, value); err != nil {
 		return fmt.Errorf("set JSONPath %q: %w", key, err)
 	}
+	u.hash = ""
 	return nil
 }
 
@@ -196,5 +225,6 @@ func (u *Unstructured) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON deserialises a JSON object into the document.
 func (u *Unstructured) UnmarshalJSON(data []byte) error {
+	u.hash = ""
 	return json.Unmarshal(data, &u.fields)
 }

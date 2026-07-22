@@ -15,7 +15,12 @@ type Document interface {
 	json.Unmarshaler
 
 	// Hash returns a string identifier for equality checking. Two elements are equal iff their
-	// hashes are equal. This is based on full content (like a hash of all fields).
+	// hashes are equal. This is based on full content (like a hash of all fields). Content hash
+	// is the only identity notion the document interface provides: primary keys are schema
+	// information that pipeline transformations cannot maintain, so they exist only in the
+	// relational data model (relation.Row), not here. Unstructured and Product digest the
+	// canonical JSON serialization of the materialized content, so equal content hashes equal
+	// across those two representations.
 	Hash() string
 
 	// Copy returns a deep copy of the document when possible.
