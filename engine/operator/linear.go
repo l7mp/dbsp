@@ -43,7 +43,9 @@ func (o *LinearCombination) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSe
 			result = result.Add(z.Scale(zset.Weight(c)))
 		}
 	}
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }
 
@@ -71,7 +73,9 @@ func NewNegate(opts ...Option) *Negate {
 // Apply implements Operator.
 func (o *Negate) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	result := inputs[0].Negate()
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }
 
@@ -121,7 +125,9 @@ func (o *Select) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error)
 			evalErr = err
 			return false
 		}
-		o.logger.V(2).Info("predicate", "expr", o.predicate.String(), "elem", elem.String(), "result", val)
+		if o.logger.V(2).Enabled() {
+			o.logger.V(2).Info("predicate", "expr", o.predicate.String(), "elem", elem.String(), "result", val)
+		}
 		if matches, ok := val.(bool); ok && matches {
 			result.Insert(elem, weight)
 		}
@@ -131,7 +137,9 @@ func (o *Select) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error)
 	if evalErr != nil {
 		return zset.ZSet{}, evalErr
 	}
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }
 
@@ -161,7 +169,9 @@ func (o *Project) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error
 			evalErr = err
 			return false
 		}
-		o.logger.V(2).Info("projection", "expr", o.projection.String(), "elem", elem.String(), "result", val)
+		if o.logger.V(2).Enabled() {
+			o.logger.V(2).Info("projection", "expr", o.projection.String(), "elem", elem.String(), "result", val)
+		}
 		if val == nil {
 			return true
 		}
@@ -188,7 +198,9 @@ func (o *Project) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error
 	if evalErr != nil {
 		return zset.ZSet{}, evalErr
 	}
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }
 
@@ -247,7 +259,9 @@ func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 		arrayVal, e := doc.GetField(o.fieldPath)
 		if e != nil {
 			// Field not found - skip this document.
-			o.logger.V(2).Info("unwind-skip", "elem", doc.String(), "field", o.fieldPath, "error", e)
+			if o.logger.V(2).Enabled() {
+				o.logger.V(2).Info("unwind-skip", "elem", doc.String(), "field", o.fieldPath, "error", e)
+			}
 			return true
 		}
 		if arrayVal == nil {
@@ -277,6 +291,8 @@ func (o *Unwind) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	if err != nil {
 		return zset.ZSet{}, err
 	}
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }

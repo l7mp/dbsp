@@ -18,6 +18,11 @@ func (o *CartesianProduct) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet
 	left, right := inputs[0], inputs[1]
 	result := zset.New()
 
+	// A product with an empty side is empty; skip the outer iteration.
+	if left.IsZero() || right.IsZero() {
+		return result, nil
+	}
+
 	left.Iter(func(l datamodel.Document, lw zset.Weight) bool {
 		right.Iter(func(r datamodel.Document, rw zset.Weight) bool {
 			result.Insert(l.Merge(r), lw*rw)
@@ -26,6 +31,8 @@ func (o *CartesianProduct) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet
 		return true
 	})
 
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }

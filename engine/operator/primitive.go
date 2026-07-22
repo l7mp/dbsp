@@ -191,7 +191,9 @@ func (o *IntegrateOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, err
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.acc = o.acc.Add(in)
-	o.logger.V(2).Info("operator", "op", o.String(), "input", in.String(), "acc", o.acc.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "input", in.String(), "acc", o.acc.String())
+	}
 	return o.acc, nil
 }
 
@@ -235,7 +237,9 @@ func (o *DifferentiateOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet,
 	defer o.mu.Unlock()
 	out := in.Subtract(o.prev)
 	o.prev = in.ShallowCopy()
-	o.logger.V(2).Info("operator", "op", o.String(), "input", in.String(), "output", out.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "input", in.String(), "output", out.String())
+	}
 	return out, nil
 }
 

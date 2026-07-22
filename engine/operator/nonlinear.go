@@ -28,7 +28,9 @@ func (o *Distinct) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error)
 		}
 		return true
 	})
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }
 
@@ -100,7 +102,9 @@ func (o *GroupBy) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error
 	if err != nil {
 		return zset.New(), err
 	}
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }
 
@@ -176,7 +180,9 @@ func (o *GroupByIncremental) Apply(ctx *ExecContext, inputs ...zset.ZSet) (zset.
 			"delta", result.String(),
 		)
 	}
-	o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	if o.logger.V(2).Enabled() {
+		o.logger.V(2).Info("operator", "op", o.String(), "result", result.String())
+	}
 	return result, nil
 }
 
