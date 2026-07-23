@@ -14,6 +14,7 @@ const (
 	Incrementalizer TransformerType = "Incrementalizer"
 	Rewriter        TransformerType = "Rewriter"
 	Reconciler      TransformerType = "Reconciler"
+	SmithPredictor  TransformerType = "SmithPredictor"
 	Regularizer     TransformerType = "Regularizer"
 	Optimizer       TransformerType = "Optimizer"
 )
@@ -44,6 +45,12 @@ func New(typ TransformerType, args ...any) (Transformer, error) {
 			return nil, fmt.Errorf("%s: %w", Reconciler, err)
 		}
 		return NewReconciler(pairs...), nil
+	case SmithPredictor:
+		k, pairs, err := parseSmithArgs(args)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", SmithPredictor, err)
+		}
+		return NewSmithPredictor(k, pairs...), nil
 	case Regularizer:
 		return NewRegularizer(), nil
 	case Optimizer:
@@ -170,6 +177,22 @@ func parseReconcilerArgs(args []any) ([]ReconcilerPair, error) {
 	}
 
 	return pairs, nil
+}
+
+func parseSmithArgs(args []any) (int, []ReconcilerPair, error) {
+	var pairs []ReconcilerPair
+	k := 0
+	for i, arg := range args {
+		switch v := arg.(type) {
+		case int:
+			k = v
+		case []ReconcilerPair:
+			pairs = v
+		default:
+			return 0, nil, fmt.Errorf("arg %d: expected int or []ReconcilerPair, got %T", i, arg)
+		}
+	}
+	return k, pairs, nil
 }
 
 func parseOptimizerArgs(args []any) (OptimizerOptions, error) {

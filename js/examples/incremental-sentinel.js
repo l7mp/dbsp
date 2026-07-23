@@ -54,7 +54,8 @@ aggregate.compile(
         }},
     ],
     { inputs: ["services"], outputs: ["desired-services"] }
-).transform("Optimizer", {
+).transform({
+  name: "Optimizer",
     pairs: [["services", "desired-services"]],
 }).validate();   // Optimized incremental closed loop.
 

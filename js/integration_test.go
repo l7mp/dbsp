@@ -1306,7 +1306,7 @@ publish("agg-inc-in", [[{id: 222}, 1]]);
 		}, 2*time.Second, 10*time.Millisecond).Should(BeNumerically(">", 0))
 	})
 
-	It("rejects transform with non-string name", func() {
+	It("rejects a transform entry that is neither a name nor an object", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -1315,11 +1315,11 @@ publish("agg-inc-in", [[{id: 222}, 1]]);
 const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], {inputs: "in", outputs: ["out"]});
-c.transform(["Incrementalizer"]);
+c.transform(42);
 `
 		err = runScript(vm, script)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("transformer name must be a string"))
+		Expect(err.Error()).To(ContainSubstring("transform entry"))
 	})
 
 	It("compiles aggregate pipelines with binding objects", func() {

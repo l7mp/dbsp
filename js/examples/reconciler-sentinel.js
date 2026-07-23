@@ -53,7 +53,8 @@ aggregate.compile(
         ]},
     ],
     { inputs: ["services"], outputs: ["desired-services"] }
-).transform("Optimizer", {
+).transform({
+  name: "Optimizer",
     // Explicit pair using topic names; runtime maps them to input_*/output_* node IDs.
     pairs: [["services", "desired-services"]],
 }).validate();

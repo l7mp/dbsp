@@ -77,6 +77,18 @@ func NewCircuit(name string, rt *Runtime, q *compiler.Query, logger logr.Logger)
 		c.topicToInput[in] = in
 	}
 
+	// A topic that is both an input and an output of the same circuit
+	// short-circuits any control loop through the bus: Publish delivers to
+	// every subscriber of the topic, so the circuit's own emissions come
+	// back as observations. A controlled loop closes through the plant, on
+	// distinct observed and command topics.
+	for _, out := range outputNames {
+		if _, ok := inputMap[out]; ok {
+			logger.Info("warning: circuit subscribes to and publishes the same topic; its emissions will be re-ingested as observations",
+				"circuit", name, "topic", out)
+		}
+	}
+
 	return c, nil
 }
 

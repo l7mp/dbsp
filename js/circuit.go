@@ -15,16 +15,76 @@ import (
 )
 
 type circuitHandle struct {
-	c     *circuit.Circuit
-	query *compiler.Query
-	vm    *VM
-	proc  *dbspruntime.Circuit
-	obsFn goja.Callable
+	c       *circuit.Circuit
+	query   *compiler.Query
+	vm      *VM
+	proc    *dbspruntime.Circuit
+	obsFn   goja.Callable
+	applied []transform.TransformerType
+}
+
+func (h *circuitHandle) hasApplied(typ transform.TransformerType) bool {
+	for _, t := range h.applied {
+		if t == typ {
+			return true
+		}
+	}
+	return false
 }
 
 type circuitTransformOptions struct {
 	Pairs [][]string `json:"pairs"`
 	Rules string     `json:"rules"`
+	K     int        `json:"k"`
+}
+
+// transformEntry is the .transform() argument: a transformer name with its
+// options inline, {name: "...", ...opts}. A bare string is shorthand for an
+// entry with no options.
+type transformEntry struct {
+	Name string `json:"name"`
+	circuitTransformOptions
+}
+
+func parseTransformEntry(arg goja.Value) (transformEntry, error) {
+	var e transformEntry
+	if arg == nil || goja.IsUndefined(arg) || goja.IsNull(arg) {
+		return e, fmt.Errorf("missing transformer entry")
+	}
+	if name, ok := arg.Export().(string); ok {
+		e.Name = name
+	} else if err := decodeOptionValue(arg, &e); err != nil {
+		return e, fmt.Errorf("transform entry: %w", err)
+	}
+	e.Name = strings.TrimSpace(e.Name)
+	if e.Name == "" {
+		return e, fmt.Errorf("empty transformer name")
+	}
+	return e, nil
+}
+
+// parseTopicPairs converts JS-side [input, output] topic-name pairs into
+// ReconcilerPairs with canonical node IDs.
+func parseTopicPairs(typ transform.TransformerType, raw [][]string) ([]transform.ReconcilerPair, error) {
+	pairs := make([]transform.ReconcilerPair, 0, len(raw))
+	for i, p := range raw {
+		if len(p) != 2 {
+			return nil, fmt.Errorf("transform %s: pair %d must have exactly 2 elements", typ, i)
+		}
+		inputID := strings.TrimSpace(p[0])
+		outputID := strings.TrimSpace(p[1])
+		if inputID == "" || outputID == "" {
+			return nil, fmt.Errorf("transform %s: pair %d must not contain empty values", typ, i)
+		}
+		if !strings.HasPrefix(inputID, "input_") {
+			inputID = circuit.InputNodeID(inputID)
+		}
+		if !strings.HasPrefix(outputID, "output_") {
+			outputID = circuit.OutputNodeID(outputID)
+		}
+		pairs = append(pairs, transform.ReconcilerPair{InputID: inputID, OutputID: outputID})
+	}
+	return pairs, nil
 }
 
 func (h *circuitHandle) register() error {
@@ -52,109 +112,79 @@ func (h *circuitHandle) register() error {
 	return nil
 }
 
-func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
+// parseTransformArgs converts JS-side transform options into the argument
+// list transform.New expects for the given transformer type.
+func parseTransformArgs(typ transform.TransformerType, jsOpts circuitTransformOptions) ([]any, error) {
+	var args []any
+
+	switch typ {
+	case transform.Incrementalizer:
+	case transform.Regularizer:
+	case transform.Rewriter:
+		if strings.TrimSpace(jsOpts.Rules) != "" {
+			switch strings.TrimSpace(jsOpts.Rules) {
+			case "Pre":
+				args = append(args, "Pre")
+			case "Post":
+				args = append(args, "Post")
+			case "Default":
+				args = append(args, "Default")
+			default:
+				return nil, fmt.Errorf("transform %s options: unknown ruleset %q", typ, jsOpts.Rules)
+			}
+		}
+	case transform.Reconciler:
+		if len(jsOpts.Pairs) > 0 {
+			pairs, err := parseTopicPairs(typ, jsOpts.Pairs)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, pairs)
+		}
+	case transform.SmithPredictor:
+		if len(jsOpts.Pairs) > 0 {
+			pairs, err := parseTopicPairs(typ, jsOpts.Pairs)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, pairs)
+		}
+		args = append(args, jsOpts.K)
+	case transform.Optimizer:
+		o := transform.OptimizerOptions{}
+		if len(jsOpts.Pairs) > 0 {
+			pairs, err := parseTopicPairs(typ, jsOpts.Pairs)
+			if err != nil {
+				return nil, err
+			}
+			o.ReconcilerPairs = pairs
+		}
+		if strings.TrimSpace(jsOpts.Rules) != "" {
+			switch strings.TrimSpace(jsOpts.Rules) {
+			case "Pre":
+				o.RewriterRules = transform.PreRules()
+			case "Post":
+				o.RewriterRules = transform.PostRules()
+			case "Default":
+				o.RewriterRules = transform.DefaultRules()
+			default:
+				return nil, fmt.Errorf("transform %s options: unknown ruleset %q", typ, jsOpts.Rules)
+			}
+		}
+		args = append(args, o)
+	}
+
+	return args, nil
+}
+
+// applyTransformer runs a transformer over the live circuit and installs the
+// result atomically: on any error the previous circuit and processor are
+// restored.
+func (h *circuitHandle) applyTransformer(label string, t transform.Transformer) error {
 	prevProc := h.proc
 	if prevProc != nil {
 		h.vm.runtime.Stop(prevProc)
 		h.proc = nil
-	}
-
-	typ := transform.TransformerType(strings.TrimSpace(name))
-	var args []any
-	if jsArgs != nil && !goja.IsUndefined(jsArgs) && !goja.IsNull(jsArgs) {
-		var jsOpts circuitTransformOptions
-		if err := decodeOptionValue(jsArgs, &jsOpts); err != nil {
-			return fmt.Errorf("transform %s options: %w", typ, err)
-		}
-
-		switch typ {
-		case transform.Incrementalizer:
-		case transform.Regularizer:
-		case transform.Rewriter:
-			if strings.TrimSpace(jsOpts.Rules) != "" {
-				switch strings.TrimSpace(jsOpts.Rules) {
-				case "Pre":
-					args = append(args, "Pre")
-				case "Post":
-					args = append(args, "Post")
-				case "Default":
-					args = append(args, "Default")
-				default:
-					return fmt.Errorf("transform %s options: unknown ruleset %q", typ, jsOpts.Rules)
-				}
-			}
-		case transform.Reconciler:
-			if len(jsOpts.Pairs) > 0 {
-				pairs := make([]transform.ReconcilerPair, 0, len(jsOpts.Pairs))
-				for i, p := range jsOpts.Pairs {
-					if len(p) != 2 {
-						return fmt.Errorf("transform %s: pair %d must have exactly 2 elements", typ, i)
-					}
-					inputID := strings.TrimSpace(p[0])
-					outputID := strings.TrimSpace(p[1])
-					if inputID == "" || outputID == "" {
-						return fmt.Errorf("transform %s: pair %d must not contain empty values", typ, i)
-					}
-
-					if !strings.HasPrefix(inputID, "input_") {
-						inputID = circuit.InputNodeID(inputID)
-					}
-					if !strings.HasPrefix(outputID, "output_") {
-						outputID = circuit.OutputNodeID(outputID)
-					}
-
-					pairs = append(pairs, transform.ReconcilerPair{InputID: inputID, OutputID: outputID})
-				}
-				args = append(args, pairs)
-			}
-		case transform.Optimizer:
-			o := transform.OptimizerOptions{}
-			if len(jsOpts.Pairs) > 0 {
-				pairs := make([]transform.ReconcilerPair, 0, len(jsOpts.Pairs))
-				for i, p := range jsOpts.Pairs {
-					if len(p) != 2 {
-						return fmt.Errorf("transform %s: pair %d must have exactly 2 elements", typ, i)
-					}
-					inputID := strings.TrimSpace(p[0])
-					outputID := strings.TrimSpace(p[1])
-					if inputID == "" || outputID == "" {
-						return fmt.Errorf("transform %s: pair %d must not contain empty values", typ, i)
-					}
-					if !strings.HasPrefix(inputID, "input_") {
-						inputID = circuit.InputNodeID(inputID)
-					}
-					if !strings.HasPrefix(outputID, "output_") {
-						outputID = circuit.OutputNodeID(outputID)
-					}
-					pairs = append(pairs, transform.ReconcilerPair{InputID: inputID, OutputID: outputID})
-				}
-				o.ReconcilerPairs = pairs
-			}
-			if strings.TrimSpace(jsOpts.Rules) != "" {
-				switch strings.TrimSpace(jsOpts.Rules) {
-				case "Pre":
-					o.RewriterRules = transform.PreRules()
-				case "Post":
-					o.RewriterRules = transform.PostRules()
-				case "Default":
-					o.RewriterRules = transform.DefaultRules()
-				default:
-					return fmt.Errorf("transform %s options: unknown ruleset %q", typ, jsOpts.Rules)
-				}
-			}
-			args = append(args, o)
-		}
-	}
-
-	t, err := transform.New(typ, args...)
-	if err != nil {
-		if prevProc != nil {
-			h.proc = prevProc
-			if regErr := h.register(); regErr != nil {
-				return errors.Join(fmt.Errorf("transform: %w", err), fmt.Errorf("restore failed: %w", regErr))
-			}
-		}
-		return fmt.Errorf("transform: %w", err)
 	}
 
 	result, err := t.Transform(h.c)
@@ -162,44 +192,60 @@ func (h *circuitHandle) doTransform(name string, jsArgs goja.Value) error {
 		if prevProc != nil {
 			h.proc = prevProc
 			if regErr := h.register(); regErr != nil {
-				return errors.Join(fmt.Errorf("transform %s: %w", typ, err), fmt.Errorf("restore failed: %w", regErr))
+				return errors.Join(fmt.Errorf("transform %s: %w", label, err), fmt.Errorf("restore failed: %w", regErr))
 			}
 		}
-		return fmt.Errorf("transform %s: %w", typ, err)
+		return fmt.Errorf("transform %s: %w", label, err)
 	}
 
 	prevCircuit := h.c
 	h.c = result
+
 	if err := h.register(); err != nil {
 		h.c = prevCircuit
 		if prevProc != nil {
 			h.proc = prevProc
 			if regErr := h.installObserver(); regErr != nil {
 				return errors.Join(
-					fmt.Errorf("transform %s: register transformed circuit: %w", typ, err),
+					fmt.Errorf("transform %s: register transformed circuit: %w", label, err),
 					fmt.Errorf("restore failed: %w", regErr),
 				)
 			}
 		}
-		return fmt.Errorf("transform %s: register transformed circuit: %w", typ, err)
+		return fmt.Errorf("transform %s: register transformed circuit: %w", label, err)
 	}
 
 	return nil
 }
 
-func parseTransformName(arg goja.Value) (string, error) {
-	if goja.IsUndefined(arg) || goja.IsNull(arg) {
-		return "", fmt.Errorf("missing transformer name")
+func (h *circuitHandle) doTransform(entry transformEntry) error {
+	typ := transform.TransformerType(entry.Name)
+
+	// The Smith compensator is a snapshot-side construction: the distinct
+	// it injects must be compiled by the Incrementalizer, so applying it to
+	// an already-incremental circuit would run the distinct on delta
+	// streams.
+	if typ == transform.SmithPredictor &&
+		(h.hasApplied(transform.Incrementalizer) || h.hasApplied(transform.Optimizer)) {
+		return fmt.Errorf("transform %s: the circuit is already incremental", typ)
 	}
 
-	if _, ok := arg.Export().(string); !ok {
-		return "", fmt.Errorf("transformer name must be a string")
+	args, err := parseTransformArgs(typ, entry.circuitTransformOptions)
+	if err != nil {
+		return err
 	}
-	name := strings.TrimSpace(arg.String())
-	if name == "" {
-		return "", fmt.Errorf("empty transformer name")
+
+	t, err := transform.New(typ, args...)
+	if err != nil {
+		return fmt.Errorf("transform: %w", err)
 	}
-	return name, nil
+
+	if err := h.applyTransformer(string(typ), t); err != nil {
+		return err
+	}
+
+	h.applied = append(h.applied, typ)
+	return nil
 }
 
 func (h *circuitHandle) validate() error {
@@ -323,21 +369,16 @@ func (h *circuitHandle) jsObject() *goja.Object {
 	obj := h.vm.rt.NewObject()
 
 	_ = obj.Set("transform", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
-		if len(call.Arguments) < 1 {
-			return nil, fmt.Errorf("circuit.transform(name[, opts]) requires transformer name")
+		if len(call.Arguments) != 1 {
+			return nil, fmt.Errorf("circuit.transform(entry) takes a single name or {name, ...} entry")
 		}
 
-		name, err := parseTransformName(call.Argument(0))
+		entry, err := parseTransformEntry(call.Argument(0))
 		if err != nil {
 			return nil, err
 		}
-		var jsArgs goja.Value
-		if len(call.Arguments) > 1 {
-			jsArgs = call.Argument(1)
-		}
 
-		err = h.doTransform(name, jsArgs)
-		if err != nil {
+		if err := h.doTransform(entry); err != nil {
 			return nil, err
 		}
 		return obj, nil
