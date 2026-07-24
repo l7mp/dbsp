@@ -51,7 +51,7 @@ export DBSP_STDLIB="$(pwd)/js/stdlib"
 KUBECONFIG=/tmp/dcontroller.config kubectl api-resources
 ```
 
-See [Concepts: The Extension API Server](/doc/concepts-API-server.md) for the
+See [Kubernetes connector: The Extension API Server](/doc/connectors-kubernetes-API-server.md) for the
 full access workflow.
 
 Then read the generated `HealthView` objects:

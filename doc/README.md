@@ -1,6 +1,7 @@
 # Documentation
 
-This directory is the technical documentation for DBSP in this repository. Start with the short overview documents if you are new to the project, then move on to the concepts and application-specific guides as needed.
+This is the technical documentation for the DBSP incremental computing engine and the DBSP
+applications in this repository. 
 
 - [What is DBSP?](/doc/what-is-dbsp.md)
 - [Getting Started](/doc/getting-started.md)
@@ -10,10 +11,14 @@ This directory is the technical documentation for DBSP in this repository. Start
   - [Runtime: producers, consumers, processors, pub-sub](/doc/concepts-runtime-producers-consumers-processors.md)
   - [Programming: compilers and expressions](/doc/concepts-programming-compilers-and-expressions.md)
   - [Circuit transforms: Incrementalizer, Reconciler, SmithPredictor](/doc/concepts-transforms.md)
-  - [Extension API Server](/doc/concepts-API-server.md)
+  - [JavaScript: writing and running DBSP programs](/doc/concepts-dbsp-javascript.md)
+- Connectors
+  - Kubernetes: watching and writing cluster state
+    - [Overview](/doc/connectors-kubernetes.md)
+    - [Extension API Server](/doc/connectors-kubernetes-API-server.md)
+  - Envoy xDS: serving and consuming control-plane configuration
+    - [Overview](/doc/connectors-xds.md)
 - Applications
-  - DBSP Script: JavaScript runtime for DBSP
-    - [Overview and reference](/doc/apps-dbsp-script.md)
   - Δ-controller: A NoCode/LowCode incremental Kubernetes controller framework
     - [Overview](/doc/apps-dctl-overview.md)
     - [Getting Started](/doc/apps-dctl-getting-started.md)

@@ -1,10 +1,12 @@
-# DBSP Script
+# JavaScript: writing and running DBSP programs
 
-The `dbsp` CLI in `js/` is the lightweight scripting environment of this repository. It is the
-fastest way to try DBSP from the command line, compile SQL queries and aggregation pipelines,
-inspect incremental behaviour, and connect a circuit to Kubernetes resources without writing Go.
+JavaScript is the primary way to write DBSP programs. The `dbsp` CLI in `js/` runs a `.js` file
+against a live DBSP runtime, which is how you compile SQL queries and aggregation pipelines, build
+circuits by hand, inspect incremental behaviour, and connect a circuit to Kubernetes or Envoy
+without writing any Go. The applications in this repository are themselves DBSP scripts, so what
+this guide describes is the same surface they are built on, not a scripting shortcut around it.
 
-Under the hood, `dbsp` runs a JavaScript file in an embedded Goja VM and attaches that VM to one
+Under the hood, `dbsp` runs the JavaScript file in an embedded Goja VM and attaches that VM to one
 background DBSP runtime. The script defines circuits and topic wiring, the runtime moves deltas
 between producers and consumers, and the process exits automatically when the queues drain or when
 `cancel()` stops the current execution context.
@@ -32,7 +34,7 @@ Run a script from the repository root:
 
 ```bash
 ./js/bin/dbsp js/examples/join_project.js
-./js/bin/dbsp -v js/examples/observer-demo.js
+./js/bin/dbsp -v js/examples/endpoints.js
 ```
 
 The current implementation runs one script file at a time. There is no interactive REPL yet.
@@ -97,8 +99,8 @@ publish("users", [
 ```
 
 This is enough to build small end-to-end experiments entirely in JavaScript. A typical script
-defines input schemas or pipelines, compiles a circuit, transforms it with `Incrementalizer`, and then
-publishes a few test deltas into input topics.
+defines input schemas or pipelines, compiles a circuit, transforms it with `Incrementalizer`,
+commits it into the runtime, and then publishes a few test deltas into input topics.
 
 ```js
 const c = aggregate.compile([
@@ -106,7 +108,7 @@ const c = aggregate.compile([
   { "@project": { name: "$.metadata.name", status: "$.status" } }
 ], { inputs: "pods", output: "result" });
 
-c.transform("Incrementalizer");
+c.transform({ name: "Incrementalizer" }).commit();
 publish("pods", [[{ metadata: { name: "pod-a", namespace: "default" }, status: "Running" }, 1]]);
 ```
 
@@ -155,7 +157,7 @@ const c = sql.compile(
   { output: "senior-users" }
 );
 
-c.transform("Incrementalizer");
+c.transform({ name: "Incrementalizer" }).commit();
 
 publish("users", [
   [{ id: 1, name: "alice", age: 30 }, 1],
@@ -172,7 +174,7 @@ sql.table("orders", "id INTEGER PRIMARY KEY, user_id INTEGER, total REAL");
 sql.compile(
   "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id",
   { output: "user-orders" }
-).transform("Incrementalizer");
+).transform({ name: "Incrementalizer" }).commit();
 ```
 
 ### `aggregate.compile(pipeline, { inputs, output })`
@@ -188,7 +190,7 @@ const c = aggregate.compile([
   output: "obs-output",
 });
 
-c.transform("Incrementalizer");
+c.transform({ name: "Incrementalizer" }).commit();
 ```
 
 For pipelines with multiple logical inputs, bind topic names explicitly:
@@ -207,16 +209,19 @@ aggregate.compile(pipeline, {
     { name: "svc-topic", logical: "services" }
   ],
   output: { name: "result-topic", logical: "output" }
-}).transform("Incrementalizer");
+}).transform({ name: "Incrementalizer" }).commit();
 ```
 
-### Circuit handles: `.transform(name[, opts])`, `.validate()`, `.observe(fn)`
+### Circuit handles: `.transform(entry)`, `.commit()`, `.validate()`, `.observe(fn)`
 
-Both `sql.compile(...)` and `aggregate.compile(...)` return a circuit handle.
+Both `sql.compile(...)` and `aggregate.compile(...)` return a circuit handle. Compiling only
+builds the circuit: it starts running when `.commit()` installs it into the runtime.
 
 #### Circuit Transforms
 
-`.transform(name[, opts])` applies a circuit transformer in place and returns the same handle.
+`.transform(entry)` applies a circuit transformer in place and returns the same handle. Every
+entry is a `{ name, ...opts }` object, and a list of them applies as one step in canonical order.
+Transforming validates the result but does not install it, so a `.commit()` must follow.
 
 Supported transformer names are:
 
@@ -246,7 +251,8 @@ is a no-op.
 Example with explicit reconciler pair:
 
 ```js
-c.transform("Reconciler", {
+c.transform({
+  name: "Reconciler",
   pairs: [[
     "services",
     "desired-services"
@@ -256,8 +262,9 @@ c.transform("Reconciler", {
 
 #### Miscellaneous handles
 
-`.validate()` checks the circuit. `.observe(fn)` attaches a handle-scoped execution observer. Pass
-`null` or `undefined` to clear it.
+`.commit()` validates the circuit and installs it into the runtime; nothing runs before it.
+`.validate()` checks well-formedness without installing. `.observe(fn)` attaches a handle-scoped
+execution observer, and takes `null` or `undefined` to clear it.
 
 ```js
 const c = aggregate.compile([
@@ -268,7 +275,7 @@ c.observe((e) => {
   console.log("node", e.node.id, "position", e.position);
 });
 
-c.transform("Incrementalizer");
+c.transform({ name: "Incrementalizer" }).commit();
 ```
 
 Handle-scoped observation is usually the easiest way to inspect a single script-built circuit.
@@ -540,12 +547,12 @@ kubernetes.watch("pods-raw", { gvk: "v1/Pod", labels });
 aggregate.compile([
     { "@project": { "name": "$.metadata.name", "namespace": "$.metadata.namespace" } },
     { "@distinct": null },
-], { inputs: "pods-raw", output: "pods" }).transform("Incrementalizer").validate();
+], { inputs: "pods-raw", output: "pods" }).transform({ name: "Incrementalizer" }).commit();
 
 // Shared filter circuit: keep only error-level documents.
 aggregate.compile([
     { "@select": { "@eq": ["$.level", "error"] } },
-], { inputs: "pod-logs-raw", output: "error-logs" }).transform("Incrementalizer").validate();
+], { inputs: "pod-logs-raw", output: "error-logs" }).transform({ name: "Incrementalizer" }).commit();
 
 // For each new pod, start a log stream with JSONL parsing.
 subscribe("pods", (entries) => {

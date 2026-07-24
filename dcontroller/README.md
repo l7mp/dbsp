@@ -9,4 +9,4 @@ Documentation lives in `/doc/`:
 - [Overview](/doc/apps-dctl-overview.md)
 - [Getting started](/doc/apps-dctl-getting-started.md)
 - [Sources, targets, and pipelines](/doc/apps-dctl-sources-targets-pipeline.md)
-- [Extension API Server workflows](/doc/concepts-API-server.md)
+- [Extension API Server workflows](/doc/connectors-kubernetes-API-server.md)

@@ -1,10 +1,14 @@
 # Programming: Compilers and expressions
 
-## From queries to circuits
+Writing circuits by hand is possible but tedious. Compilers automate this: they take a high-level
+query and produce a circuit wired to the right input and output topics.
 
-Writing circuits by hand is possible but tedious. Compilers automate this: they take a high-level query and produce a circuit wired to the right input and output topics.
-
-The engine ships two compilers. The **SQL compiler** accepts standard SELECT statements and works with the relational data model. The **aggregation compiler** accepts JSON pipelines inspired by MongoDB and works with free-form JSON documents. The [aggregation pipeline language](reference-aggregations.md) and the [expression language](reference-expressions.md) are documented separately in detail. Both compilers produce the same kind of output, so the runtime treats them identically.
+The engine ships two compilers. The **SQL compiler** accepts standard SELECT statements and works
+with the relational data model. The **aggregation compiler** accepts JSON pipelines inspired by
+MongoDB and works with free-form JSON documents. The [aggregation pipeline
+language](reference-aggregations.md) and the [expression language](reference-expressions.md) are
+documented separately in detail. Both compilers produce the same kind of output, so the runtime
+treats them identically.
 
 ```mermaid
 graph LR
@@ -14,18 +18,24 @@ graph LR
     INC --> LIVE[running processor]
 ```
 
-The typical lifecycle is: compile a query, and optionally transform the resulting circuit with `Incrementalizer` so it processes deltas instead of full snapshots. In JS this is a one-liner:
+The typical lifecycle is: compile a query, and optionally transform the resulting circuit with
+`Incrementalizer` so it processes deltas instead of full snapshots. In JS this is a one-liner:
 
 ```js
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT, age INTEGER");
-sql.compile("SELECT name FROM users WHERE age > 25", { output: "out" }).transform("Incrementalizer");
+sql.compile("SELECT name FROM users WHERE age > 25", { output: "out" })
+  .transform({ name: "Incrementalizer" })
+  .commit();
 ```
 
 ## The SQL compiler
 
-The SQL compiler accepts SELECT statements and compiles them into DBSP circuits. It supports single-table queries, multi-table joins, WHERE clauses, column projections, expressions, and NULL handling with proper three-valued logic.
+The SQL compiler accepts simple SELECT statements and compiles them into DBSP circuits. It supports
+single-table queries, multi-table joins, WHERE clauses, column projections, expressions, and NULL
+handling with proper three-valued logic.
 
-Before compiling a query, register the tables it references. Each table needs a name, column definitions, and optionally a primary key:
+Before compiling a query, register the tables it references. Each table needs a name, column
+definitions, and optionally a primary key:
 
 ```js
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT, age INTEGER");
@@ -38,7 +48,7 @@ A basic filter-and-project query:
 sql.compile(
     "SELECT name, age FROM users WHERE age > 25",
     { output: "senior-users" }
-).transform("Incrementalizer");
+).transform({ name: "Incrementalizer" }).commit();
 ```
 
 Feed data by publishing rows to the table's topic:
@@ -50,31 +60,38 @@ publish("users", [
 ]);
 ```
 
-The consumer on `senior-users` receives only alice. When bob turns 26 and you publish the update (delete old bob, insert new bob), the circuit automatically emits the delta: bob now appears in the output.
+The consumer on `senior-users` receives only alice. When bob turns 26 and you publish the update
+(delete old bob, insert new bob), the circuit automatically emits the delta: bob now appears in the
+output.
 
-JOIN clauses compile into a Cartesian product operator followed by the join condition filter and output projection:
+JOIN clauses compile into a Cartesian product operator followed by the join condition filter and
+output projection:
 
 ```js
 sql.compile(
     "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id",
     { output: "user-orders" }
-).transform("Incrementalizer");
+).transform({ name: "Incrementalizer" }).commit();
 ```
 
-```mermaid
-graph LR
-    U([users]) --> CP["cartesian product"]
-    O([orders]) --> CP
-    CP --> SEL["select: u.id = o.user_id"]
-    SEL --> PROJ["project: u.name, o.total"]
-    PROJ --> OUT([output])
-```
-
-After incrementalization, the join tracks what it has seen from each side so that a new row from one input is correctly matched against the accumulated rows from the other.
+After incrementalization, the join tracks what it has seen from each side so that a new row from
+one input is correctly matched against the accumulated rows from the other.
 
 ## The aggregation compiler
 
-The aggregation compiler accepts JSON pipelines where each stage is an object with a single `@`-prefixed key. Stages execute in sequence, each transforming the Z-set produced by the previous stage. The [`@join`](reference-aggregations.md#multi-source-pipelines-join), [`@select`](reference-aggregations.md#filtering-select), [`@project`](reference-aggregations.md#reshaping-project), [`@unwind`](reference-aggregations.md#expanding-lists-unwind), [`@distinct`](reference-aggregations.md#deduplication-distinct), and [`@groupBy`](reference-aggregations.md#grouping-groupby) stages are covered in the aggregation reference. This is the compiler used by the Kubernetes operator's declarative controller spec.
+The aggregation compiler accepts JSON pipelines. This is the compiler used by the Kubernetes
+operator's declarative controller spec.
+
+An aggregation pipeline comprises a sequence of stages, where each stage is a DBSP operator
+identified with a single `@`-prefixed key. Stages execute in sequence, each transforming the Z-set
+produced by the previous stage. The
+[`@join`](reference-aggregations.md#multi-source-pipelines-join),
+[`@select`](reference-aggregations.md#filtering-select),
+[`@project`](reference-aggregations.md#reshaping-project),
+[`@unwind`](reference-aggregations.md#expanding-lists-unwind),
+[`@distinct`](reference-aggregations.md#deduplication-distinct), and
+[`@groupBy`](reference-aggregations.md#grouping-groupby) stages are covered in the aggregation
+reference.
 
 ```js
 const c = aggregate.compile([
@@ -84,7 +101,7 @@ const c = aggregate.compile([
         containers: { "@len": ["$.spec.containers"] }
     }}
 ], { inputs: "pods", output: "result" });
-c.transform("Incrementalizer");
+c.transform({ name: "Incrementalizer" }).commit();
 ```
 
 A pipeline can also be a single stage object instead of an array.
@@ -114,15 +131,26 @@ aggregate.compile(pipeline, {
 For the SQL compiler, table names serve as the input topic names by default, and the output binding is specified explicitly:
 
 ```js
-sql.compile("SELECT name FROM users", { output: "my-output-topic" }).transform("Incrementalizer");
+sql.compile("SELECT name FROM users", { output: "my-output-topic" })
+  .transform({ name: "Incrementalizer" })
+  .commit();
 ```
 
 ## Expressions
 
-Expressions are the computational core inside pipeline stages. The [`@select`](reference-aggregations.md#filtering-select) stage evaluates a predicate [expression](reference-expressions.md) on each document. The [`@project`](reference-aggregations.md#reshaping-project) stage evaluates a projection [expression](reference-expressions.md) to produce a new document.
+Expressions are the computational core inside pipeline stages. The
+[`@select`](reference-aggregations.md#filtering-select) stage evaluates a predicate
+[expression](reference-expressions.md) on each document, while the
+[`@project`](reference-aggregations.md#reshaping-project) stage evaluates a projection
+[expression](reference-expressions.md) to produce a new document.
 
-Inside aggregation pipeline stages, expressions follow three rules. A string starting with `$.` is a field reference that reads from the input document. An object with a single `@`-prefixed key is a function call. Anything else is a literal constant. When a pipeline operates on multiple inputs, field references use the logical input name as a prefix to disambiguate which source a field comes from. In SQL, this is the table alias (`u.name`, `o.total`). In aggregation pipelines, the logical name from the input binding is used.
-
+Inside aggregation pipeline stages, expressions follow three rules. A string starting with `$.` is
+a field reference that reads from the input document. In list expressions the current list item
+being processed (the "subject") is marked by a string prefixed with `$$.`. An object with a single
+`@`-prefixed key is a function call. Anything else is a literal constant. When a pipeline operates
+on multiple inputs, field references use the logical input name as a prefix to disambiguate which
+source a field comes from. In SQL, this is the table alias (`u.name`, `o.total`). In aggregation
+pipelines, the logical name from the input binding is used.
 
 ```js
 { "@project": {
@@ -141,7 +169,7 @@ Available expressions in this implementation:
 - **Boolean**: The [logical and conditional operators](reference-expressions.md#logical-and-conditional-operators) include `@and`, `@or`, and `@not`.
 - **String**: The [string operators](reference-expressions.md#string-operators) include `@concat`, `@lower`, `@upper`, `@string`, and `@regexp`.
 - **List**: The [list operators](reference-expressions.md#list-operators) include `@len`, `@in`, `@map`, `@filter`, `@sortBy`, `@sum`, `@min`, and `@max`.
-- **Conditional**: The [`@cond`](reference-expressions.md#cond) operator is a ternary if-then-else: `{ "@cond": [test, ifTrue, ifFalse] }`.
+- **Conditional**: The [`@cond`](reference-expressions.md#cond) operator is a ternary if-then-else: `{ "@cond": [test, true-branch, false-branch] }`.
 - **Null handling**: The [null, SQL boolean, and utility operators](reference-expressions.md#null-sql-boolean-and-utility-operators) include `@isnull`, `@isnil`, and `@nil`.
 - **Time**: The [`@now`](reference-expressions.md#now) operator produces a timestamp.
 
@@ -151,7 +179,6 @@ Below is a complete example that watches two Kubernetes resources, joins them, a
 
 ```js
 // Define the data sources.
-// In unit tests, you can publish directly to these topics instead.
 producer.kubernetes.watch({ gvk: "v1/Pod", topic: "pods" });
 producer.kubernetes.watch({ gvk: "v1/Service", topic: "services" });
 
@@ -169,7 +196,7 @@ const c = aggregate.compile([
     ],
     output: "pod-svc-pairs"
 });
-c.transform("Incrementalizer");
+c.transform({ name: "Incrementalizer" }).commit();
 
 // React to results
 subscribe("pod-svc-pairs", (entries) => {
@@ -179,4 +206,5 @@ subscribe("pod-svc-pairs", (entries) => {
 });
 ```
 
-The circuit is now alive: every time a Pod or Service is created, updated, or deleted, the circuit processes only the change and emits the corresponding delta on the output topic.
+The circuit is now alive: every time a Pod or Service is created, updated, or deleted, the circuit
+processes only the change and emits the corresponding delta on the output topic.

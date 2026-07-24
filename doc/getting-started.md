@@ -35,9 +35,6 @@ query into a circuit, incrementalize it, and then feed updates into the runtime.
 
 ## Build from a local checkout
 
-Building from source is the better path if you want to explore the repository, run tests,
-or modify the implementation.
-
 Clone the repository and enter the workspace root:
 
 ```bash
@@ -52,8 +49,6 @@ This repository uses a Go workspace (`go.work`) with several modules, including:
 - `connectors/*` for runtime integrations, and
 - `dcontroller/` for controller-oriented applications.
 
-### Build
-
 From the repository root, run:
 
 ```bash
@@ -62,8 +57,6 @@ make build
 
 This performs a compile check for the workspace modules, builds the JavaScript runner,
 and builds the controller binaries and examples.
-
-### Build only the CLI
 
 If you only want the script runner, build the `js/` module directly:
 
@@ -74,20 +67,6 @@ make build
 
 This writes the binary to `js/bin/dbsp`.
 
-Run one of the bundled examples:
-
-```bash
-./bin/dbsp examples/join_project.js
-```
-
-You can also try:
-
-```bash
-./bin/dbsp examples/observer-demo.js
-```
-
-## Run tests
-
 For a quick confidence check from the workspace root, run:
 
 ```bash
@@ -97,12 +76,5 @@ make test-fast
 To run the full test suite:
 
 ```bash
-make test
-```
-
-If you are working only on the script runner, run tests just for that module:
-
-```bash
-cd js
 make test
 ```

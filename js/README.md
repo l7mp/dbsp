@@ -10,5 +10,5 @@ make build
 
 Documentation lives in `/doc/`:
 
-- [DBSP Script overview and reference](/doc/apps-dbsp-script.md)
-- [Extension API Server workflows](/doc/concepts-API-server.md)
+- [JavaScript: writing and running DBSP programs](/doc/concepts-dbsp-javascript.md)
+- [Extension API Server workflows](/doc/connectors-kubernetes-API-server.md)

@@ -12,7 +12,8 @@ connectors/kubernetes/bin/
 !dcontroller/*.js
 !dcontroller/lib/**/*.js
 !dcontroller/test/**/*.js
-!js/examples/**/*.js
+!js/examples/join_project.js
+!js/examples/endpoints.js
 !js/stdlib/**/*.js
 !js/stdlib/**/package.json
 !js/stdlib/**/LICENSE

@@ -540,7 +540,7 @@ assert.strictEqual(info.valid, true);
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
 
-		err = vm.SetProcessArgv([]string{"dbsp", "examples/gwapi/index.js", "test", "gwclass"})
+		err = vm.SetProcessArgv([]string{"dbsp", "examples/join_project.js", "test", "gwclass"})
 		Expect(err).NotTo(HaveOccurred())
 
 		err = vm.runOnLoopSync(func(rt *goja.Runtime) error {
@@ -556,7 +556,7 @@ assert.strictEqual(info.valid, true);
 			if got := arr.Get("0"); !got.StrictEquals(rt.ToValue("dbsp")) {
 				return fmt.Errorf("unexpected argv[0]: %v", got)
 			}
-			if got := arr.Get("1"); !got.StrictEquals(rt.ToValue("examples/gwapi/index.js")) {
+			if got := arr.Get("1"); !got.StrictEquals(rt.ToValue("examples/join_project.js")) {
 				return fmt.Errorf("unexpected argv[1]: %v", got)
 			}
 			if got := arr.Get("2"); !got.StrictEquals(rt.ToValue("test")) {

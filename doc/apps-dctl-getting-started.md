@@ -2,7 +2,7 @@
 
 Δ-controller runs as a JavaScript program inside the `dbsp` runtime. API-server
 admin workflows use the `apiserver` JS standard library module; see
-[Concepts: The Extension API Server](/doc/concepts-API-server.md) for the full
+[Kubernetes connector: The Extension API Server](/doc/connectors-kubernetes-API-server.md) for the full
 guide.
 
 ## Build and install
@@ -77,7 +77,7 @@ export DBSP_STDLIB="$(pwd)/js/stdlib"
   > /tmp/dcontroller.config
 ```
 
-See [Concepts: The Extension API Server](/doc/concepts-API-server.md) for
+See [Kubernetes connector: The Extension API Server](/doc/connectors-kubernetes-API-server.md) for
 RBAC profiles, custom rules, and production HTTPS examples.
 
 ## Helm install
