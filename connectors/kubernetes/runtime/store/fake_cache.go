@@ -290,11 +290,10 @@ func (f *FakeInformer) AddEventHandlerWithContext(handler toolscache.ResourceEve
 func (f *FakeInformer) RemoveEventHandler(handle toolscache.ResourceEventHandlerRegistration) error {
 	return nil
 }
-
-func (f *FakeInformer) AddIndexers(indexers toolscache.Indexers) error          { return nil }
-func (f *FakeInformer) GetIndexer() toolscache.Indexer                          { return nil }
-func (f *FakeInformer) Informer() toolscache.SharedIndexInformer                { return f }
-func (f *FakeInformer) HasSynced() bool                                         { return f.Synced }
+func (f *FakeInformer) AddIndexers(indexers toolscache.Indexers) error { return nil }
+func (f *FakeInformer) GetIndexer() toolscache.Indexer                 { return nil }
+func (f *FakeInformer) Informer() toolscache.SharedIndexInformer       { return f }
+func (f *FakeInformer) HasSynced() bool                                { return f.Synced }
 func (f *FakeInformer) HasSyncedChecker() toolscache.DoneChecker {
 	return syncedChecker{name: "fake-informer"}
 }

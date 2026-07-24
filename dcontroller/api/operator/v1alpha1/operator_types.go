@@ -2,10 +2,19 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func init() {
-	SchemeBuilder.Register(&Operator{}, &OperatorList{})
+	SchemeBuilder.Register(
+		func(scheme *runtime.Scheme) error {
+			scheme.AddKnownTypes(GroupVersion,
+				&Operator{},
+				&OperatorList{},
+			)
+			return nil
+		},
+	)
 }
 
 // Operator is an abstraction of a basic unit of automation, a set of related controllers working
