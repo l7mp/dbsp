@@ -47,7 +47,7 @@ aggregate.compile(
         }},
     ],
     { inputs: ["services"], outputs: ["desired-services"] }
-);
+).commit();
 
 // === Output: apply U to the cluster via merge-patch ===
 kubernetes.patch("desired-services", {

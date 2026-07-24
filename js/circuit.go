@@ -2,7 +2,6 @@ package js
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -22,6 +21,23 @@ type circuitHandle struct {
 	proc    *dbspruntime.Circuit
 	obsFn   goja.Callable
 	applied []transform.TransformerType
+	seq     int // auto-id counter for hand-built nodes
+}
+
+// validateCircuit is the single well-formedness validator every circuit-
+// producing path funnels through: every .transform() validates its result,
+// .validate() is the explicit check, and .commit() validates before
+// installing. It returns one formatted error, or nil.
+func validateCircuit(c *circuit.Circuit) error {
+	errs := c.Validate()
+	if len(errs) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(errs))
+	for _, err := range errs {
+		messages = append(messages, err.Error())
+	}
+	return fmt.Errorf("circuit validation failed: %s", strings.Join(messages, "; "))
 }
 
 func (h *circuitHandle) hasApplied(typ transform.TransformerType) bool {
@@ -86,7 +102,15 @@ func parseTopicPairs(typ transform.TransformerType, raw [][]string) ([]transform
 	return pairs, nil
 }
 
-func (h *circuitHandle) register() error {
+// commit validates the circuit and installs it into the runtime, replacing
+// any previously installed processor. It is the single install point: every
+// other verb (compile, .transform(), .validate()) leaves the handle offline,
+// so a circuit starts running exactly when the script says so.
+func (h *circuitHandle) commit() error {
+	if err := validateCircuit(h.c); err != nil {
+		return err
+	}
+
 	query := *h.query
 	query.Circuit = h.c
 
@@ -143,44 +167,21 @@ func parseTransformArgs(typ transform.TransformerType, jsOpts circuitTransformOp
 	return args, nil
 }
 
-// applyTransformer runs a transformer over the live circuit and installs the
-// result atomically: on any error the previous circuit and processor are
-// restored.
+// applyTransformer runs a transformer over the circuit and validates the
+// result. It does not install: the transformed circuit reaches the runtime on
+// the next commit. A failed transform leaves the handle on its previous
+// circuit, so the transform chain is all-or-nothing.
 func (h *circuitHandle) applyTransformer(label string, t transform.Transformer) error {
-	prevProc := h.proc
-	if prevProc != nil {
-		h.vm.runtime.Stop(prevProc)
-		h.proc = nil
-	}
-
 	result, err := t.Transform(h.c)
 	if err != nil {
-		if prevProc != nil {
-			h.proc = prevProc
-			if regErr := h.register(); regErr != nil {
-				return errors.Join(fmt.Errorf("transform %s: %w", label, err), fmt.Errorf("restore failed: %w", regErr))
-			}
-		}
 		return fmt.Errorf("transform %s: %w", label, err)
 	}
 
-	prevCircuit := h.c
-	h.c = result
-
-	if err := h.register(); err != nil {
-		h.c = prevCircuit
-		if prevProc != nil {
-			h.proc = prevProc
-			if regErr := h.installObserver(); regErr != nil {
-				return errors.Join(
-					fmt.Errorf("transform %s: register transformed circuit: %w", label, err),
-					fmt.Errorf("restore failed: %w", regErr),
-				)
-			}
-		}
-		return fmt.Errorf("transform %s: register transformed circuit: %w", label, err)
+	if err := validateCircuit(result); err != nil {
+		return fmt.Errorf("transform %s: %w", label, err)
 	}
 
+	h.c = result
 	return nil
 }
 
@@ -267,27 +268,9 @@ func (h *circuitHandle) doTransformChain(raw []any) error {
 	return nil
 }
 
-func (h *circuitHandle) validate() error {
-	errs := h.c.Validate()
-	if len(errs) > 0 {
-		messages := make([]string, 0, len(errs))
-		for _, err := range errs {
-			messages = append(messages, err.Error())
-		}
-		return fmt.Errorf("circuit validation failed: %s", strings.Join(messages, "; "))
-	}
-
-	if h.proc != nil {
-		return nil
-	}
-
-	return h.register()
-}
-
 // close unregisters the circuit's runtime processor, clearing any active
 // observer. Idempotent: calling close on an already-closed handle is a no-op.
-// After close, the handle remains usable: validate() will re-register the
-// circuit with the runtime.
+// After close, the handle remains usable: commit() re-installs the circuit.
 func (h *circuitHandle) close() error {
 	if h.proc == nil {
 		return nil
@@ -411,8 +394,66 @@ func (h *circuitHandle) jsObject() *goja.Object {
 		return obj, nil
 	}))
 
+	_ = obj.Set("node", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		if len(call.Arguments) < 1 || goja.IsUndefined(call.Argument(0)) || goja.IsNull(call.Argument(0)) {
+			return nil, fmt.Errorf("circuit.node(spec[, id]) requires an operator spec")
+		}
+		id := ""
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Argument(1)) && !goja.IsNull(call.Argument(1)) {
+			id = strings.TrimSpace(call.Argument(1).String())
+		}
+		nid, err := h.addNode(call.Argument(0).Export(), id)
+		if err != nil {
+			return nil, err
+		}
+		return h.vm.rt.ToValue(nid), nil
+	}))
+
+	_ = obj.Set("input", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		if len(call.Arguments) < 1 {
+			return nil, fmt.Errorf("circuit.input(topic) requires a topic name")
+		}
+		id, err := h.addBoundary(call.Argument(0).String(), true)
+		if err != nil {
+			return nil, err
+		}
+		return h.vm.rt.ToValue(id), nil
+	}))
+
+	_ = obj.Set("output", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		if len(call.Arguments) < 1 {
+			return nil, fmt.Errorf("circuit.output(topic) requires a topic name")
+		}
+		id, err := h.addBoundary(call.Argument(0).String(), false)
+		if err != nil {
+			return nil, err
+		}
+		return h.vm.rt.ToValue(id), nil
+	}))
+
+	_ = obj.Set("edge", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		if len(call.Arguments) < 2 {
+			return nil, fmt.Errorf("circuit.edge(from, to[, port]) requires two node IDs")
+		}
+		port := 0
+		if len(call.Arguments) > 2 && !goja.IsUndefined(call.Argument(2)) && !goja.IsNull(call.Argument(2)) {
+			port = int(call.Argument(2).ToInteger())
+		}
+		if err := h.addEdge(call.Argument(0).String(), call.Argument(1).String(), port); err != nil {
+			return nil, err
+		}
+		return obj, nil
+	}))
+
+	_ = obj.Set("commit", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		if err := h.commit(); err != nil {
+			return nil, err
+		}
+		return obj, nil
+	}))
+
 	_ = obj.Set("validate", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
-		if err := h.validate(); err != nil {
+		if err := validateCircuit(h.c); err != nil {
 			return nil, err
 		}
 		return obj, nil
@@ -454,9 +495,9 @@ func (h *circuitHandle) jsObject() *goja.Object {
 		payload := map[string]any{
 			"kind":        "circuit",
 			"name":        h.c.Name(),
-			"validated":   h.proc != nil,
+			"committed":   h.proc != nil,
 			"observed":    h.obsFn != nil,
-			"incremental": true,
+			"incremental": h.hasApplied(transform.Incrementalizer),
 		}
 		return h.vm.rt.ToValue(payload), nil
 	}))

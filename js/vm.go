@@ -700,6 +700,14 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 
+	circuitObj := v.rt.NewObject()
+	if err := circuitObj.Set("create", v.wrap(v.circuitCreate)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("circuit", circuitObj); err != nil {
+		return err
+	}
+
 	exprObj := v.rt.NewObject()
 	if err := exprObj.Set("register", v.wrap(v.expressionRegister)); err != nil {
 		return err
@@ -795,6 +803,9 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 	if err := runtimeObj.Set("aggregate", aggObj); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("circuit", circuitObj); err != nil {
 		return err
 	}
 	if err := runtimeObj.Set("publish", v.wrap(v.publish)); err != nil {

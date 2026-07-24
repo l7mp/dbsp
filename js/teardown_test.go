@@ -20,10 +20,10 @@ var _ = Describe("circuit.close()", func() {
 const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], { inputs: "tdn-in", outputs: ["tdn-out"] });
-c.validate();
+c.commit();
 c.close();
 c.close();
-c.validate();
+c.commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 	})
@@ -37,7 +37,7 @@ c.validate();
 const c = aggregate.compile([
   {"@project": {"$.": "$."}}
 ], { inputs: "tdn-obs-in", outputs: ["tdn-obs-out"] });
-c.validate();
+c.commit();
 c.observe(() => {});
 c.close();
 `

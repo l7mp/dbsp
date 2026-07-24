@@ -63,7 +63,7 @@ func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 	}
 
 	h := &circuitHandle{c: compiled.Circuit, query: compiled, vm: v}
-	if err := h.register(); err != nil {
+	if err := validateCircuit(h.c); err != nil {
 		return nil, fmt.Errorf("aggregate.compile: %w", err)
 	}
 	return h.jsObject(), nil

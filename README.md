@@ -112,7 +112,7 @@ const c = aggregate.compile(pipeline, {
 // Incrementalize the circuit, regularize it, and close the control loop.
 // After this transform the circuit consumes deltas, emits deltas, and
 // applies the diff between desired and observed state on every step.
-c.transform("Incrementalizer").validate();
+c.transform({ name: "Incrementalizer" }).commit();
 
 // Wire the circuit to Kubernetes: watch Pods and Services, write Endpoints.
 kubernetes.watch ("Pod",       {gvk: "v1/Pod"});

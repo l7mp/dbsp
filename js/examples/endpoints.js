@@ -17,7 +17,7 @@ aggregate.compile(
         inputs:  ["pods", "services"],
         outputs: ["endpoints"],
     }
-).transform({ name: "Incrementalizer" });
+).transform({ name: "Incrementalizer" }).commit();
 
 subscribe("endpoints", (entries) => {
     console.log("==endpoints==");

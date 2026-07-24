@@ -191,7 +191,7 @@ function startController(operatorName, controllerSpec, logger) {
     });
 
     applyTransforms(circuitHandle, controllerSpec.options || {});
-    circuitHandle.validate();
+    circuitHandle.commit();
 
     const components = new Set([circuitName]);
     const handles = [];

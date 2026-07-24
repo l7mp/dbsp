@@ -915,7 +915,7 @@ c.observe((e) => {
   }, 1]]);
 });
 
-c.validate();
+c.commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -972,7 +972,7 @@ const c = aggregate.compile([
   outputs: ["obs-runtime-out"]
 });
 
-c.validate();
+c.commit();
 
 runtime.observe("aggregation", (e) => {
   runtime.publish("runtime-observe-events", [[{
@@ -1024,7 +1024,7 @@ const c = aggregate.compile([
   inputs: "obs-custom-in",
   outputs: ["obs-custom-out"],
   name: "custom-aggregation"
-});
+}).commit();
 
 runtime.observe("custom-aggregation", (e) => {
   runtime.publish("runtime-observe-custom-events", [[{node: e.node.id}, 1]]);
@@ -1069,7 +1069,7 @@ const c = aggregate.compile([
   outputs: ["console-out"]
 });
 
-c.validate();
+c.commit();
 
 console.log(c);
 console.log(runtime);
@@ -1156,7 +1156,7 @@ const c = aggregate.compile([
   inputs: "agg-in",
   outputs: ["agg-out"]
 });
-c.validate();
+c.commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -1195,7 +1195,7 @@ const c = aggregate.compile([
   inputs: "agg-multi-in",
   outputs: ["agg-multi-out-a", "agg-multi-out-b"]
 });
-c.validate();
+c.commit();
 publish("agg-multi-in", [[{id: 909}, 1]]);
 `
 		Expect(runScript(vm, script)).To(Succeed())
@@ -1222,7 +1222,7 @@ publish("agg-multi-in", [[{id: 909}, 1]]);
 		Expect(zsetRowsByField(eventsB[0], "id")).To(Equal([]string{"1:909"}))
 	})
 
-	It("auto-registers aggregate circuits without explicit validate", func() {
+	It("runs an aggregate circuit only once it is committed", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -1231,6 +1231,8 @@ publish("agg-multi-in", [[{id: 909}, 1]]);
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vm.runtime.Add(collector)).To(Succeed())
 
+		// Compiling builds the circuit but does not install it, so the
+		// input goes nowhere.
 		script := `
 const c = aggregate.compile([
   {"@project": {"$.": "$."}}
@@ -1238,12 +1240,17 @@ const c = aggregate.compile([
   inputs: "agg-auto-in",
   outputs: ["agg-auto-out"]
 });
+publish("agg-auto-in", [[{id: 110}, 1]]);
 `
 		Expect(runScript(vm, script)).To(Succeed())
+		Consistently(collector.Snapshot, 300*time.Millisecond, 50*time.Millisecond).Should(BeEmpty())
+
+		// Committing installs the circuit, which picks up the topic's
+		// retained state: the earlier input is replayed, not lost.
+		Expect(runScript(vm, `c.commit();`)).To(Succeed())
 
 		var first dbspruntime.Event
 		Eventually(func() bool {
-			_ = runScript(vm, `publish("agg-auto-in", [[{id: 111}, 1]]);`)
 			events := collector.Snapshot()
 			if len(events) == 0 {
 				return false
@@ -1253,10 +1260,10 @@ const c = aggregate.compile([
 		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
 
 		Expect(first.Name).To(Equal("agg-auto-out"))
-		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:111"}))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:110"}))
 	})
 
-	It("transform(Incrementalizer) swaps runtime registration without validate", func() {
+	It("installs the transformed circuit on commit", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -1277,7 +1284,7 @@ const c = aggregate.compile([
   outputs: ["agg-inc-out"]
 });
 
-const ci = c.transform({ name: "Incrementalizer" });
+const ci = c.transform({ name: "Incrementalizer" }).commit();
 
 runtime.observe("aggregation^Δ", (e) => {
   runtime.publish("agg-inc-obs", [[{node: e.node.id}, 1]]);
@@ -1329,7 +1336,7 @@ const c = aggregate.compile([
 c.transform([
   { name: "Incrementalizer" },
   { name: "SmithPredictor", pairs: [["observed", "out"]], k: 2 },
-]);
+]).commit();
 publish("pods", [[{metadata:{name:"pod-a"}}, 1]]);
 publish("services", [[{metadata:{name:"pod-a"}}, 1]]);
 `
@@ -1408,7 +1415,7 @@ const c = aggregate.compile([
   inputs: [{name: "agg-bind-in", logicalName: "Foo"}],
   outputs: [{name: "agg-bind-out", logicalName: "Bar"}]
 });
-c.validate();
+c.commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -1439,7 +1446,7 @@ c.validate();
 		script := `
 sql.table("t", "id int");
 const c = sql.compile("select id from t", { output: "sql-out" });
-c.validate();
+c.commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -1458,7 +1465,7 @@ c.validate();
 		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:31"}))
 	})
 
-	It("auto-registers SQL circuits without explicit validate", func() {
+	It("runs a SQL circuit only once it is committed", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -1469,13 +1476,18 @@ c.validate();
 
 		script := `
 sql.table("sql_auto_t", "id int");
-sql.compile("select id from sql_auto_t", { output: "sql-auto-out" });
+const c = sql.compile("select id from sql_auto_t", { output: "sql-auto-out" });
+publish("sql_auto_t", [[{id: 87}, 1]]);
 `
 		Expect(runScript(vm, script)).To(Succeed())
+		Consistently(collector.Snapshot, 300*time.Millisecond, 50*time.Millisecond).Should(BeEmpty())
+
+		// Committing installs the circuit, which picks up the table's
+		// retained state: the earlier row is replayed, not lost.
+		Expect(runScript(vm, `c.commit();`)).To(Succeed())
 
 		var first dbspruntime.Event
 		Eventually(func() bool {
-			_ = runScript(vm, `publish("sql_auto_t", [[{id: 88}, 1]]);`)
 			events := collector.Snapshot()
 			if len(events) == 0 {
 				return false
@@ -1485,7 +1497,7 @@ sql.compile("select id from sql_auto_t", { output: "sql-auto-out" });
 		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
 
 		Expect(first.Name).To(Equal("sql-auto-out"))
-		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:88"}))
+		Expect(zsetRowsByField(first, "id")).To(Equal([]string{"1:87"}))
 	})
 
 	It("requires explicit SQL output option", func() {
@@ -1514,7 +1526,7 @@ sql.compile("select id from t_missing_out");
 		script := `
 sql.table("t2", "id int");
 const c = sql.compile("select id from t2", { output: { name: "sql-bind-out", logicalName: "output" } });
-c.validate();
+c.commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -1579,7 +1591,7 @@ const c = aggregate.compile([
   {"@select": {"@eq": ["$.metadata.namespace", "default"]}},
   {"@project": {name: "$.metadata.name", status: "$.status"}}
 ], {inputs: "pods", outputs: ["result"]});
-c.transform({ name: "Incrementalizer" });
+c.transform({ name: "Incrementalizer" }).commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -1613,7 +1625,7 @@ const c = aggregate.compile([
   {"@project": {name: "$.metadata.name"}},
   {"@distinct": null}
 ], {inputs: "pods", outputs: ["distinct-pods"]});
-c.transform({ name: "Incrementalizer" });
+c.transform({ name: "Incrementalizer" }).commit();
 
 // The retractions go out in a later step: circuits fold the queued
 // backlog, so a single burst would cancel to a net-zero delta and the
@@ -1701,7 +1713,7 @@ c.observe((e) => {
   runtime.publish("obs-events", [[{via: "handle", node: e.node.id}, 1]]);
 });
 
-c.validate();
+c.commit();
 
 runtime.observe("aggregation", (e) => {
   runtime.publish("obs-events", [[{via: "runtime", node: e.node.id}, 1]]);
@@ -1742,7 +1754,7 @@ publish("pods", [[{id: 9}, 1]]);
 
 		script := `
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT, age INTEGER");
-sql.compile("SELECT name, age FROM users WHERE age > 25", { output: "senior-users" }).transform({ name: "Incrementalizer" }).validate();
+sql.compile("SELECT name, age FROM users WHERE age > 25", { output: "senior-users" }).transform({ name: "Incrementalizer" }).commit();
 publish("users", [
   [{ id: 1, name: "alice", age: 30 }, 1],
   [{ id: 2, name: "bob", age: 22 }, 1]
@@ -1772,7 +1784,7 @@ publish("users", [
 		script := `
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT");
 sql.table("orders", "id INTEGER PRIMARY KEY, user_id INTEGER, total REAL");
-sql.compile("SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id", { output: "user-orders" }).transform({ name: "Incrementalizer" }).validate();
+sql.compile("SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id", { output: "user-orders" }).transform({ name: "Incrementalizer" }).commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 	})
@@ -1800,7 +1812,7 @@ aggregate.compile(pipeline, {
     {name: "svc-topic", logical: "services"}
   ],
   outputs: [{name: "result-topic", logical: "output"}]
-}).transform({ name: "Incrementalizer" });
+}).transform({ name: "Incrementalizer" }).commit();
 
 publish("pods-topic", [[{metadata:{name:"shared"}}, 1]]);
 publish("svc-topic", [[{metadata:{name:"shared"}}, 1]]);

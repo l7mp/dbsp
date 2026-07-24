@@ -59,7 +59,7 @@ aggregate.compile(
     { name: "Reconciler", pairs: [["services", "desired-services"]] },
     { name: "Distincter" },
     { name: "Incrementalizer" },
-]);
+]).commit();
 
 // === Output: apply U to the cluster via full-object update ===
 kubernetes.update("desired-services", {

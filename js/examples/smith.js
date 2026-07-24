@@ -49,9 +49,9 @@ function makeLoop(name, transformName) {
     transformName === "SmithPredictor"
       ? { name: "SmithPredictor", pairs: [[observed, out]], k: 2 }
       : { name: "Reconciler", pairs: [[observed, out]] },
-  ]);
-  // No .validate() needed: compile and every transform validate and install
-  // the circuit automatically.
+  ]).commit();
+  // Compiling and transforming only build the circuit; .commit() validates it
+  // and installs it into the runtime, which is when it starts running.
 
   // The plant: a set-based store (idempotent apply = dist); every actual
   // state CHANGE is echoed back after the dead time.

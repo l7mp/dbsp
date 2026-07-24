@@ -19,7 +19,7 @@ c.observe((e) => {
 });
 
 // Validate installs runtime circuit. Aggregate compiler uses circuit name "aggregation".
-c.validate();
+c.commit();
 
 // Simple debug observer: dump payload directly.
 runtime.observe("aggregation", (e) => {

@@ -29,7 +29,7 @@ const c = aggregate.compile([
   outputs: ["expr-out"]
 });
 c.transform({ name: "Incrementalizer" });
-c.validate();
+c.commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -74,7 +74,7 @@ const c = aggregate.compile([
   outputs: ["order-out"]
 });
 c.transform({ name: "Incrementalizer" });
-c.validate();
+c.commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -129,7 +129,7 @@ const c = aggregate.compile([
   inputs: "boom-in",
   outputs: ["boom-out"]
 });
-c.transform({ name: "Incrementalizer" });
+c.transform({ name: "Incrementalizer" }).commit();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
