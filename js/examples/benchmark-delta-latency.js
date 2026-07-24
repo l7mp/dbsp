@@ -10,7 +10,7 @@ aggregate.compile([
 ], {
   inputs: "Pod",
   outputs: ["output"]
-}).transform("Incrementalizer").validate();
+}).transform({ name: "Incrementalizer" }).validate();
 
 let count = 0;
 let warmupResolve = null;

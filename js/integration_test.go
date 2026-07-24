@@ -1277,7 +1277,7 @@ const c = aggregate.compile([
   outputs: ["agg-inc-out"]
 });
 
-const ci = c.transform("Incrementalizer");
+const ci = c.transform({ name: "Incrementalizer" });
 
 runtime.observe("aggregation^Δ", (e) => {
   runtime.publish("agg-inc-obs", [[{node: e.node.id}, 1]]);
@@ -1306,7 +1306,64 @@ publish("agg-inc-in", [[{id: 222}, 1]]);
 		}, 2*time.Second, 10*time.Millisecond).Should(BeNumerically(">", 0))
 	})
 
-	It("rejects a transform entry that is neither a name nor an object", func() {
+	It("applies the transform list form in canonical order", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("chain-collector", vm.runtime, "out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		// The SmithPredictor is snapshot-side and listed AFTER the
+		// Incrementalizer: the chain applies the set in canonical order
+		// regardless, and the loop emits the desired delta once.
+		script := `
+const c = aggregate.compile([
+  { "@join": [
+      { "@eq": ["$.pods.metadata.name", "$.services.metadata.name"] },
+      { inputs: ["pods", "services"] },
+  ]},
+  { "@project": { name: "$.pods.metadata.name" } },
+], {inputs: ["pods", "services", "observed"], outputs: ["out"]});
+c.transform([
+  { name: "Incrementalizer" },
+  { name: "SmithPredictor", pairs: [["observed", "out"]], k: 2 },
+]);
+publish("pods", [[{metadata:{name:"pod-a"}}, 1]]);
+publish("services", [[{metadata:{name:"pod-a"}}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() bool {
+			for _, ev := range collector.Snapshot() {
+				for _, row := range zsetRowsByField(ev, "name") {
+					if row == "1:pod-a" {
+						return true
+					}
+				}
+			}
+			return false
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+	})
+
+	It("rejects a transform list with duplicates", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		script := `
+const c = aggregate.compile([
+  {"@project": {name: "$.metadata.name"}}
+], {inputs: "pods", outputs: ["out"]});
+c.transform([{ name: "Incrementalizer" }, { name: "Incrementalizer" }]);
+`
+		err = runScript(vm, script)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("listed twice"))
+	})
+
+	It("rejects a transform entry that is not a {name, ...} object", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 		defer vm.Close()
@@ -1320,6 +1377,15 @@ c.transform(42);
 		err = runScript(vm, script)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("transform entry"))
+
+		script = `
+const c2 = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {inputs: "in2", outputs: ["out2"], name: "string-entry-reject"});
+c2.transform("Incrementalizer");
+`
+		err = runScript(vm, script)
+		Expect(err).To(HaveOccurred())
 	})
 
 	It("compiles aggregate pipelines with binding objects", func() {
@@ -1513,7 +1579,7 @@ const c = aggregate.compile([
   {"@select": {"@eq": ["$.metadata.namespace", "default"]}},
   {"@project": {name: "$.metadata.name", status: "$.status"}}
 ], {inputs: "pods", outputs: ["result"]});
-c.transform("Incrementalizer").validate();
+c.transform({ name: "Incrementalizer" });
 `
 		Expect(runScript(vm, script)).To(Succeed())
 
@@ -1547,7 +1613,7 @@ const c = aggregate.compile([
   {"@project": {name: "$.metadata.name"}},
   {"@distinct": null}
 ], {inputs: "pods", outputs: ["distinct-pods"]});
-c.transform("Incrementalizer").validate();
+c.transform({ name: "Incrementalizer" });
 
 // The retractions go out in a later step: circuits fold the queued
 // backlog, so a single burst would cancel to a net-zero delta and the
@@ -1676,7 +1742,7 @@ publish("pods", [[{id: 9}, 1]]);
 
 		script := `
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT, age INTEGER");
-sql.compile("SELECT name, age FROM users WHERE age > 25", { output: "senior-users" }).transform("Incrementalizer").validate();
+sql.compile("SELECT name, age FROM users WHERE age > 25", { output: "senior-users" }).transform({ name: "Incrementalizer" }).validate();
 publish("users", [
   [{ id: 1, name: "alice", age: 30 }, 1],
   [{ id: 2, name: "bob", age: 22 }, 1]
@@ -1706,7 +1772,7 @@ publish("users", [
 		script := `
 sql.table("users", "id INTEGER PRIMARY KEY, name TEXT");
 sql.table("orders", "id INTEGER PRIMARY KEY, user_id INTEGER, total REAL");
-sql.compile("SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id", { output: "user-orders" }).transform("Incrementalizer").validate();
+sql.compile("SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id", { output: "user-orders" }).transform({ name: "Incrementalizer" }).validate();
 `
 		Expect(runScript(vm, script)).To(Succeed())
 	})
@@ -1734,7 +1800,7 @@ aggregate.compile(pipeline, {
     {name: "svc-topic", logical: "services"}
   ],
   outputs: [{name: "result-topic", logical: "output"}]
-}).transform("Incrementalizer").validate();
+}).transform({ name: "Incrementalizer" });
 
 publish("pods-topic", [[{metadata:{name:"shared"}}, 1]]);
 publish("svc-topic", [[{metadata:{name:"shared"}}, 1]]);

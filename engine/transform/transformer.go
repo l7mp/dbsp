@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/l7mp/dbsp/engine/circuit"
-	"github.com/l7mp/dbsp/engine/operator"
 )
 
 // TransformerType identifies a transformer.
@@ -12,11 +11,15 @@ type TransformerType string
 
 const (
 	Incrementalizer TransformerType = "Incrementalizer"
-	Rewriter        TransformerType = "Rewriter"
 	Reconciler      TransformerType = "Reconciler"
 	SmithPredictor  TransformerType = "SmithPredictor"
-	Regularizer     TransformerType = "Regularizer"
-	Optimizer       TransformerType = "Optimizer"
+	Distincter      TransformerType = "Distincter"
+
+	// Rewriter is the internal algebraic rewrite pass. It is not
+	// registered with New and carries no canonical rank: the
+	// Incrementalizer applies it automatically, and Go embedders can run
+	// NewRewriter directly.
+	Rewriter TransformerType = "Rewriter"
 )
 
 // Transformer transforms one circuit into another.
@@ -33,12 +36,6 @@ func New(typ TransformerType, args ...any) (Transformer, error) {
 	switch typ {
 	case Incrementalizer:
 		return NewIncrementalizer(), nil
-	case Rewriter:
-		rules, err := parseRewriterArgs(args)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", Rewriter, err)
-		}
-		return NewRewriter(rules...), nil
 	case Reconciler:
 		pairs, err := parseReconcilerArgs(args)
 		if err != nil {
@@ -51,115 +48,11 @@ func New(typ TransformerType, args ...any) (Transformer, error) {
 			return nil, fmt.Errorf("%s: %w", SmithPredictor, err)
 		}
 		return NewSmithPredictor(k, pairs...), nil
-	case Regularizer:
-		return NewRegularizer(), nil
-	case Optimizer:
-		opts, err := parseOptimizerArgs(args)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", Optimizer, err)
-		}
-		return NewOptimizer(opts), nil
+	case Distincter:
+		return NewDistincter(), nil
 	default:
 		return nil, fmt.Errorf("unknown transformer: %q", typ)
 	}
-}
-
-type OptimizerOptions struct {
-	RewriterRules   []RewriteRule
-	ReconcilerPairs []ReconcilerPair
-}
-
-type optimizer struct {
-	opts OptimizerOptions
-}
-
-// NewOptimizer creates a meta-transform that applies transforms in canonical
-// order.
-func NewOptimizer(opts OptimizerOptions) Transformer {
-	return &optimizer{opts: opts}
-}
-
-func (t *optimizer) Name() TransformerType { return Optimizer }
-
-func (t *optimizer) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
-	if c == nil {
-		return nil, fmt.Errorf("optimizer: nil circuit")
-	}
-
-	// Runtime guardrails: Optimizer is meant for snapshot circuits.
-	for _, n := range c.Nodes() {
-		if n.Kind() == operator.KindDifferentiate || n.Kind() == operator.KindIntegrate {
-			return nil, fmt.Errorf("optimizer: expected snapshot circuit, found incremental node %q (%s)", n.ID, n.Kind())
-		}
-	}
-
-	current := c
-	var err error
-
-	rules := t.opts.RewriterRules
-	if len(rules) == 0 {
-		rules = DefaultRules()
-	}
-	current, err = NewRewriter(rules...).Transform(current)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", Rewriter, err)
-	}
-
-	current, err = NewReconciler(t.opts.ReconcilerPairs...).Transform(current)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", Reconciler, err)
-	}
-
-	current, err = NewRegularizer().Transform(current)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", Regularizer, err)
-	}
-
-	current, err = NewIncrementalizer().Transform(current)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", Incrementalizer, err)
-	}
-
-	return current, nil
-}
-
-func parseRewriterArgs(args []any) ([]RewriteRule, error) {
-	if len(args) == 0 {
-		return DefaultRules(), nil
-	}
-
-	if len(args) == 1 {
-		switch v := args[0].(type) {
-		case string:
-			switch v {
-			case "Pre":
-				return PreRules(), nil
-			case "Post":
-				return PostRules(), nil
-			case "Default":
-				return DefaultRules(), nil
-			default:
-				return nil, fmt.Errorf("unknown ruleset %q", v)
-			}
-		case RewriteRule:
-			return []RewriteRule{v}, nil
-		}
-	}
-
-	rules := make([]RewriteRule, 0, len(args))
-	for i, arg := range args {
-		rule, ok := arg.(RewriteRule)
-		if !ok {
-			return nil, fmt.Errorf("arg %d must be RewriteRule, got %T", i, arg)
-		}
-		rules = append(rules, rule)
-	}
-
-	if len(rules) == 0 {
-		return DefaultRules(), nil
-	}
-
-	return rules, nil
 }
 
 func parseReconcilerArgs(args []any) ([]ReconcilerPair, error) {
@@ -179,6 +72,86 @@ func parseReconcilerArgs(args []any) ([]ReconcilerPair, error) {
 	return pairs, nil
 }
 
+// Spec pairs a transformer type with its constructor arguments, as accepted
+// by New.
+type Spec struct {
+	Type TransformerType
+	Args []any
+}
+
+// canonicalRank orders the transforms along the incrementalization boundary:
+// the control-loop transforms first (Reconciler, SmithPredictor), then
+// Distincter, then the Incrementalizer. Equal ranks preserve the caller's
+// relative order.
+var canonicalRank = map[TransformerType]int{
+	Reconciler:      20,
+	SmithPredictor:  20,
+	Distincter:      30,
+	Incrementalizer: 40,
+}
+
+// Chain is a meta-transformer that applies a set of transforms in canonical
+// order, regardless of the order they were specified in. Callers list what
+// they want; the chain knows which side of the incrementalization boundary
+// each transform belongs to.
+type Chain struct {
+	specs []Spec
+}
+
+// NewChain validates a set of transform specs and returns a Chain that
+// applies them in canonical order. It rejects duplicates and unknown
+// types.
+func NewChain(specs ...Spec) (*Chain, error) {
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("chain: no transforms given")
+	}
+
+	seen := map[TransformerType]bool{}
+	for _, s := range specs {
+		if _, ok := canonicalRank[s.Type]; !ok {
+			return nil, fmt.Errorf("chain: unknown transformer %q", s.Type)
+		}
+		if seen[s.Type] {
+			return nil, fmt.Errorf("chain: transformer %q listed twice", s.Type)
+		}
+		seen[s.Type] = true
+	}
+	// Stable sort by rank: equal ranks keep the given order.
+	sorted := append([]Spec(nil), specs...)
+	for i := 1; i < len(sorted); i++ {
+		for j := i; j > 0 && canonicalRank[sorted[j].Type] < canonicalRank[sorted[j-1].Type]; j-- {
+			sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
+		}
+	}
+
+	return &Chain{specs: sorted}, nil
+}
+
+// Specs returns the chain's transforms in the order they will be applied.
+func (t *Chain) Specs() []Spec {
+	return append([]Spec(nil), t.specs...)
+}
+
+// Name implements Transformer.
+func (t *Chain) Name() TransformerType { return "Chain" }
+
+// Transform implements Transformer: it applies the chain's transforms in
+// canonical order, threading the circuit through.
+func (t *Chain) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
+	current := c
+	for _, s := range t.specs {
+		tr, err := New(s.Type, s.Args...)
+		if err != nil {
+			return nil, fmt.Errorf("chain: %w", err)
+		}
+		current, err = tr.Transform(current)
+		if err != nil {
+			return nil, fmt.Errorf("chain: %s: %w", s.Type, err)
+		}
+	}
+	return current, nil
+}
+
 func parseSmithArgs(args []any) (int, []ReconcilerPair, error) {
 	var pairs []ReconcilerPair
 	k := 0
@@ -193,25 +166,4 @@ func parseSmithArgs(args []any) (int, []ReconcilerPair, error) {
 		}
 	}
 	return k, pairs, nil
-}
-
-func parseOptimizerArgs(args []any) (OptimizerOptions, error) {
-	if len(args) == 0 {
-		return OptimizerOptions{}, nil
-	}
-	if len(args) != 1 {
-		return OptimizerOptions{}, fmt.Errorf("expected zero args or one OptimizerOptions argument")
-	}
-
-	opts, ok := args[0].(OptimizerOptions)
-	if ok {
-		return opts, nil
-	}
-
-	optsPtr, ok := args[0].(*OptimizerOptions)
-	if ok && optsPtr != nil {
-		return *optsPtr, nil
-	}
-
-	return OptimizerOptions{}, fmt.Errorf("expected OptimizerOptions argument, got %T", args[0])
 }

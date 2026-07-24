@@ -17,7 +17,7 @@ aggregate.compile(
         inputs:  ["pods", "services"],
         outputs: ["endpoints"],
     }
-).transform("Incrementalizer").validate();
+).transform({ name: "Incrementalizer" });
 
 subscribe("endpoints", (entries) => {
     console.log("==endpoints==");

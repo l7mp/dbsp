@@ -10,17 +10,6 @@
 // circuit's Delay nodes after incrementalisation.  In steady state (annotation
 // already correct) U = 0 and no patches are emitted: O(|δY|) per tick.
 // After a disturbance the circuit emits only the minimal correction.
-//
-// For the linear @project stage C^Δ = C (LTI operators are self-incremental,
-// DBSP Theorem 3.1), so .transform("Optimizer") applies the canonical pipeline:
-// Rewriter -> Reconciler -> Regularizer -> Incrementalizer.
-//
-// NOTE: the same Z-set cancellation caveat as naive-sentinel.js applies when
-// only the annotation field changes (C(old) = C(new) for the projected
-// annotation subspace).  The error term δU collapses to zero for pure
-// annotation-removal events.  To observe full disturbance rejection, either
-// include a version-bearing field in the projection or extend the pipeline
-// with a @select stage that distinguishes "annotation present" from "absent".
 
 const { createLogger } = require("log");
 const logger = createLogger("examples.incremental-sentinel");
@@ -54,10 +43,13 @@ aggregate.compile(
         }},
     ],
     { inputs: ["services"], outputs: ["desired-services"] }
-).transform({
-  name: "Optimizer",
-    pairs: [["services", "desired-services"]],
-}).validate();   // Optimized incremental closed loop.
+).transform([
+    // Explicit pair using topic names; the runtime maps them to
+    // input_*/output_* node IDs.
+    { name: "Reconciler", pairs: [["services", "desired-services"]] },
+    { name: "Distincter" },
+    { name: "Incrementalizer" },
+]);
 
 // === Output: apply U to the cluster via merge-patch ===
 kubernetes.patch("desired-services", {

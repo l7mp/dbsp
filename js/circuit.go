@@ -1,6 +1,7 @@
 package js
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -34,13 +35,13 @@ func (h *circuitHandle) hasApplied(typ transform.TransformerType) bool {
 
 type circuitTransformOptions struct {
 	Pairs [][]string `json:"pairs"`
-	Rules string     `json:"rules"`
 	K     int        `json:"k"`
 }
 
 // transformEntry is the .transform() argument: a transformer name with its
-// options inline, {name: "...", ...opts}. A bare string is shorthand for an
-// entry with no options.
+// options inline, {name: "...", ...opts}. Every entry is an object, also
+// in the list form, so transform lists serialize uniformly (the same shape
+// a CRD field carries).
 type transformEntry struct {
 	Name string `json:"name"`
 	circuitTransformOptions
@@ -51,9 +52,7 @@ func parseTransformEntry(arg goja.Value) (transformEntry, error) {
 	if arg == nil || goja.IsUndefined(arg) || goja.IsNull(arg) {
 		return e, fmt.Errorf("missing transformer entry")
 	}
-	if name, ok := arg.Export().(string); ok {
-		e.Name = name
-	} else if err := decodeOptionValue(arg, &e); err != nil {
+	if err := decodeOptionValue(arg, &e); err != nil {
 		return e, fmt.Errorf("transform entry: %w", err)
 	}
 	e.Name = strings.TrimSpace(e.Name)
@@ -119,20 +118,9 @@ func parseTransformArgs(typ transform.TransformerType, jsOpts circuitTransformOp
 
 	switch typ {
 	case transform.Incrementalizer:
-	case transform.Regularizer:
+	case transform.Distincter:
 	case transform.Rewriter:
-		if strings.TrimSpace(jsOpts.Rules) != "" {
-			switch strings.TrimSpace(jsOpts.Rules) {
-			case "Pre":
-				args = append(args, "Pre")
-			case "Post":
-				args = append(args, "Post")
-			case "Default":
-				args = append(args, "Default")
-			default:
-				return nil, fmt.Errorf("transform %s options: unknown ruleset %q", typ, jsOpts.Rules)
-			}
-		}
+		return nil, fmt.Errorf("transform %s: not a user-facing transform", typ)
 	case transform.Reconciler:
 		if len(jsOpts.Pairs) > 0 {
 			pairs, err := parseTopicPairs(typ, jsOpts.Pairs)
@@ -150,28 +138,6 @@ func parseTransformArgs(typ transform.TransformerType, jsOpts circuitTransformOp
 			args = append(args, pairs)
 		}
 		args = append(args, jsOpts.K)
-	case transform.Optimizer:
-		o := transform.OptimizerOptions{}
-		if len(jsOpts.Pairs) > 0 {
-			pairs, err := parseTopicPairs(typ, jsOpts.Pairs)
-			if err != nil {
-				return nil, err
-			}
-			o.ReconcilerPairs = pairs
-		}
-		if strings.TrimSpace(jsOpts.Rules) != "" {
-			switch strings.TrimSpace(jsOpts.Rules) {
-			case "Pre":
-				o.RewriterRules = transform.PreRules()
-			case "Post":
-				o.RewriterRules = transform.PostRules()
-			case "Default":
-				o.RewriterRules = transform.DefaultRules()
-			default:
-				return nil, fmt.Errorf("transform %s options: unknown ruleset %q", typ, jsOpts.Rules)
-			}
-		}
-		args = append(args, o)
 	}
 
 	return args, nil
@@ -225,8 +191,7 @@ func (h *circuitHandle) doTransform(entry transformEntry) error {
 	// it injects must be compiled by the Incrementalizer, so applying it to
 	// an already-incremental circuit would run the distinct on delta
 	// streams.
-	if typ == transform.SmithPredictor &&
-		(h.hasApplied(transform.Incrementalizer) || h.hasApplied(transform.Optimizer)) {
+	if typ == transform.SmithPredictor && h.hasApplied(transform.Incrementalizer) {
 		return fmt.Errorf("transform %s: the circuit is already incremental", typ)
 	}
 
@@ -245,6 +210,60 @@ func (h *circuitHandle) doTransform(entry transformEntry) error {
 	}
 
 	h.applied = append(h.applied, typ)
+	return nil
+}
+
+// doTransformChain applies a set of transform entries as one atomic step,
+// in canonical order regardless of the order given (transform.NewChain owns
+// the ordering). The circuit swap is atomic: all transforms apply, or none.
+func (h *circuitHandle) doTransformChain(raw []any) error {
+	if len(raw) == 0 {
+		return fmt.Errorf("circuit.transform([...]) requires at least one transform")
+	}
+
+	specs := make([]transform.Spec, 0, len(raw))
+	for i, el := range raw {
+		if _, ok := el.(string); ok {
+			return fmt.Errorf("transform list entry %d: expected a {name, ...} object, got a string", i)
+		}
+		var entry transformEntry
+		data, err := json.Marshal(el)
+		if err != nil {
+			return fmt.Errorf("transform list entry %d: %w", i, err)
+		}
+		if err := json.Unmarshal(data, &entry); err != nil {
+			return fmt.Errorf("transform list entry %d: %w", i, err)
+		}
+		entry.Name = strings.TrimSpace(entry.Name)
+		if entry.Name == "" {
+			return fmt.Errorf("transform list entry %d: missing transformer name", i)
+		}
+		typ := transform.TransformerType(entry.Name)
+		args, err := parseTransformArgs(typ, entry.circuitTransformOptions)
+		if err != nil {
+			return err
+		}
+		specs = append(specs, transform.Spec{Type: typ, Args: args})
+	}
+
+	ch, err := transform.NewChain(specs...)
+	if err != nil {
+		return fmt.Errorf("transform: %w", err)
+	}
+
+	for _, s := range ch.Specs() {
+		if s.Type == transform.SmithPredictor && h.hasApplied(transform.Incrementalizer) {
+			return fmt.Errorf("transform %s: the circuit is already incremental", s.Type)
+		}
+	}
+
+	if err := h.applyTransformer("Chain", ch); err != nil {
+		return err
+	}
+
+	for _, s := range ch.Specs() {
+		h.applied = append(h.applied, s.Type)
+	}
 	return nil
 }
 
@@ -370,10 +389,18 @@ func (h *circuitHandle) jsObject() *goja.Object {
 
 	_ = obj.Set("transform", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
 		if len(call.Arguments) != 1 {
-			return nil, fmt.Errorf("circuit.transform(entry) takes a single name or {name, ...} entry")
+			return nil, fmt.Errorf("circuit.transform(entry) takes a single {name, ...} entry or a list of entries")
 		}
 
-		entry, err := parseTransformEntry(call.Argument(0))
+		arg := call.Argument(0)
+		if list, ok := arg.Export().([]any); ok {
+			if err := h.doTransformChain(list); err != nil {
+				return nil, err
+			}
+			return obj, nil
+		}
+
+		entry, err := parseTransformEntry(arg)
 		if err != nil {
 			return nil, err
 		}

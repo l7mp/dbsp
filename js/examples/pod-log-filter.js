@@ -47,7 +47,7 @@ aggregate.compile([
 ], {
     inputs: "pods-raw",
     outputs: ["pods"],
-}).transform("Incrementalizer").validate();
+}).transform({ name: "Incrementalizer" });
 
 // Compile a shared filter circuit: parse each raw log line as JSONL and
 // keep only documents whose "level" field equals "error".
@@ -56,7 +56,7 @@ aggregate.compile([
 ], {
     inputs: "pod-logs-raw",
     outputs: ["error-logs"],
-}).transform("Incrementalizer").validate();
+}).transform({ name: "Incrementalizer" });
 
 // For each new pod, start a log stream.  The callback parses raw log lines
 // as JSONL and publishes the result; the shared filter circuit above then

@@ -44,6 +44,11 @@ type nodeMapping struct {
 //   - D^Δ = identity (bypass).
 //   - δ₀^Δ = δ₀.
 func (t *incrementalizer) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
+	c, err := NewRewriter().Transform(c)
+	if err != nil {
+		return nil, fmt.Errorf("incrementalizer: rewrite pass: %w", err)
+	}
+
 	result := circuit.New(fmt.Sprintf("%s^Δ", c.Name()))
 
 	// Mapping from original node IDs to their transformation info.
@@ -110,6 +115,11 @@ func (t *incrementalizer) Transform(c *circuit.Circuit) (*circuit.Circuit, error
 			actualTo := toMapping.inputNode
 			result.AddEdge(circuit.NewEdge(actualFrom, actualTo, e.Port))
 		}
+	}
+
+	result, err = NewRewriter().Transform(result)
+	if err != nil {
+		return nil, fmt.Errorf("incrementalizer: rewrite pass: %w", err)
 	}
 
 	return result, nil

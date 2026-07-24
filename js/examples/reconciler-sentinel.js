@@ -13,7 +13,7 @@
 //
 // For the linear @project stage C^Δ = C (LTI operators are self-incremental,
 // DBSP Theorem 3.1), so the optimizer applies transforms in canonical order:
-// Rewriter -> Reconciler -> Regularizer -> Incrementalizer.
+// Reconciler -> Distincter -> Incrementalizer.
 //
 // NOTE: the same Z-set cancellation caveat as naive-sentinel.js applies when
 // only the annotation field changes (C(old) = C(new) for the projected
@@ -53,11 +53,13 @@ aggregate.compile(
         ]},
     ],
     { inputs: ["services"], outputs: ["desired-services"] }
-).transform({
-  name: "Optimizer",
-    // Explicit pair using topic names; runtime maps them to input_*/output_* node IDs.
-    pairs: [["services", "desired-services"]],
-}).validate();
+).transform([
+    // Explicit pair using topic names; the runtime maps them to
+    // input_*/output_* node IDs.
+    { name: "Reconciler", pairs: [["services", "desired-services"]] },
+    { name: "Distincter" },
+    { name: "Incrementalizer" },
+]);
 
 // === Output: apply U to the cluster via full-object update ===
 kubernetes.update("desired-services", {

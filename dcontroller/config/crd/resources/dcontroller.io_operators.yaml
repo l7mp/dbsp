@@ -84,9 +84,9 @@ spec:
                           description: DisableReconciler disables the reconciler transform
                             pass.
                           type: boolean
-                        disableRegularizer:
-                          description: DisableRegularizer disables the regularizer
-                            transform pass.
+                        disableDistincter:
+                          description: DisableDistincter disables the distincter
+                            transform pass that makes every output set-valued.
                           type: boolean
                       type: object
                     pipeline:

@@ -74,21 +74,19 @@ function applyTransforms(circuitHandle, opts) {
         throw new Error("options.disableIncrementalizer=true requires options.disableReconciler=true");
     }
 
-    const useOptimizer = !opts.disableIncrementalizer && !opts.disableReconciler && !opts.disableRegularizer;
-    if (useOptimizer) {
-        circuitHandle.transform("Optimizer");
-        return;
-    }
-
+    // List form: the engine applies the set in canonical order as one
+    // atomic step.
+    const transforms = [];
     if (!opts.disableIncrementalizer && !opts.disableReconciler) {
-        circuitHandle.transform("Reconciler");
+        transforms.push({ name: "Reconciler" });
     }
-    if (!opts.disableRegularizer) {
-        circuitHandle.transform("Regularizer");
+    if (!opts.disableDistincter) {
+        transforms.push({ name: "Distincter" });
     }
     if (!opts.disableIncrementalizer) {
-        circuitHandle.transform("Incrementalizer");
+        transforms.push({ name: "Incrementalizer" });
     }
+    circuitHandle.transform(transforms);
 }
 
 function parseConfigs(operatorName, specs) {

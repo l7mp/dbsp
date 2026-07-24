@@ -483,10 +483,11 @@ var _ = Describe("Rewrite", func() {
 	Describe("End-to-end: Incrementalize + Rewrite", func() {
 		It("simplifies two sequential non-linear operators", func() {
 			// Original: in → nlin1 → nlin2 → out.
-			// After Incrementalize: in → I1 → Op1 → D1 → I2 → Op2 → D2 → out.
-			// After Rewrite:
-			//   1. EliminateID cancels D1/I2: in → I1 → Op1 → Op2 → D2 → out.
-			// This test only checks the cancellation behavior.
+			// The mechanical wrapping produces
+			//   in → I1 → Op1 → D1 → I2 → Op2 → D2 → out,
+			// and the incrementalizer's internal rewrite pass cancels the
+			// adjacent D1/I2 pair (EliminateID) before returning:
+			//   in → I1 → Op1 → Op2 → D2 → out.
 			c := circuit.New("two-nonlinear")
 			c.AddNode(circuit.Input("in"))
 			c.AddNode(circuit.Op("nlin1", newTestNonLinearOp()))
@@ -496,21 +497,10 @@ var _ = Describe("Rewrite", func() {
 			c.AddEdge(circuit.NewEdge("nlin1", "nlin2", 0))
 			c.AddEdge(circuit.NewEdge("nlin2", "out", 0))
 
-			incr, err := NewIncrementalizer().Transform(c)
+			rewritten, err := NewIncrementalizer().Transform(c)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Before rewrite: all expansion nodes should exist.
-			Expect(incr.Node("nlin1^Δ_int")).NotTo(BeNil())
-			Expect(incr.Node("nlin1^Δ_op")).NotTo(BeNil())
-			Expect(incr.Node("nlin1^Δ_diff")).NotTo(BeNil())
-			Expect(incr.Node("nlin2^Δ_int")).NotTo(BeNil())
-			Expect(incr.Node("nlin2^Δ_op")).NotTo(BeNil())
-			Expect(incr.Node("nlin2^Δ_diff")).NotTo(BeNil())
-
-			rewritten, err := NewRewriter(DefaultRules()...).Transform(incr)
-			Expect(err).NotTo(HaveOccurred())
-
-			// After rewrite: D1 and I2 should be eliminated.
+			// D1 and I2 are already eliminated.
 			Expect(rewritten.Node("nlin1^Δ_diff")).To(BeNil())
 			Expect(rewritten.Node("nlin2^Δ_int")).To(BeNil())
 
@@ -541,9 +531,6 @@ var _ = Describe("Rewrite", func() {
 			Expect(outEdges).To(HaveLen(1))
 			Expect(outEdges[0].From).To(Equal("nlin2^Δ_diff"))
 
-			// Original incrementalized circuit remains unchanged.
-			Expect(incr.Node("nlin1^Δ_diff")).NotTo(BeNil())
-			Expect(incr.Node("nlin2^Δ_int")).NotTo(BeNil())
 		})
 	})
 })

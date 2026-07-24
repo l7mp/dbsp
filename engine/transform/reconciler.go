@@ -95,6 +95,12 @@ func injectReconcilerLoop(c *circuit.Circuit, pair ReconcilerPair) error {
 	if outputNode.Kind() != operator.KindOutput {
 		return fmt.Errorf("reconciler: node %q is %s, not output", pair.OutputID, outputNode.Kind())
 	}
+	if c.Node("_rec_"+pair.OutputID+"_acc") != nil {
+		return fmt.Errorf("reconciler: output %q already carries a Reconciler loop", pair.OutputID)
+	}
+	if c.Node("_smith_"+pair.OutputID+"_acc") != nil {
+		return fmt.Errorf("reconciler: output %q already carries a Smith loop", pair.OutputID)
+	}
 
 	inEdges := c.EdgesTo(pair.OutputID)
 	if len(inEdges) == 0 {

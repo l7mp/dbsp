@@ -42,14 +42,14 @@ function makeLoop(name, transformName) {
     outputs: [out],
     name: `endpoints-${name}`,
   });
-  // The loop transform is snapshot-side (the Smith prediction distinct must
-  // be compiled by the Incrementalizer), so it comes first.
-  if (transformName === "SmithPredictor") {
-    h.transform({ name: "SmithPredictor", pairs: [[observed, out]], k: 2 });
-  } else {
-    h.transform({ name: "Reconciler", pairs: [[observed, out]] });
-  }
-  h.transform("Incrementalizer");
+  // The list form applies in canonical order (the loop transform on the
+  // snapshot side, then the Incrementalizer) regardless of the order given.
+  h.transform([
+    { name: "Incrementalizer" },
+    transformName === "SmithPredictor"
+      ? { name: "SmithPredictor", pairs: [[observed, out]], k: 2 }
+      : { name: "Reconciler", pairs: [[observed, out]] },
+  ]);
   // No .validate() needed: compile and every transform validate and install
   // the circuit automatically.
 

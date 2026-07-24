@@ -68,7 +68,7 @@ var _ = Describe("Indexed equi-join (@join index option)", func() {
 		c := New(toIdentityBindings([]string{"l", "r"}), toIdentityBindings([]string{"output"}))
 		q, err := c.CompileString(pipeline)
 		Expect(err).NotTo(HaveOccurred())
-		reg, err := transform.NewRegularizer().Transform(q.Circuit)
+		reg, err := transform.NewDistincter().Transform(q.Circuit)
 		Expect(err).NotTo(HaveOccurred())
 		incr, err := transform.NewIncrementalizer().Transform(reg)
 		Expect(err).NotTo(HaveOccurred())

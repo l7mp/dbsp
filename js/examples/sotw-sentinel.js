@@ -47,7 +47,7 @@ aggregate.compile(
         }},
     ],
     { inputs: ["services"], outputs: ["desired-services"] }
-);   // No .transform("Incrementalizer") — SotW: full desired state each tick.
+);
 
 // === Output: apply U to the cluster via merge-patch ===
 kubernetes.patch("desired-services", {

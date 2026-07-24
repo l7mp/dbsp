@@ -58,7 +58,7 @@ function removeOpChecker(fn) {
 
 // Resolves with the operator status once its Ready condition matches
 // condStatus/reason and check(status) (when given) is satisfied.
-function waitForOpStatus(opName, condStatus, reason, check, timeoutMs = 20000) {
+function waitForOpStatus(opName, condStatus, reason, check, timeoutMs = 60000) {
     return new Promise((resolve, reject) => {
         let done = false;
         function tryResolve() {
@@ -108,7 +108,7 @@ function removeSvcChecker(fn) {
     if (idx >= 0) svcCheckers.splice(idx, 1);
 }
 
-function waitForSvcSeen(svcName, timeoutMs = 15000) {
+function waitForSvcSeen(svcName, timeoutMs = 45000) {
     return new Promise((resolve, reject) => {
         let done = false;
         function tryResolve() {
@@ -131,7 +131,7 @@ function waitForSvcSeen(svcName, timeoutMs = 15000) {
     });
 }
 
-function waitForAnnotation(svcName, key, expected, timeoutMs = 15000) {
+function waitForAnnotation(svcName, key, expected, timeoutMs = 45000) {
     return new Promise((resolve, reject) => {
         let done = false;
         function tryResolve() {

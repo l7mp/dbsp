@@ -70,10 +70,11 @@ type ControllerOptions struct {
 	// +optional
 	DisableReconciler bool `json:"disableReconciler,omitempty"`
 
-	// DisableRegularizer disables the regularizer transform pass.
+	// DisableDistincter disables the distincter transform pass that makes
+	// every output set-valued.
 	//
 	// +optional
-	DisableRegularizer bool `json:"disableRegularizer,omitempty"`
+	DisableDistincter bool `json:"disableDistincter,omitempty"`
 }
 
 // Resource specifies a resource by the GVK.
