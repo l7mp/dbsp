@@ -30,7 +30,6 @@ const writeCD       = kubernetes.update("write-cd",       { gvk: CD_GVK });
 
 // Watcher producers — deliver K8s change events onto named topics.
 kubernetes.watch("watch-deploy", { gvk: DEPLOY_GVK, namespace: TESTNS });
-kubernetes.watch("watch-cm",     { gvk: CM_GVK,     namespace: TESTNS });
 kubernetes.watch("watch-op",     { gvk: OPERATOR_GVK });
 
 // --- Condition checker infrastructure for the Operator topic ---------------
@@ -76,43 +75,30 @@ function waitForOp(check, timeoutMs) {
     });
 }
 
-// --- State tracking for ConfigMaps and Deployments -------------------------
+// --- State tracking for Deployments ----------------------------------------
 //
-// latestCmState[name]  — latest seen ConfigMap state: { rv }
-// latestDepState[name] — latest seen Deployment state: { rv, ann }
+// latestDepState[name] — latest seen Deployment state: { ann }.  A name that is
+// a key of the map has been seen at least once, which is what tells "annotation
+// absent" apart from "deployment not observed yet".
 //
-// stateCheckers are notified on every CM or Deployment watch event so that
-// waitForDepMatchesCM / waitForDepNoAnnotation can react to either side changing.
+// stateCheckers are notified on every Deployment watch event so that the
+// waiters below can react.
 
-const latestCmState  = {};
 const latestDepState = {};
 const stateCheckers = [];
 
-function applyLatestByRV(state, obj, w, project) {
-    const name = obj.metadata?.name;
-    const rv = obj.metadata?.resourceVersion;
-    if (!name || !rv) return;
-
-    if (w > 0) {
-        state[name] = project(obj, rv);
-        return;
-    }
-    if (state[name]?.rv === rv) delete state[name];
-}
-
-subscribe("watch-cm", (entries) => {
-    for (const [obj, w] of entries) {
-        applyLatestByRV(latestCmState, obj, w, (_, rv) => ({ rv }));
-    }
-    for (const fn of stateCheckers.slice()) fn();
-});
-
 subscribe("watch-deploy", (entries) => {
+    // Retractions first: an update arrives as [old,-1],[new,+1] in a single
+    // delta and the two entries can come in either order.
     for (const [obj, w] of entries) {
-        applyLatestByRV(latestDepState, obj, w, (cur, rv) => ({
-            rv,
-            ann: cur.spec?.template?.metadata?.annotations?.[ANN],
-        }));
+        if (w < 0) delete latestDepState[obj.metadata.name];
+    }
+    for (const [obj, w] of entries) {
+        if (w > 0) {
+            latestDepState[obj.metadata.name] = {
+                ann: obj.spec?.template?.metadata?.annotations?.[ANN],
+            };
+        }
     }
     for (const fn of stateCheckers.slice()) fn();
 });
@@ -123,20 +109,22 @@ function removeStateChecker(fn) {
     if (idx >= 0) stateCheckers.splice(idx, 1);
 }
 
-// waitForDepMatchesCM resolves when deployment's ANN annotation equals the CM's
-// current resourceVersion.  Both values must be present and equal.
-function waitForDepMatchesCM(depName, cmName, timeoutMs = 5000) {
+// waitForDepAnnotation resolves with the deployment's ANN annotation once it is
+// present and accepted by the predicate.  The annotation carries a hash of the
+// ConfigMap data, which this script cannot recompute, so the assertions are
+// relational: the token is shared by deployments bound to the same ConfigMap
+// and it changes when that ConfigMap's data changes.
+function waitForDepAnnotation(depName, accept = () => true, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {
         let done = false;
         function tryResolve() {
             if (done) return;
-            const cmRV = latestCmState[cmName]?.rv;
-            const depAnn = latestDepState[depName]?.ann;
-            if (cmRV !== undefined && typeof depAnn === "string" && depAnn === cmRV) {
+            const ann = latestDepState[depName]?.ann;
+            if (typeof ann === "string" && accept(ann)) {
                 done = true;
                 clearTimeout(timer);
                 removeStateChecker(tryResolve);
-                resolve();
+                resolve(ann);
             }
         }
         const timer = setTimeout(() => {
@@ -144,8 +132,8 @@ function waitForDepMatchesCM(depName, cmName, timeoutMs = 5000) {
             done = true;
             removeStateChecker(tryResolve);
             reject(new Error(
-                `timeout (${timeoutMs}ms) waiting for ${depName} annotation to match CM ${cmName}` +
-                ` (cmRV=${latestCmState[cmName]?.rv}, depAnn=${latestDepState[depName]?.ann})`,
+                `timeout (${timeoutMs}ms) waiting for an accepted ${depName} annotation` +
+                ` (current=${latestDepState[depName]?.ann})`,
             ));
         }, timeoutMs);
         addStateChecker(tryResolve);
@@ -283,7 +271,11 @@ const OPERATOR_SPEC = {
                         spec: {
                             template: {
                                 metadata: {
-                                    annotations: { [ANN]: "$.ConfigMap.metadata.resourceVersion" },
+                                    // A content token: it changes exactly when the
+                                    // ConfigMap data changes, unlike
+                                    // metadata.resourceVersion, which bumps on every
+                                    // write to the object by anyone.
+                                    annotations: { [ANN]: { "@hash": "$.ConfigMap.data" } },
                                 },
                             },
                         },
@@ -298,6 +290,9 @@ const OPERATOR_SPEC = {
 // --- Tests -----------------------------------------------------------------
 
 describe("configmap-deployment controller", (it) => {
+    // The token the pipeline writes for the data both ConfigMaps start with.
+    let token1;
+
     it("operator becomes ready", async () => {
         injectOperator(OPERATOR_SPEC);
         await waitForOperatorReady("configdep-operator", 10000);
@@ -310,38 +305,42 @@ describe("configmap-deployment controller", (it) => {
         injectCM("test-configmap-2");
         injectCD("test-dep-config-1", "test-configmap-1", "test-deployment-1");
 
-        await waitForDepMatchesCM("test-deployment-1", "test-configmap-1");
+        token1 = await waitForDepAnnotation("test-deployment-1");
         await waitForDepNoAnnotation("test-deployment-2");
     });
 
     it("annotates second deployment when second ConfigDeployment is created", async () => {
         injectCD("test-dep-config-2", "test-configmap-2", "test-deployment-2");
-        await waitForDepMatchesCM("test-deployment-2", "test-configmap-2");
+
+        // Both ConfigMaps hold the same data, so the content token is the same.
+        await waitForDepAnnotation("test-deployment-2", (ann) => ann === token1);
     });
 
     it("handles a third deployment referring to the same ConfigMap", async () => {
         injectDeploy("test-deployment-3");
         injectCD("test-dep-config-3", "test-configmap-1", "test-deployment-3");
 
-        await waitForDepMatchesCM("test-deployment-1", "test-configmap-1");
-        await waitForDepMatchesCM("test-deployment-2", "test-configmap-2");
-        await waitForDepMatchesCM("test-deployment-3", "test-configmap-1");
+        await waitForDepAnnotation("test-deployment-3", (ann) => ann === token1);
+        await waitForDepAnnotation("test-deployment-1", (ann) => ann === token1);
+        await waitForDepAnnotation("test-deployment-2", (ann) => ann === token1);
     });
 
     it("updates annotations when the ConfigMap is updated", async () => {
         updateCM("test-configmap-1", { key1: "value1", key2: "value2", key3: "value3" });
 
-        await waitForDepMatchesCM("test-deployment-1", "test-configmap-1");
-        await waitForDepMatchesCM("test-deployment-2", "test-configmap-2");
-        await waitForDepMatchesCM("test-deployment-3", "test-configmap-1");
+        // The deployments bound to the updated ConfigMap move to a new token,
+        // together; the one bound to the untouched ConfigMap keeps the old one.
+        const token2 = await waitForDepAnnotation("test-deployment-1", (ann) => ann !== token1);
+        await waitForDepAnnotation("test-deployment-3", (ann) => ann === token2);
+        await waitForDepAnnotation("test-deployment-2", (ann) => ann === token1);
     });
 
     it("removes annotations when the ConfigMap is deleted", async () => {
         deleteCM("test-configmap-1");
 
         await waitForDepNoAnnotation("test-deployment-1");
-        await waitForDepMatchesCM("test-deployment-2", "test-configmap-2");
         await waitForDepNoAnnotation("test-deployment-3");
+        await waitForDepAnnotation("test-deployment-2", (ann) => ann === token1);
 
         // Cleanup.
         deleteOperator("configdep-operator");

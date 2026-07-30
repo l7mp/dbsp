@@ -35,7 +35,9 @@ spec:
               template:
                 metadata:
                   annotations:
-                    "dcontroller.io/configmap-version": "$.ConfigMap.metadata.resourceVersion"
+                    # Content token: changes exactly when the ConfigMap data changes.
+                    "dcontroller.io/configmap-version":
+                      "@hash": "$.ConfigMap.data"
       # options:
       #   disableDistincter: true
       targets:

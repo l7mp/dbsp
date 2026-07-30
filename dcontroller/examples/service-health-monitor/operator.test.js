@@ -68,21 +68,24 @@ function waitForOpStatus(opName, condStatus, reason, timeoutMs = 10000) {
 
 // --- Service annotation state tracking ------------------------------------
 
-const latestSvcState = {}; // svcName -> { rv, ann }
+// latestSvcState[name] — latest seen Service state: { ann }.  A name that is a
+// key of the map has been seen at least once, which is what tells "annotation
+// absent" apart from "service not observed yet".
+
+const latestSvcState = {};
 const svcCheckers  = [];
 
 subscribe("watch-svc", (entries) => {
+    // Retractions first: an update arrives as [old,-1],[new,+1] in a single
+    // delta and the two entries can come in either order.
     for (const [obj, w] of entries) {
-        const name = obj.metadata?.name;
-        const rv = obj.metadata?.resourceVersion;
-        if (!name || !rv) continue;
+        if (w < 0) delete latestSvcState[obj.metadata.name];
+    }
+    for (const [obj, w] of entries) {
         if (w > 0) {
-            latestSvcState[name] = {
-                rv,
+            latestSvcState[obj.metadata.name] = {
                 ann: obj.metadata?.annotations?.[HEALTH_ANN],
             };
-        } else if (latestSvcState[name]?.rv === rv) {
-            delete latestSvcState[name];
         }
     }
     for (const fn of svcCheckers.slice()) fn();

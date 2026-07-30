@@ -9,9 +9,9 @@ The operator watches three resources:
 - the `Deployment` that should roll when the data changes,
 - and a custom `ConfigDeployment` resource that links the two by name.
 
-The pipeline joins those objects by name and namespace, then writes the current ConfigMap resource
-version into the deployment pod template annotations. That small pod template change is enough to
-trigger a rollout.
+The pipeline joins those objects by name and namespace, then writes a hash of the ConfigMap data
+into the deployment pod template annotations. That small pod template change is enough to trigger a
+rollout.
 
 The example files live in `dcontroller/examples/configmap-deployment-controller/`.
 
@@ -54,10 +54,9 @@ Now inspect the annotation written into the deployment template:
 
 ```bash
 kubectl get deployment dep -o jsonpath='{.spec.template.metadata.annotations.dcontroller\.io/configmap-version}'
-kubectl get configmap config -o jsonpath='{.metadata.resourceVersion}'
 ```
 
-The two values should match.
+The annotation should hold a short hex token.
 
 ## Trigger a rollout
 
@@ -72,8 +71,10 @@ Then watch the deployment roll and verify the annotation changes:
 ```bash
 kubectl rollout status deployment/dep
 kubectl get deployment dep -o jsonpath='{.spec.template.metadata.annotations.dcontroller\.io/configmap-version}'
-kubectl get configmap config -o jsonpath='{.metadata.resourceVersion}'
 ```
+
+Relabeling or re-annotating the ConfigMap, on the other hand, leaves the token alone: the data is
+what the deployment depends on.
 
 ## What this example shows
 
