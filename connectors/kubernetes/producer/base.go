@@ -13,6 +13,7 @@ import (
 	crevent "sigs.k8s.io/controller-runtime/pkg/event"
 	crpredicate "sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	kpredicate "github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
@@ -30,6 +31,8 @@ type baseProducer struct {
 	predicates []crpredicate.TypedPredicate[client.Object]
 
 	sourceCache map[schema.GroupVersionKind]*store.Store
+
+	converter kobject.Converter
 
 	log logr.Logger
 }
@@ -59,12 +62,18 @@ func newBase(cfg Config, producerType string) (*baseProducer, error) {
 		return nil, err
 	}
 
+	converter := cfg.Converter
+	if converter == nil {
+		converter = kobject.DefaultConverter
+	}
+
 	p := &baseProducer{
 		BaseProducer: base,
 		client:       cfg.Client,
 		sourceGVK:    cfg.SourceGVK,
 		inputName:    inputName,
 		sourceCache:  map[schema.GroupVersionKind]*store.Store{},
+		converter:    converter,
 		log:          log.WithName(producerType).WithValues("topic", inputName),
 	}
 
@@ -180,7 +189,7 @@ func (p *baseProducer) listSnapshot(ctx context.Context) (zset.ZSet, error) {
 		if !p.allowObject(obj) {
 			continue
 		}
-		zs.Insert(toDocument(obj), 1)
+		zs.Insert(p.converter.ToDocument(obj), 1)
 	}
 
 	return zs, nil

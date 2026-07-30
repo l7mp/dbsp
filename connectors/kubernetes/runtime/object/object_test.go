@@ -90,13 +90,16 @@ var _ = Describe("Object", func() {
 			"data": map[string]any{"k": "v"},
 		})
 
+		// The dump shows exactly what a document carries: the fields the
+		// API-field table drops are gone, the ones it keeps are there.
 		dump := Dump(obj)
 		Expect(dump).To(ContainSubstring(`"name":"cm1"`))
 		Expect(dump).To(ContainSubstring(`"namespace":"default"`))
-		Expect(dump).To(ContainSubstring(`"resourceVersion":"123"`))
 		Expect(dump).To(ContainSubstring(`"app":"demo"`))
+		Expect(dump).To(ContainSubstring(`"uid":"uid-1"`))
+		Expect(dump).To(ContainSubstring(`"creationTimestamp":"now"`))
+		Expect(dump).NotTo(ContainSubstring("resourceVersion"))
 		Expect(dump).NotTo(ContainSubstring("managedFields"))
-		Expect(dump).NotTo(ContainSubstring("creationTimestamp"))
 		Expect(dump).NotTo(ContainSubstring("last-applied-configuration"))
 	})
 })

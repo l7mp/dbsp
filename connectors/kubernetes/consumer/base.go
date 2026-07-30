@@ -13,8 +13,6 @@ import (
 
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
-	"github.com/l7mp/dbsp/engine/datamodel"
-	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -28,6 +26,10 @@ type Config struct {
 	OutputName string
 	TargetGVK  schema.GroupVersionKind
 
+	// Converter translates pipeline documents into objects to write.
+	// Defaults to the connector's table converter.
+	Converter kobject.Converter
+
 	// Runtime is the engine runtime used to create a subscriber.
 	Runtime *dbspruntime.Runtime
 
@@ -40,6 +42,7 @@ type baseConsumer struct {
 	client     client.Client
 	outputName string
 	targetGVK  schema.GroupVersionKind
+	converter  kobject.Converter
 	log        logr.Logger
 
 	knownM sync.Mutex
@@ -103,11 +106,17 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 		return nil, err
 	}
 
+	converter := cfg.Converter
+	if converter == nil {
+		converter = kobject.DefaultConverter
+	}
+
 	b := &baseConsumer{
 		BaseConsumer: base,
 		client:       cfg.Client,
 		outputName:   cfg.OutputName,
 		targetGVK:    cfg.TargetGVK,
+		converter:    converter,
 		log:          log,
 		known:        map[client.ObjectKey]struct{}{},
 	}
@@ -124,9 +133,9 @@ func (c *baseConsumer) start(ctx context.Context, consume dbspruntime.ConsumeHan
 }
 
 func (c *baseConsumer) objectFromElem(e zset.Elem) (kobject.Object, bool, error) {
-	obj, err := toObject(e.Document)
+	obj, err := c.converter.ToObject(e.Document)
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf("consumer %s: %w", c.Name(), err)
 	}
 
 	obj = normalizeResultObject(obj, c.targetGVK)
@@ -320,18 +329,6 @@ func minWeight(a, b zset.Weight) zset.Weight {
 		return a
 	}
 	return b
-}
-
-func toObject(doc datamodel.Document) (kobject.Object, error) {
-	udoc, ok := doc.(*dbspunstructured.Unstructured)
-	if !ok {
-		return nil, fmt.Errorf("consumer: unsupported document type %T", doc)
-	}
-
-	obj := kobject.New()
-	obj.SetUnstructuredContent(udoc.Fields())
-
-	return obj, nil
 }
 
 func normalizeResultObject(obj kobject.Object, target schema.GroupVersionKind) kobject.Object {

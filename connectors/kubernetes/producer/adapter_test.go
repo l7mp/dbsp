@@ -11,7 +11,10 @@ import (
 
 var _ = Describe("Producer adapters", func() {
 	It("converts add/update/delete lifecycle to zset deltas", func() {
-		p := &baseProducer{sourceCache: map[schema.GroupVersionKind]*store.Store{}}
+		p := &baseProducer{
+			sourceCache: map[schema.GroupVersionKind]*store.Store{},
+			converter:   kobject.DefaultConverter,
+		}
 
 		obj := kobject.New()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
@@ -53,7 +56,10 @@ var _ = Describe("Producer adapters", func() {
 	})
 
 	It("suppresses noop updates", func() {
-		p := &baseProducer{sourceCache: map[schema.GroupVersionKind]*store.Store{}}
+		p := &baseProducer{
+			sourceCache: map[schema.GroupVersionKind]*store.Store{},
+			converter:   kobject.DefaultConverter,
+		}
 
 		obj := kobject.New()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
@@ -79,7 +85,10 @@ var _ = Describe("Producer adapters", func() {
 	})
 
 	It("uses cached object on delete tombstones", func() {
-		p := &baseProducer{sourceCache: map[schema.GroupVersionKind]*store.Store{}}
+		p := &baseProducer{
+			sourceCache: map[schema.GroupVersionKind]*store.Store{},
+			converter:   kobject.DefaultConverter,
+		}
 
 		obj := kobject.New()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}

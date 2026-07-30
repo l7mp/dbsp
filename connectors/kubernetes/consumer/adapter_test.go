@@ -6,6 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -24,7 +25,7 @@ var _ = Describe("Consumer adapters", func() {
 			"spec": map[string]any{"replicas": int64(3)},
 		}
 
-		obj, err := toObject(dbspunstructured.New(input))
+		obj, err := kobject.DefaultConverter.ToObject(dbspunstructured.New(input))
 		Expect(err).NotTo(HaveOccurred())
 
 		out := normalizeResultObject(obj, g)
@@ -36,7 +37,7 @@ var _ = Describe("Consumer adapters", func() {
 
 	It("returns nil for invalid metadata", func() {
 		g := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
-		obj, err := toObject(dbspunstructured.New(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "spec": map[string]any{"a": 1}}))
+		obj, err := kobject.DefaultConverter.ToObject(dbspunstructured.New(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "spec": map[string]any{"a": 1}}))
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(normalizeResultObject(obj, g)).To(BeNil())
@@ -46,7 +47,10 @@ var _ = Describe("Consumer adapters", func() {
 		doc := dbspunstructured.New(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "n"}})
 		e := zset.Elem{Document: doc, Weight: -1}
 
-		bc := &baseConsumer{targetGVK: schema.GroupVersionKind{Group: "g", Version: "v1", Kind: "K"}}
+		bc := &baseConsumer{
+			targetGVK: schema.GroupVersionKind{Group: "g", Version: "v1", Kind: "K"},
+			converter: kobject.DefaultConverter,
+		}
 		obj, isDelete, err := bc.objectFromElem(e)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(obj).NotTo(BeNil())

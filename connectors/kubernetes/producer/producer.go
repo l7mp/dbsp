@@ -32,6 +32,10 @@ type Config struct {
 	LabelSelector *v1.LabelSelector
 	Predicate     *kpredicate.Predicate
 
+	// Converter translates observed objects into pipeline documents.
+	// Defaults to the connector's table converter.
+	Converter kobject.Converter
+
 	// Runtime is the engine runtime used to create a publisher.
 	Runtime *dbspruntime.Runtime
 

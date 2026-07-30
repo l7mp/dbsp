@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	"github.com/l7mp/dbsp/engine/datamodel"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -63,7 +64,7 @@ func (c *Setter) Consume(ctx context.Context, out dbspruntime.Event) error {
 				c.Name(), out.Name, w, doc.String())
 			return false
 		}
-		obj, err := toObject(doc)
+		obj, err := c.converter.ToObject(doc)
 		if err != nil {
 			convErr = fmt.Errorf("setter %s: %w", c.Name(), err)
 			return false
@@ -127,24 +128,21 @@ func (c *Setter) listScope(ctx context.Context) (map[client.ObjectKey]*unstructu
 // contentMatches reports whether writing desired over current would change
 // nothing. The pipeline output is wholesale (status included: the upsert
 // writes the status subresource whenever the desired object carries one),
-// so the comparison is the full content with only the server-owned
-// metadata fields stripped. A conservative false only costs a redundant
-// update.
+// so the comparison is the full content, minus the fields a write does not
+// carry anyway. A conservative false only costs a redundant update.
 func contentMatches(current, desired *unstructured.Unstructured) bool {
 	return reflect.DeepEqual(normalizedContent(current), normalizedContent(desired))
 }
 
 func normalizedContent(obj *unstructured.Unstructured) map[string]any {
 	content := runtime.DeepCopyJSON(obj.UnstructuredContent())
+	// The GVK is the consumer's own (it targets one kind), not something
+	// the comparison can learn from.
 	delete(content, "apiVersion")
 	delete(content, "kind")
-	if meta, ok := content["metadata"].(map[string]any); ok {
-		for _, f := range []string{"resourceVersion", "uid", "generation", "creationTimestamp", "managedFields", "selfLink"} {
-			delete(meta, f)
-		}
-		if len(meta) == 0 {
-			delete(content, "metadata")
-		}
+	kobject.StripOnWrite(content)
+	if meta, ok := content["metadata"].(map[string]any); ok && len(meta) == 0 {
+		delete(content, "metadata")
 	}
 	return content
 }
