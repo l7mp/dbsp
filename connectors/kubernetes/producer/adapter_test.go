@@ -84,6 +84,59 @@ var _ = Describe("Producer adapters", func() {
 		Expect(zs.IsZero()).To(BeTrue())
 	})
 
+	It("retracts the previous document when an object is added twice", func() {
+		p := &baseProducer{
+			sourceCache: map[schema.GroupVersionKind]*store.Store{},
+			converter:   kobject.DefaultConverter,
+		}
+
+		obj := kobject.New()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+		obj.SetGroupVersionKind(gvk)
+		obj.SetNamespace("default")
+		obj.SetName("cfg")
+		kobject.SetContent(obj, map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      "cfg",
+				"namespace": "default",
+			},
+			"data": map[string]any{"a": "1"},
+		})
+
+		zsAdd, err := p.convertDeltaToZSet(kobject.Delta{Type: kobject.Added, Object: obj})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(zsAdd.Size()).To(Equal(1))
+
+		// A relist after a watch restart reports the object as added again.
+		// Unchanged content is a no-op...
+		zs, err := p.convertDeltaToZSet(kobject.Delta{Type: kobject.Added, Object: kobject.DeepCopy(obj)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(zs.IsZero()).To(BeTrue())
+
+		// ...and changed content retracts what was emitted for the object, so
+		// that it is not counted twice.
+		changed := kobject.DeepCopy(obj)
+		kobject.SetContent(changed, map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name":      "cfg",
+				"namespace": "default",
+			},
+			"data": map[string]any{"a": "2"},
+		})
+
+		zsRelist, err := p.convertDeltaToZSet(kobject.Delta{Type: kobject.Added, Object: changed})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(zsRelist.Size()).To(Equal(2))
+
+		zsDel, err := p.convertDeltaToZSet(kobject.Delta{Type: kobject.Deleted, Object: changed})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(zsAdd.Add(zsRelist).Add(zsDel).IsZero()).To(BeTrue())
+	})
+
 	It("uses cached object on delete tombstones", func() {
 		p := &baseProducer{
 			sourceCache: map[schema.GroupVersionKind]*store.Store{},

@@ -28,24 +28,18 @@ func (p *baseProducer) convertDeltaToZSet(delta kobject.Delta) (zset.ZSet, error
 		old = obj
 	}
 
-	if old != nil && (delta.Type == kobject.Updated || delta.Type == kobject.Replaced || delta.Type == kobject.Upserted) {
-		if kobject.DeepEqual(deltaObj, old) {
-			p.log.V(5).Info("suppressing no-op delta in convertDeltaToZSet",
-				"key", objectKey(deltaObj), "type", delta.Type)
-			return zset.New(), nil
-		}
-	}
-
 	zs := zset.New()
 	switch delta.Type {
-	case kobject.Added:
-		zs.Insert(p.converter.ToDocument(deltaObj), 1)
-		if err := p.sourceCache[gvk].Add(deltaObj); err != nil {
-			return zset.New(), fmt.Errorf("add object %s to source cache: %w", objectKey(deltaObj), err)
-		}
-
-	case kobject.Updated, kobject.Replaced, kobject.Upserted:
+	case kobject.Added, kobject.Updated, kobject.Replaced, kobject.Upserted:
 		if old != nil {
+			if kobject.DeepEqual(deltaObj, old) {
+				p.log.V(5).Info("suppressing no-op delta in convertDeltaToZSet",
+					"key", objectKey(deltaObj), "type", delta.Type)
+				return zset.New(), nil
+			}
+			// An object can be reported as added again, by a relist after a
+			// watch restart. Retract what was emitted for it, or the pipeline
+			// counts the object twice.
 			zs.Insert(p.converter.ToDocument(old), -1)
 		}
 		zs.Insert(p.converter.ToDocument(deltaObj), 1)
