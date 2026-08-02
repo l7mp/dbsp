@@ -196,7 +196,7 @@ func (r *MutableRecord) Fields() map[string]any {
 	}
 	out := make(map[string]any, len(r.FieldMap))
 	for k, v := range r.FieldMap {
-		out[k] = deepCopyAny(v)
+		out[k] = datamodel.DeepCopyAny(v)
 	}
 	return out
 }
@@ -210,21 +210,3 @@ func (r *MutableRecord) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &r.FieldMap)
 }
 
-func deepCopyAny(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		m := make(map[string]any, len(x))
-		for k, vv := range x {
-			m[k] = deepCopyAny(vv)
-		}
-		return m
-	case []any:
-		s := make([]any, len(x))
-		for i, vv := range x {
-			s[i] = deepCopyAny(vv)
-		}
-		return s
-	default:
-		return v
-	}
-}

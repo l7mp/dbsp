@@ -6,7 +6,9 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/l7mp/dbsp/engine/circuit"
+	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
 	"github.com/l7mp/dbsp/engine/executor"
+	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/internal/testutils"
 	"github.com/l7mp/dbsp/engine/operator"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -59,6 +61,68 @@ var _ = Describe("Distincter", func() {
 		Expect(reg.EdgesTo("_dst_output_x")).To(HaveLen(1))
 		Expect(reg.EdgesTo("_dst_output_x")[0].From).To(Equal("_sum_output_x"))
 		Expect(reg.Validate()).To(BeEmpty())
+	})
+
+	It("injects the group_by/lexmin pair in the keyed form", func() {
+		key, err := dbspexpr.CompileString(`"$.id"`)
+		Expect(err).NotTo(HaveOccurred())
+
+		reg, err := NewDistincterKeyed(key).Transform(newCircuit())
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(reg.Node("_dst_output_x")).To(BeNil())
+		Expect(reg.Node("_grp_output_x")).NotTo(BeNil())
+		Expect(reg.Node("_grp_output_x").Kind()).To(Equal(operator.KindGroupBy))
+		Expect(reg.Node("_rep_output_x")).NotTo(BeNil())
+		Expect(reg.EdgesTo("_grp_output_x")[0].From).To(Equal("noop"))
+		Expect(reg.EdgesTo("_rep_output_x")[0].From).To(Equal("_grp_output_x"))
+		Expect(reg.EdgesTo("output_x")[0].From).To(Equal("_rep_output_x"))
+		Expect(reg.Validate()).To(BeEmpty())
+	})
+
+	It("keeps the keyed output key-functional through representative handoff", func() {
+		key, err := dbspexpr.CompileString(`"$.id"`)
+		Expect(err).NotTo(HaveOccurred())
+
+		reg, err := NewDistincterKeyed(key).Transform(newCircuit())
+		Expect(err).NotTo(HaveOccurred())
+		incr, err := NewIncrementalizer().Transform(reg)
+		Expect(err).NotTo(HaveOccurred())
+		iexec, err := executor.New(incr, logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+
+		d1 := unstructured.New(map[string]any{"id": "a", "v": int64(1)})
+		d2 := unstructured.New(map[string]any{"id": "a", "v": int64(2)})
+
+		// Both candidates arrive in one delta: exactly one representative
+		// survives, with weight one.
+		acc := zset.New()
+		out, err := iexec.Execute(map[string]zset.ZSet{"input_x": zset.New().WithElems(
+			zset.Elem{Document: d1, Weight: 1},
+			zset.Elem{Document: d2, Weight: 1})})
+		Expect(err).NotTo(HaveOccurred())
+		acc = acc.Add(out["output_x"])
+		Expect(acc.Size()).To(Equal(1))
+		rep := acc.Entries()[0]
+		Expect(rep.Weight).To(Equal(zset.Weight(1)))
+
+		// Retract the representative: the survivor takes over via a
+		// (-old, +new) handoff and the accumulated output stays a
+		// one-document set.
+		out, err = iexec.Execute(map[string]zset.ZSet{"input_x": zset.New().WithElems(
+			zset.Elem{Document: rep.Document, Weight: -1})})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out["output_x"].Lookup(rep.Document.Hash())).To(Equal(zset.Weight(-1)))
+		acc = acc.Add(out["output_x"])
+		Expect(acc.Size()).To(Equal(1))
+		Expect(acc.Entries()[0].Weight).To(Equal(zset.Weight(1)))
+
+		// Retract the survivor: the key disappears.
+		out, err = iexec.Execute(map[string]zset.ZSet{"input_x": zset.New().WithElems(
+			zset.Elem{Document: acc.Entries()[0].Document, Weight: -1})})
+		Expect(err).NotTo(HaveOccurred())
+		acc = acc.Add(out["output_x"])
+		Expect(acc.IsZero()).To(BeTrue())
 	})
 
 	It("clamps multi-derived outputs to set weights, snapshot and incremental alike", func() {

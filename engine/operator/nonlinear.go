@@ -463,15 +463,7 @@ func digestAny(v any) (string, error) {
 
 func normalizeAny(v any) (any, error) {
 	if doc, ok := v.(datamodel.Document); ok {
-		b, err := doc.MarshalJSON()
-		if err != nil {
-			return nil, err
-		}
-		var out any
-		if err := json.Unmarshal(b, &out); err != nil {
-			return nil, err
-		}
-		return out, nil
+		return datamodel.NormalizeAny(doc)
 	}
 	return v, nil
 }

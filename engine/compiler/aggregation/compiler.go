@@ -733,7 +733,7 @@ func compileProjectExpression(args json.RawMessage, stageIndex int, stageOp stri
 					return nil, fmt.Errorf("$. assignment must evaluate to map or document, got %T", val)
 				}
 				for k, v := range m {
-					accum[k] = deepCopyAny(v)
+					accum[k] = datamodel.DeepCopyAny(v)
 				}
 				continue
 			}
@@ -828,23 +828,5 @@ func setNestedMap(m map[string]any, path string, value any) {
 	setNestedMap(sub, parts[1], value)
 }
 
-func deepCopyAny(v any) any {
-	switch val := v.(type) {
-	case map[string]any:
-		cp := make(map[string]any, len(val))
-		for k, vv := range val {
-			cp[k] = deepCopyAny(vv)
-		}
-		return cp
-	case []any:
-		cp := make([]any, len(val))
-		for i, vv := range val {
-			cp[i] = deepCopyAny(vv)
-		}
-		return cp
-	default:
-		return v
-	}
-}
 
 var _ compiler.Compiler = (*Compiler)(nil)

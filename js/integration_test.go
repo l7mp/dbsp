@@ -1354,6 +1354,38 @@ publish("services", [[{metadata:{name:"pod-a"}}, 1]]);
 		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
 	})
 
+	It("clamps a key-multivalued output to one representative with the keyed Distincter", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("dpi-collector", vm.runtime, "dpi-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		// Two documents share the key "a" in one delta; distinct_π lets
+		// exactly one representative through.
+		script := `
+const c = aggregate.compile([
+  {"@project": {"$.": "$."}}
+], {inputs: "dpi-in", outputs: ["dpi-out"]});
+c.transform([
+  { name: "Distincter", key: "$.id" },
+  { name: "Incrementalizer" },
+]).commit();
+publish("dpi-in", [[{id: "a", v: 1}, 1], [{id: "a", v: 2}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+
+		Eventually(func() int {
+			total := 0
+			for _, ev := range collector.Snapshot() {
+				total += len(zsetRowsByField(ev, "id"))
+			}
+			return total
+		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+	})
+
 	It("rejects a transform list with duplicates", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

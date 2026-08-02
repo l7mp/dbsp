@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/l7mp/dbsp/engine/circuit"
+	"github.com/l7mp/dbsp/engine/expression"
 )
 
 // TransformerType identifies a transformer.
@@ -49,6 +50,13 @@ func New(typ TransformerType, args ...any) (Transformer, error) {
 		}
 		return NewSmithPredictor(k, pairs...), nil
 	case Distincter:
+		key, err := parseDistincterArgs(args)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", Distincter, err)
+		}
+		if key != nil {
+			return NewDistincterKeyed(key), nil
+		}
 		return NewDistincter(), nil
 	default:
 		return nil, fmt.Errorf("unknown transformer: %q", typ)
@@ -70,6 +78,20 @@ func parseReconcilerArgs(args []any) ([]ReconcilerPair, error) {
 	}
 
 	return pairs, nil
+}
+
+func parseDistincterArgs(args []any) (expression.Expression, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("expected zero args or one key expression argument")
+	}
+	key, ok := args[0].(expression.Expression)
+	if !ok {
+		return nil, fmt.Errorf("expected an expression.Expression argument, got %T", args[0])
+	}
+	return key, nil
 }
 
 // Spec pairs a transformer type with its constructor arguments, as accepted

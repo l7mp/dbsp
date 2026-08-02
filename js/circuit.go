@@ -9,6 +9,7 @@ import (
 
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
+	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -50,8 +51,9 @@ func (h *circuitHandle) hasApplied(typ transform.TransformerType) bool {
 }
 
 type circuitTransformOptions struct {
-	Pairs [][]string `json:"pairs"`
-	K     int        `json:"k"`
+	Pairs [][]string      `json:"pairs"`
+	K     int             `json:"k"`
+	Key   json.RawMessage `json:"key"`
 }
 
 // transformEntry is the .transform() argument: a transformer name with its
@@ -143,6 +145,15 @@ func parseTransformArgs(typ transform.TransformerType, jsOpts circuitTransformOp
 	switch typ {
 	case transform.Incrementalizer:
 	case transform.Distincter:
+		// The optional key turns the plain distinct into distinct_π:
+		// group_by(key) plus a lexmin representative per key.
+		if len(jsOpts.Key) > 0 {
+			key, err := dbspexpr.Compile(jsOpts.Key)
+			if err != nil {
+				return nil, fmt.Errorf("transform %s: key: %w", typ, err)
+			}
+			args = append(args, key)
+		}
 	case transform.Rewriter:
 		return nil, fmt.Errorf("transform %s: not a user-facing transform", typ)
 	case transform.Reconciler:

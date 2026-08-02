@@ -40,7 +40,7 @@ var _ datamodel.Document = (*Unstructured)(nil)
 func New(fields map[string]any) *Unstructured {
 	f := make(map[string]any, len(fields))
 	for k, v := range fields {
-		f[k] = deepCopyAny(v)
+		f[k] = datamodel.DeepCopyAny(v)
 	}
 	return &Unstructured{fields: f}
 }
@@ -67,7 +67,7 @@ func Merge(left, right *Unstructured) *Unstructured {
 	}
 	res := left.Copy().(*Unstructured)
 	for k, v := range right.fields {
-		res.fields[k] = deepCopyAny(v)
+		res.fields[k] = datamodel.DeepCopyAny(v)
 	}
 	res.hash = ""
 	return res
@@ -118,7 +118,7 @@ func (u *Unstructured) Copy() datamodel.Document {
 		fields: make(map[string]any, len(u.fields)),
 	}
 	for k, v := range u.fields {
-		cp.fields[k] = deepCopyAny(v)
+		cp.fields[k] = datamodel.DeepCopyAny(v)
 	}
 	// The copy owns its fields and has identical content: a cached digest
 	// carries over (it is empty for shared documents, which never cache).
@@ -139,7 +139,7 @@ func (u *Unstructured) New() datamodel.Document {
 func (u *Unstructured) Fields() map[string]any {
 	f := make(map[string]any, len(u.fields))
 	for k, v := range u.fields {
-		f[k] = deepCopyAny(v)
+		f[k] = datamodel.DeepCopyAny(v)
 	}
 	return f
 }

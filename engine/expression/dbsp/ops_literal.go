@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/expression"
 	"github.com/l7mp/dbsp/engine/internal/utils"
 )
@@ -171,7 +172,7 @@ type literalExpr struct {
 }
 
 func (e *literalExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
-	value := deepCopyValue(e.value)
+	value := datamodel.DeepCopyAny(e.value)
 	ctx.Logger().V(8).Info("eval", "op", "@literal", "result", value)
 	return value, nil
 }
@@ -188,25 +189,6 @@ func (e *literalExpr) MarshalJSON() ([]byte, error) {
 
 func (e *literalExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
-// deepCopyValue copies nested JSON-shaped values (maps, slices, scalars).
-func deepCopyValue(v any) any {
-	switch val := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(val))
-		for k, item := range val {
-			out[k] = deepCopyValue(item)
-		}
-		return out
-	case []any:
-		out := make([]any, len(val))
-		for i, item := range val {
-			out[i] = deepCopyValue(item)
-		}
-		return out
-	default:
-		return val
-	}
-}
 
 func init() {
 	MustRegister("@nil", func(args any) (Expression, error) {
