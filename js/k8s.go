@@ -184,8 +184,14 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 	}
 
 	name := fmt.Sprintf("kubernetes-producer-%s-%s-%s", producerKind, topic, strings.ToLower(gvk.String()))
+	// Every connector gets its own client (own rate limiter, own connection
+	// pool): readers and writers must not contend on one token bucket.
+	producerClient, err := krt.NewCompositeClient()
+	if err != nil {
+		return nil, fmt.Errorf("%s: connector client: %w", kind, err)
+	}
 	baseCfg := k8sproducer.Config{
-		Client:        krt.GetClient(),
+		Client:        producerClient,
 		SourceGVK:     gvk,
 		Name:          name,
 		InputName:     publishTopic,
@@ -277,8 +283,14 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (go
 	}
 
 	name := fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, topic, strings.ToLower(gvk.String()))
+	// Every connector gets its own client (own rate limiter, own connection
+	// pool): readers and writers must not contend on one token bucket.
+	consumerClient, err := krt.NewCompositeClient()
+	if err != nil {
+		return nil, fmt.Errorf("%s: connector client: %w", kind, err)
+	}
 	baseCfg := k8sconsumer.Config{
-		Client:     krt.GetClient(),
+		Client:     consumerClient,
 		Name:       name,
 		OutputName: topic,
 		TargetGVK:  gvk,

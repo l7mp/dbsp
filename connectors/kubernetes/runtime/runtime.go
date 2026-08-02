@@ -216,6 +216,21 @@ func (r *Runtime) Start(ctx context.Context) error {
 // GetClient returns the composite client (handles both view and native K8s objects).
 func (r *Runtime) GetClient() *store.CompositeClient { return r.client }
 
+// NewCompositeClient returns a composite client. Connectors do not share a client: client-go rate
+// limits per client, so a shared client serializes every connector's requests through one token
+// bucket. Falls back to the shared client for view-only runtimes that carry no rate limiter to
+// contend on.
+func (r *Runtime) NewCompositeClient() (*store.CompositeClient, error) {
+	if r.cfg.RESTConfig == nil {
+		return r.client, nil
+	}
+	// Copy the REST config and drop any shared limiter instance so
+	// client-go builds a fresh token bucket from QPS/Burst for this client.
+	cfg := rest.CopyConfig(r.cfg.RESTConfig)
+	cfg.RateLimiter = nil
+	return r.cache.NewClient(cfg, r.cfg.ClientOptions)
+}
+
 // GetCache returns the composite cache.
 func (r *Runtime) GetCache() *store.CompositeCache { return r.cache }
 
