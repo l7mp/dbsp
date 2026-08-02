@@ -600,6 +600,47 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(condTime()).NotTo(Equal(t0))
 	})
 
+	It("patches view-object status inline through the main merge patch", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "test.view.dcontroller.io", Version: "v1alpha1", Kind: "HealthView"}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "hv")
+		seed.Object = map[string]any{
+			"apiVersion": "test.view.dcontroller.io/v1alpha1",
+			"kind":       "HealthView",
+			"metadata":   map[string]any{"name": "hv", "namespace": "default"},
+			"spec":       map[string]any{"target": "svc"},
+		}
+
+		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
+		recording := &recordingClient{Client: base}
+
+		p, err := NewPatcher(Config{Name: "test-patcher-view-status", Client: recording, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		doc := map[string]any{
+			"apiVersion": "test.view.dcontroller.io/v1alpha1",
+			"kind":       "HealthView",
+			"metadata":   map[string]any{"name": "hv", "namespace": "default"},
+			"status":     map[string]any{"healthy": true},
+		}
+
+		Expect(p.Consume(ctx, out("out", doc, 1))).To(Succeed())
+
+		// Views have no status subresource: the status rides the main patch.
+		Expect(recording.statusPatches).To(BeEmpty())
+		Expect(recording.patches).To(HaveLen(1))
+		Expect(recording.patches[0]).To(HaveKey("status"))
+
+		obj := keyObject(gvk, "default", "hv")
+		Expect(base.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		healthy, ok, err := unstructured.NestedBool(obj.Object, "status", "healthy")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+		Expect(healthy).To(BeTrue())
+	})
+
 	It("patcher never creates: a write to a missing object is reported and dropped", func() {
 		ctx := context.Background()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
