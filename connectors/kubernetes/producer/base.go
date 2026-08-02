@@ -3,11 +3,15 @@ package producer
 import (
 	"context"
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crevent "sigs.k8s.io/controller-runtime/pkg/event"
@@ -109,28 +113,93 @@ func newBase(cfg Config, producerType string) (*baseProducer, error) {
 	return p, nil
 }
 
+// start runs the watch loop. The API server closes watch connections
+// routinely (request-timeout expiry, every 30-60 minutes by default), so a
+// closed result channel is a normal event, not the end of the
+// subscription: the loop re-establishes the watch from the last delivered
+// resourceVersion (bookmarks are requested so idle watches track it too).
+// A 410 Gone (the version fell out of the server's watch window) restarts
+// from the current state with a loud component error, since deltas in the
+// gap are lost until an upstream resync.
 func (p *baseProducer) start(ctx context.Context, onEvent func(context.Context, watch.Event) error) error {
-	w, err := p.client.Watch(ctx, p.newListObject(), p.listOpts...)
-	if err != nil {
-		return fmt.Errorf("producer: watch failed: %w", err)
-	}
-	defer w.Stop()
-
-	p.log.V(2).Info("watch started")
+	first := true
+	lastRV := ""
+	backoff := wait.Backoff{Duration: time.Second, Factor: 2, Cap: 30 * time.Second, Steps: math.MaxInt32}
 
 	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case evt, ok := <-w.ResultChan():
-			if !ok {
+		opts := make([]client.ListOption, 0, len(p.listOpts)+1)
+		opts = append(opts, p.listOpts...)
+		opts = append(opts, &client.ListOptions{
+			Raw: &v1.ListOptions{ResourceVersion: lastRV, AllowWatchBookmarks: true},
+		})
+
+		w, err := p.client.Watch(ctx, p.newListObject(), opts...)
+		if err != nil {
+			if first {
+				return fmt.Errorf("producer: watch failed: %w", err)
+			}
+			if apierrors.IsGone(err) || apierrors.IsResourceExpired(err) {
+				p.HandleError(fmt.Errorf("producer: watch resourceVersion %s expired, restarting from current state (deltas in the gap are lost): %w", lastRV, err))
+				lastRV = ""
+				continue
+			}
+			delay := backoff.Step()
+			p.HandleError(fmt.Errorf("producer: watch reconnect failed, retrying in %s: %w", delay, err))
+
+			select {
+			case <-ctx.Done():
 				return nil
+			case <-time.After(delay):
 			}
 
-			if err := onEvent(ctx, evt); err != nil {
-				p.HandleError(err)
+			continue
+		}
+		first = false
+		backoff = wait.Backoff{Duration: time.Second, Factor: 2, Cap: 30 * time.Second, Steps: math.MaxInt32}
+		p.log.V(2).Info("watch started", "resourceVersion", lastRV)
+
+		closed := false
+		for !closed {
+			select {
+			case <-ctx.Done():
+				w.Stop()
+				return nil
+			case evt, ok := <-w.ResultChan():
+				if !ok {
+					closed = true
+					break
+				}
+
+				switch evt.Type { //nolint:exhaustive // Added/Modified/Deleted fall through to onEvent below.
+				case watch.Bookmark:
+					if obj, ok := evt.Object.(client.Object); ok {
+						lastRV = obj.GetResourceVersion()
+					}
+					continue
+				case watch.Error:
+					werr := apierrors.FromObject(evt.Object)
+					if apierrors.IsGone(werr) || apierrors.IsResourceExpired(werr) {
+						p.HandleError(fmt.Errorf("producer: watch expired, restarting from current state (deltas in the gap are lost): %w", werr))
+						lastRV = ""
+					} else {
+						p.HandleError(fmt.Errorf("producer: watch error: %w", werr))
+					}
+					closed = true
+					continue
+				}
+
+				if obj, ok := evt.Object.(client.Object); ok {
+					if rv := obj.GetResourceVersion(); rv != "" {
+						lastRV = rv
+					}
+				}
+				if err := onEvent(ctx, evt); err != nil {
+					p.HandleError(err)
+				}
 			}
 		}
+		w.Stop()
+		p.log.V(2).Info("watch closed, reconnecting", "resourceVersion", lastRV)
 	}
 }
 
