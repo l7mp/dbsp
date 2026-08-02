@@ -19,6 +19,12 @@ class DControllerManager {
 
         this.operators = new Map();
 
+        // The last published status fragment per operator: the manager is a
+        // delta publisher, so every new status retracts the previous one.
+        // Without the retraction the topic is a growing multiset and any two
+        // outstanding fragments for one operator are an ill-defined write.
+        this.lastStatus = new Map();
+
         this.operatorWatchHandle = null;
         this.operatorStatusHandle = null;
     }
@@ -104,6 +110,12 @@ class DControllerManager {
 
         this.operators.delete(name);
         stopOperatorInstance(state, this.log.child({ operator: name }));
+
+        const prev = this.lastStatus.get(name);
+        if (prev) {
+            this.lastStatus.delete(name);
+            publish(OPERATOR_STATUS_TOPIC, [[prev, -1]]);
+        }
     }
 
     // findOperatorByComponent locates the operator that owns a given runtime
@@ -164,13 +176,27 @@ class DControllerManager {
 
     // publishRawStatus emits a status fragment: identity plus the fields the
     // manager maintains, nothing else. The Patcher applies exactly what the
-    // fragment carries.
+    // fragment carries. The previous fragment is retracted in the same
+    // delta, and an unchanged status publishes nothing.
     publishRawStatus(operatorDoc, status) {
+        const name = operatorDoc.metadata.name;
         const out = {
-            metadata: { name: operatorDoc.metadata.name },
+            metadata: { name },
             status: deepClone(status),
         };
-        publish(OPERATOR_STATUS_TOPIC, [[out, 1]]);
+
+        const prev = this.lastStatus.get(name);
+        if (prev && JSON.stringify(prev) === JSON.stringify(out)) {
+            return;
+        }
+
+        const entries = [];
+        if (prev) {
+            entries.push([prev, -1]);
+        }
+        entries.push([out, 1]);
+        this.lastStatus.set(name, out);
+        publish(OPERATOR_STATUS_TOPIC, entries);
     }
 }
 

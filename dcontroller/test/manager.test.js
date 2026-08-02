@@ -39,13 +39,19 @@ const latestOpStatus = {}; // opName -> status object
 const opCheckers = [];
 
 subscribe("watch-op", (entries) => {
+    // Retractions first: a modification arrives as a {-old, +new} pair in
+    // one delta with no entry ordering, so processing by sign keeps the
+    // retraction from clobbering the assertion.
     for (const [obj, w] of entries) {
         const name = obj.metadata?.name;
-        if (!name) continue;
-        if (w > 0) {
-            latestOpStatus[name] = obj.status || {};
-        } else {
+        if (name && w < 0) {
             delete latestOpStatus[name];
+        }
+    }
+    for (const [obj, w] of entries) {
+        const name = obj.metadata?.name;
+        if (name && w > 0) {
+            latestOpStatus[name] = obj.status || {};
         }
     }
     for (const fn of opCheckers.slice()) fn();
