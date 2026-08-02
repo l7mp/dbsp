@@ -26,7 +26,12 @@ class DControllerManager {
     start() {
         kubernetes.runtime.start(this.runtimeConfig);
 
-        this.operatorStatusHandle = kubernetes.update(OPERATOR_STATUS_TOPIC, { gvk: OPERATOR_GVK });
+        // The manager decorates the Operator objects it watches: it maintains
+        // their status but does not own them, so status goes through a
+        // Patcher, which never creates. A status write racing an operator
+        // delete gets a 404 and is dropped instead of resurrecting the
+        // object.
+        this.operatorStatusHandle = kubernetes.patch(OPERATOR_STATUS_TOPIC, { gvk: OPERATOR_GVK });
         // GenerationChanged drops status-only updates at the Watcher: K8s bumps
         // metadata.generation on .spec changes, not on .status churn.
         this.operatorWatchHandle = kubernetes.watch(OPERATOR_EVENT_TOPIC, {
@@ -157,9 +162,14 @@ class DControllerManager {
         this.publishRawStatus(state.doc, status);
     }
 
+    // publishRawStatus emits a status fragment: identity plus the fields the
+    // manager maintains, nothing else. The Patcher applies exactly what the
+    // fragment carries.
     publishRawStatus(operatorDoc, status) {
-        const out = deepClone(operatorDoc);
-        out.status = status;
+        const out = {
+            metadata: { name: operatorDoc.metadata.name },
+            status: deepClone(status),
+        };
         publish(OPERATOR_STATUS_TOPIC, [[out, 1]]);
     }
 }
