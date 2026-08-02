@@ -2,21 +2,17 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
-// Patcher applies output entries with merge-patch semantics.
+// Patcher applies output deltas to objects it does not own: it maintains
+// the fields the pipeline writes on somebody else's objects. It patches
+// the merge diff of each folded (old, new) pair, clears its fields on
+// retraction, and never creates or deletes an object: a missing target is
+// reported and dropped, because a decorator has no business bringing an
+// object back.
 type Patcher struct {
 	*baseConsumer
 }
@@ -29,6 +25,8 @@ func NewPatcher(cfg Config) (*Patcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	b.owns = false
+	b.retryFlush = b.flushLocked
 	return &Patcher{baseConsumer: b}, nil
 }
 
@@ -39,125 +37,10 @@ func (c *Patcher) Start(ctx context.Context) error {
 
 // Consume applies output Z-set deltas with patcher behavior.
 func (c *Patcher) Consume(ctx context.Context, out dbspruntime.Event) error {
-	deltas, err := c.classifyDeltas(out.Data)
-	if err != nil {
-		return err
-	}
-
-	for _, d := range deltas {
-		pk := d.Key.String()
-
-		dbspruntime.LogFlowApply(c.log, "consumer.apply", "consumer", c.String(),
-			"apply", out.Name, "", pk, d.Weight, func() string {
-				return kobject.DumpContent(d.Object.UnstructuredContent())
-			})
-
-		desired := d.Object
-		if d.EventType == kobject.Deleted {
-			if err := c.patchDelete(ctx, desired); err != nil {
-				return err
-			}
-			continue
-		}
-
-		if err := c.patchUpsert(ctx, desired); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return c.consumeDeltas(ctx, out)
 }
 
 // String implements fmt.Stringer.
 func (c *Patcher) String() string {
 	return fmt.Sprintf("patcher<k8s>{name=%q topic=%q}", c.Name(), c.outputName)
-}
-
-func (c *Patcher) patchUpsert(ctx context.Context, desired *unstructured.Unstructured) error {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(desired.GroupVersionKind())
-	obj.SetName(desired.GetName())
-	obj.SetNamespace(desired.GetNamespace())
-
-	patch := runtime.DeepCopyJSON(desired.UnstructuredContent())
-	statusPatch, hasStatus := patch["status"]
-	if hasStatus {
-		delete(patch, "status")
-	}
-
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("consumer patcher upsert %s: marshal patch: %w", client.ObjectKeyFromObject(desired).String(), err)
-	}
-
-	if err := c.client.Patch(ctx, obj, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
-		if apierrors.IsNotFound(err) {
-			u, err := NewUpdater(Config{Client: c.client, OutputName: c.outputName, TargetGVK: c.targetGVK, Logger: c.log})
-			if err != nil {
-				return err
-			}
-			return u.upsert(ctx, desired)
-		}
-		return fmt.Errorf("consumer patcher upsert %s: %w", client.ObjectKeyFromObject(desired).String(), err)
-	}
-
-	if hasStatus && !isViewObject(obj) {
-		statusPatchBytes, err := json.Marshal(map[string]any{"status": statusPatch})
-		if err != nil {
-			return fmt.Errorf("consumer patcher upsert %s: marshal status patch: %w", client.ObjectKeyFromObject(desired).String(), err)
-		}
-
-		if err := c.client.Status().Patch(ctx, obj, client.RawPatch(types.MergePatchType, statusPatchBytes)); err != nil {
-			return fmt.Errorf("consumer patcher upsert %s status: %w", client.ObjectKeyFromObject(desired).String(), err)
-		}
-	}
-
-	return nil
-}
-
-func (c *Patcher) patchDelete(ctx context.Context, desired *unstructured.Unstructured) error {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(desired.GroupVersionKind())
-	obj.SetName(desired.GetName())
-	obj.SetNamespace(desired.GetNamespace())
-
-	patch := kobject.RemoveNestedMap(desired.UnstructuredContent())
-	statusPatch, hasStatus := patch["status"]
-	if hasStatus {
-		delete(patch, "status")
-	}
-
-	gvk := desired.GroupVersionKind()
-	unstructured.SetNestedField(patch, schema.GroupVersion{Group: gvk.Group, Version: gvk.Version}.String(), "apiVersion") //nolint:errcheck
-	unstructured.SetNestedField(patch, gvk.Kind, "kind")                                                                   //nolint:errcheck
-	unstructured.SetNestedField(patch, desired.GetNamespace(), "metadata", "namespace")                                    //nolint:errcheck
-	unstructured.SetNestedField(patch, desired.GetName(), "metadata", "name")                                              //nolint:errcheck
-
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("consumer patcher delete %s: marshal patch: %w", client.ObjectKeyFromObject(desired).String(), err)
-	}
-
-	if err := c.client.Patch(ctx, obj, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("consumer patcher delete %s: %w", client.ObjectKeyFromObject(desired).String(), err)
-	}
-
-	if hasStatus && !isViewObject(obj) {
-		statusPatchBytes, err := json.Marshal(map[string]any{"status": statusPatch})
-		if err != nil {
-			return fmt.Errorf("consumer patcher delete %s: marshal status patch: %w", client.ObjectKeyFromObject(desired).String(), err)
-		}
-
-		if err := c.client.Status().Patch(ctx, obj, client.RawPatch(types.MergePatchType, statusPatchBytes)); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return fmt.Errorf("consumer patcher delete %s status: %w", client.ObjectKeyFromObject(desired).String(), err)
-		}
-	}
-
-	return nil
 }

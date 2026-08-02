@@ -32,7 +32,7 @@ var _ Converter = TableConverter{}
 
 // ToDocument converts an observed object into a pipeline document.
 func (TableConverter) ToDocument(obj Object) datamodel.Document {
-	content := DeepCopyAny(obj.UnstructuredContent()).(map[string]any)
+	content := datamodel.DeepCopyAny(obj.UnstructuredContent()).(map[string]any)
 	StripOnIngest(content)
 
 	return dbspunstructured.New(content)

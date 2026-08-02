@@ -2,6 +2,8 @@ package consumer
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
@@ -61,7 +63,10 @@ var _ = Describe("Kubernetes consumers", func() {
 			"data": map[string]any{"b": "2"},
 		}
 
-		Expect(u.Consume(ctx, out("out", upsert, 1))).To(Succeed())
+		Expect(u.Consume(ctx, outMany("out",
+			docWeight{doc: add, w: -1},
+			docWeight{doc: upsert, w: 1},
+		))).To(Succeed())
 
 		obj = keyObject(gvk, "default", "cfg")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -83,13 +88,11 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
-	It("updater upsert updates metadata status and body", func() {
+	It("updater update patches metadata status and body from the pair diff", func() {
 		ctx := context.Background()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
 
-		scheme := kruntime.NewScheme()
-		seed := keyObject(gvk, "default", "app")
-		seed.Object = map[string]any{
+		old := map[string]any{
 			"apiVersion": "apps/v1",
 			"kind":       "Deployment",
 			"metadata": map[string]any{
@@ -105,6 +108,10 @@ var _ = Describe("Kubernetes consumers", func() {
 				"readyReplicas":     int64(1),
 			},
 		}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "app")
+		seed.Object = kruntime.DeepCopyJSON(old)
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seed).WithObjects(seed).Build()
 
@@ -127,7 +134,10 @@ var _ = Describe("Kubernetes consumers", func() {
 			},
 		}
 
-		Expect(u.Consume(ctx, out("out", upsert, 1))).To(Succeed())
+		Expect(u.Consume(ctx, outMany("out",
+			docWeight{doc: old, w: -1},
+			docWeight{doc: upsert, w: 1},
+		))).To(Succeed())
 
 		obj := keyObject(gvk, "default", "app")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -160,13 +170,11 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(ok).To(BeFalse())
 	})
 
-	It("passes status through updater update payload for native objects", func() {
+	It("splits the pair diff between the main patch and the status subresource", func() {
 		ctx := context.Background()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
 
-		scheme := kruntime.NewScheme()
-		seed := keyObject(gvk, "default", "app")
-		seed.Object = map[string]any{
+		old := map[string]any{
 			"apiVersion": "apps/v1",
 			"kind":       "Deployment",
 			"metadata": map[string]any{
@@ -178,6 +186,10 @@ var _ = Describe("Kubernetes consumers", func() {
 				"availableReplicas": int64(1),
 			},
 		}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "app")
+		seed.Object = kruntime.DeepCopyJSON(old)
 
 		base := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seed).WithObjects(seed).Build()
 		recording := &recordingClient{Client: base}
@@ -198,12 +210,23 @@ var _ = Describe("Kubernetes consumers", func() {
 			},
 		}
 
-		Expect(u.Consume(ctx, out("out", upsert, 1))).To(Succeed())
-		Expect(recording.lastUpdated).NotTo(BeNil())
+		Expect(u.Consume(ctx, outMany("out",
+			docWeight{doc: old, w: -1},
+			docWeight{doc: upsert, w: 1},
+		))).To(Succeed())
 
-		updated, ok := recording.lastUpdated.(*unstructured.Unstructured)
-		Expect(ok).To(BeTrue())
-		avail, ok, err := unstructured.NestedInt64(updated.Object, "status", "availableReplicas")
+		// One main patch carrying only the spec change, one status patch
+		// carrying only the status change.
+		Expect(recording.patches).To(HaveLen(1))
+		Expect(recording.patches[0]).To(HaveKeyWithValue("spec", map[string]any{"replicas": float64(2)}))
+		Expect(recording.patches[0]).NotTo(HaveKey("status"))
+		Expect(recording.statusPatches).To(HaveLen(1))
+		Expect(recording.statusPatches[0]).To(HaveKeyWithValue("status", map[string]any{"availableReplicas": float64(2)}))
+		Expect(recording.statusPatches[0]).NotTo(HaveKey("spec"))
+
+		obj := keyObject(gvk, "default", "app")
+		Expect(base.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		avail, ok, err := unstructured.NestedInt64(obj.Object, "status", "availableReplicas")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ok).To(BeTrue())
 		Expect(avail).To(Equal(int64(2)))
@@ -516,6 +539,174 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(version).To(Equal("219"))
 	})
 
+	It("patcher never creates: a write to a missing object is reported and dropped", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		p, err := NewPatcher(Config{Name: "test-patcher-no-create", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		doc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "ghost", "namespace": "default"},
+			"data":       map[string]any{"a": "1"},
+		}
+
+		err = p.Consume(ctx, out("out", doc, 1))
+		Expect(err).To(HaveOccurred())
+		Expect(apierrors.IsNotFound(err) || err != nil).To(BeTrue())
+
+		obj := keyObject(gvk, "default", "ghost")
+		Expect(apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue(),
+			"the patcher must not resurrect or create objects")
+	})
+
+	It("updater recreates an owned object deleted out of band", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		u, err := NewUpdater(Config{Name: "test-updater-resurrect", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		oldDoc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "gen", "namespace": "default"},
+			"data":       map[string]any{"v": "1"},
+		}
+		newDoc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "gen", "namespace": "default"},
+			"data":       map[string]any{"v": "2"},
+		}
+
+		// The update pair targets an object that is gone: the owner puts it
+		// back with the desired content.
+		Expect(u.Consume(ctx, outMany("out",
+			docWeight{doc: oldDoc, w: -1},
+			docWeight{doc: newDoc, w: 1},
+		))).To(Succeed())
+
+		obj := keyObject(gvk, "default", "gen")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		v, _, err := unstructured.NestedString(obj.Object, "data", "v")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(Equal("2"))
+	})
+
+	It("updater create falls back to a patch when the object already exists", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "cfg")
+		seed.Object = map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "cfg", "namespace": "default", "labels": map[string]any{"foreign": "yes"}},
+			"data":       map[string]any{"a": "1"},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
+
+		u, err := NewUpdater(Config{Name: "test-updater-exists", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		doc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+			"data":       map[string]any{"b": "2"},
+		}
+
+		Expect(u.Consume(ctx, out("out", doc, 1))).To(Succeed())
+
+		obj := keyObject(gvk, "default", "cfg")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		b, _, err := unstructured.NestedString(obj.Object, "data", "b")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(b).To(Equal("2"))
+		// A bare assertion carries no old state, so it cannot remove
+		// anything: fields it does not mention survive.
+		a, _, err := unstructured.NestedString(obj.Object, "data", "a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(a).To(Equal("1"))
+		Expect(obj.GetLabels()).To(HaveKeyWithValue("foreign", "yes"))
+	})
+
+	It("rejects key multiplicity instead of selecting a representative", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		u, err := NewUpdater(Config{Name: "test-updater-multiplicity", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		d1 := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "dup", "namespace": "default"},
+			"data":       map[string]any{"v": "1"},
+		}
+		d2 := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "dup", "namespace": "default"},
+			"data":       map[string]any{"v": "2"},
+		}
+
+		err = u.Consume(ctx, outMany("out",
+			docWeight{doc: d1, w: 1},
+			docWeight{doc: d2, w: 1},
+		))
+		Expect(err).To(MatchError(ContainSubstring("2 asserted documents")))
+
+		obj := keyObject(gvk, "default", "dup")
+		Expect(apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue(),
+			"neither candidate may be actuated")
+	})
+
+	It("retries unreachable writes until the plant answers", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		base := fake.NewClientBuilder().WithScheme(scheme).Build()
+		failing := &failingClient{Client: base, remaining: 1, err: apierrors.NewServiceUnavailable("plant down")}
+
+		u, err := NewUpdater(Config{Name: "test-updater-retry", Client: failing, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		doc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "late", "namespace": "default"},
+			"data":       map[string]any{"a": "1"},
+		}
+
+		// The first attempt fails before the plant; the write stays pending
+		// and the retry lands it. An unreachable failure is not an error:
+		// the command is still owed to the plant.
+		Expect(u.Consume(ctx, out("out", doc, 1))).To(Succeed())
+
+		obj := keyObject(gvk, "default", "late")
+		Expect(apierrors.IsNotFound(base.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue())
+
+		Eventually(func() error {
+			o := keyObject(gvk, "default", "late")
+			return base.Get(ctx, client.ObjectKeyFromObject(o), o)
+		}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
+	})
+
 	It("collapses mixed add and delete for one key into one updater upsert", func() {
 		ctx := context.Background()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
@@ -575,19 +766,78 @@ type docWeight struct {
 	w   zset.Weight
 }
 
+// recordingClient records the decoded bodies of main and status merge
+// patches while forwarding to the wrapped client.
 type recordingClient struct {
 	client.Client
-	lastUpdated client.Object
+	patches       []map[string]any
+	statusPatches []map[string]any
 }
 
-func (c *recordingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	if o, ok := obj.DeepCopyObject().(client.Object); ok {
-		c.lastUpdated = o
-	} else {
-		c.lastUpdated = obj
-	}
+func (c *recordingClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	c.patches = append(c.patches, decodePatch(patch, obj))
+	return c.Client.Patch(ctx, obj, patch, opts...)
+}
 
-	return c.Client.Update(ctx, obj, opts...)
+func (c *recordingClient) Status() client.StatusWriter {
+	return &recordingStatusWriter{c: c}
+}
+
+type recordingStatusWriter struct {
+	c *recordingClient
+}
+
+func (s *recordingStatusWriter) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
+	return s.c.Client.Status().Create(ctx, obj, sub, opts...)
+}
+
+func (s *recordingStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	return s.c.Client.Status().Update(ctx, obj, opts...)
+}
+
+func (s *recordingStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	s.c.statusPatches = append(s.c.statusPatches, decodePatch(patch, obj))
+	return s.c.Client.Status().Patch(ctx, obj, patch, opts...)
+}
+
+func (s *recordingStatusWriter) Apply(ctx context.Context, obj kruntime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return s.c.Client.Status().Apply(ctx, obj, opts...)
+}
+
+func decodePatch(patch client.Patch, obj client.Object) map[string]any {
+	raw, err := patch.Data(obj)
+	if err != nil {
+		return nil
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// failingClient fails every write with the given error until the remaining
+// counter runs out, then forwards.
+type failingClient struct {
+	client.Client
+	remaining int
+	err       error
+}
+
+func (c *failingClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	if c.remaining > 0 {
+		c.remaining--
+		return c.err
+	}
+	return c.Client.Patch(ctx, obj, patch, opts...)
+}
+
+func (c *failingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if c.remaining > 0 {
+		c.remaining--
+		return c.err
+	}
+	return c.Client.Create(ctx, obj, opts...)
 }
 
 func out(name string, doc map[string]any, w zset.Weight) dbspruntime.Event {

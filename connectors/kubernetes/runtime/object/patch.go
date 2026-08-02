@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/l7mp/dbsp/engine/datamodel"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
@@ -25,11 +26,11 @@ func Patch(obj Object, m map[string]any) error {
 
 func patch(o, m any) any {
 	if reflect.DeepEqual(o, m) {
-		return DeepCopyAny(m)
+		return datamodel.DeepCopyAny(m)
 	}
 
 	if o == nil {
-		return DeepCopyAny(m)
+		return datamodel.DeepCopyAny(m)
 	}
 
 	switch x := m.(type) {
@@ -40,17 +41,17 @@ func patch(o, m any) any {
 		litlm := x
 		litlo, ok2 := o.([]any)
 		if !ok2 {
-			return DeepCopyAny(litlm)
+			return datamodel.DeepCopyAny(litlm)
 		}
 
-		retl := DeepCopyAny(litlo).([]any)
+		retl := datamodel.DeepCopyAny(litlo).([]any)
 		for i := range litlm {
 			if i >= len(litlo) {
-				retl = append(retl, DeepCopyAny(litlm[i]))
+				retl = append(retl, datamodel.DeepCopyAny(litlm[i]))
 				continue
 			}
 			if reflect.DeepEqual(litlo[i], litlm[i]) {
-				retl[i] = DeepCopyAny(litlm[i])
+				retl[i] = datamodel.DeepCopyAny(litlm[i])
 				continue
 			}
 			retl[i] = patch(litlo[i], litlm[i])
@@ -61,10 +62,10 @@ func patch(o, m any) any {
 		litmm := x
 		litmo, ok2 := o.(map[string]any)
 		if !ok2 {
-			return DeepCopyAny(litmm)
+			return datamodel.DeepCopyAny(litmm)
 		}
 
-		retm := DeepCopyAny(litmo).(map[string]any)
+		retm := datamodel.DeepCopyAny(litmo).(map[string]any)
 		for k, v := range litmm {
 			if v == nil {
 				delete(retm, k)
@@ -73,12 +74,12 @@ func patch(o, m any) any {
 
 			vo, ok := litmo[k]
 			if !ok {
-				retm[k] = DeepCopyAny(v)
+				retm[k] = datamodel.DeepCopyAny(v)
 				continue
 			}
 
 			if reflect.DeepEqual(vo, v) {
-				retm[k] = DeepCopyAny(v)
+				retm[k] = datamodel.DeepCopyAny(v)
 				continue
 			}
 

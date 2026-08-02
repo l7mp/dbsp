@@ -8,7 +8,6 @@ import (
 
 	kobject "github.com/l7mp/dbsp/connectors/kubernetes/runtime/object"
 	dbspunstructured "github.com/l7mp/dbsp/engine/datamodel/unstructured"
-	"github.com/l7mp/dbsp/engine/zset"
 )
 
 var _ = Describe("Consumer adapters", func() {
@@ -43,17 +42,15 @@ var _ = Describe("Consumer adapters", func() {
 		Expect(normalizeResultObject(obj, g)).To(BeNil())
 	})
 
-	It("marks negative weights as delete", func() {
-		doc := dbspunstructured.New(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "n"}})
-		e := zset.Elem{Document: doc, Weight: -1}
+	It("keys documents on the target identity", func() {
+		doc := dbspunstructured.New(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "n", "namespace": "ns"}})
 
 		bc := &baseConsumer{
 			targetGVK: schema.GroupVersionKind{Group: "g", Version: "v1", Kind: "K"},
 			converter: kobject.DefaultConverter,
 		}
-		obj, isDelete, err := bc.objectFromElem(e)
+		key, err := bc.keyOf(doc)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(obj).NotTo(BeNil())
-		Expect(isDelete).To(BeTrue())
+		Expect(key).To(Equal("ns/n"))
 	})
 })
