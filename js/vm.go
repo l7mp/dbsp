@@ -745,6 +745,19 @@ func (v *VM) injectGlobals() error {
 	if err := kubeObj.Set("runtime", kubeRuntimeObj); err != nil {
 		return err
 	}
+	kubeExprObj := v.rt.NewObject()
+	if err := kubeExprObj.Set("register", v.wrap(v.k8sExpressionRegister)); err != nil {
+		return err
+	}
+	if err := kubeExprObj.Set("unregister", v.wrap(v.k8sExpressionUnregister)); err != nil {
+		return err
+	}
+	if err := kubeExprObj.Set("list", v.wrap(v.k8sExpressionList)); err != nil {
+		return err
+	}
+	if err := kubeObj.Set("expression", kubeExprObj); err != nil {
+		return err
+	}
 	if err := v.rt.Set("kubernetes", kubeObj); err != nil {
 		return err
 	}
