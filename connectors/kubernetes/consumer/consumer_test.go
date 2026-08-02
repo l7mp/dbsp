@@ -539,6 +539,67 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(version).To(Equal("219"))
 	})
 
+	It("stamps condition times at the write boundary", func() {
+		ctx := context.Background()
+		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
+		const t0 = "2020-01-01T00:00:00Z"
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "app")
+		seed.Object = map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata":   map[string]any{"name": "app", "namespace": "default"},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{"type": "Available", "status": "False", "reason": "Down", "lastTransitionTime": t0},
+				},
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seed).WithObjects(seed).Build()
+
+		p, err := NewPatcher(Config{Name: "test-patcher-conditions", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		// The pipeline emits conditions without a timestamp.
+		condition := func(status, reason string) map[string]any {
+			return map[string]any{
+				"apiVersion": "apps/v1",
+				"kind":       "Deployment",
+				"metadata":   map[string]any{"name": "app", "namespace": "default"},
+				"status": map[string]any{
+					"conditions": []any{
+						map[string]any{"type": "Available", "status": status, "reason": reason},
+					},
+				},
+			}
+		}
+
+		condTime := func() string {
+			obj := keyObject(gvk, "default", "app")
+			ExpectWithOffset(1, c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+			conds, ok, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+			ExpectWithOffset(1, ok).To(BeTrue())
+			ExpectWithOffset(1, conds).To(HaveLen(1))
+			t, _ := conds[0].(map[string]any)["lastTransitionTime"].(string)
+			return t
+		}
+
+		// Unchanged status: the observed timestamp is carried over.
+		Expect(p.Consume(ctx, out("out", condition("False", "StillDown"), 1))).To(Succeed())
+		Expect(condTime()).To(Equal(t0))
+
+		// Flipped status: stamped with the write time.
+		Expect(p.Consume(ctx, outMany("out",
+			docWeight{doc: condition("False", "StillDown"), w: -1},
+			docWeight{doc: condition("True", "Up"), w: 1},
+		))).To(Succeed())
+		Expect(condTime()).NotTo(BeEmpty())
+		Expect(condTime()).NotTo(Equal(t0))
+	})
+
 	It("patcher never creates: a write to a missing object is reported and dropped", func() {
 		ctx := context.Background()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
@@ -999,6 +1060,54 @@ var _ = Describe("Kubernetes setter", func() {
 		ready, _, err := unstructured.NestedInt64(obj.Object, "status", "readyReplicas")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ready).To(Equal(int64(1)))
+	})
+
+	It("does not churn on timeless conditions against a stamped current object", func() {
+		ctx := context.Background()
+		dgvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
+		const t0 = "2020-01-01T00:00:00Z"
+
+		seedObj := &unstructured.Unstructured{}
+		seedObj.SetUnstructuredContent(map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata":   map[string]any{"name": "app", "namespace": "default"},
+			"spec":       map[string]any{"replicas": int64(1)},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{"type": "Available", "status": "True", "reason": "Up", "lastTransitionTime": t0},
+				},
+			},
+		})
+
+		scheme := kruntime.NewScheme()
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seedObj).WithObjects(seedObj).Build()
+
+		st, err := NewSetter(Config{Name: "test-setter-conditions", Client: c, OutputName: "out", TargetGVK: dgvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+
+		obj := keyObject(dgvk, "default", "app")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		before := obj.GetResourceVersion()
+
+		// The pipeline emits the same state with timeless conditions: the
+		// stamped desired equals the current object and nothing is written.
+		z := zset.New()
+		z.Insert(dbspunstructured.New(map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata":   map[string]any{"name": "app", "namespace": "default"},
+			"spec":       map[string]any{"replicas": int64(1)},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{"type": "Available", "status": "True", "reason": "Up"},
+				},
+			},
+		}), 1)
+		Expect(st.Consume(ctx, dbspruntime.Event{Name: "out", Data: z})).To(Succeed())
+
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		Expect(obj.GetResourceVersion()).To(Equal(before), "timeless conditions must not rewrite a stamped current object")
 	})
 
 	It("rejects retractions in level events", func() {

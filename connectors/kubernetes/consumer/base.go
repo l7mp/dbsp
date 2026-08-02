@@ -324,14 +324,21 @@ func (c *baseConsumer) pairObject(doc datamodel.Document) (kobject.Object, error
 // a decorator reports and drops.
 func (c *baseConsumer) applyUpdate(ctx context.Context, oldObj, newObj kobject.Object, allowCreate bool) (ApplyResult, error) {
 	view := isViewObject(newObj)
-	mainPatch, statusPatch, err := writePatches(oldObj, newObj, view)
+	key := client.ObjectKeyFromObject(newObj).String()
+	ps, err := writePatches(oldObj, newObj, view)
 	if err != nil {
-		return Refused, fmt.Errorf("consumer %s: diff %s: %w", c.Name(), client.ObjectKeyFromObject(newObj).String(), err)
+		return Refused, fmt.Errorf("consumer %s: diff %s: %w", c.Name(), key, err)
 	}
 
-	key := client.ObjectKeyFromObject(newObj).String()
-	if len(mainPatch) > 0 {
-		err := c.patch(ctx, newObj, mainPatch, false)
+	if len(ps.status) > 0 && containsConditions(ps.newStatus) {
+		ps.status, err = c.stampStatusPatch(ctx, newObj, ps)
+		if err != nil {
+			return Refused, fmt.Errorf("consumer %s: diff %s status: %w", c.Name(), key, err)
+		}
+	}
+
+	if len(ps.main) > 0 {
+		err := c.patch(ctx, newObj, ps.main, false)
 		if apierrors.IsNotFound(err) {
 			if allowCreate {
 				return c.applyCreate(ctx, newObj, false)
@@ -343,8 +350,8 @@ func (c *baseConsumer) applyUpdate(ctx context.Context, oldObj, newObj kobject.O
 		}
 	}
 
-	if len(statusPatch) > 0 {
-		err := c.patch(ctx, newObj, statusPatch, true)
+	if len(ps.status) > 0 {
+		err := c.patch(ctx, newObj, ps.status, true)
 		if apierrors.IsNotFound(err) && allowCreate {
 			return c.applyCreate(ctx, newObj, false)
 		}
@@ -386,6 +393,12 @@ func (c *baseConsumer) applyCreate(ctx context.Context, newObj kobject.Object, r
 
 	if hasStatus && !view {
 		body := map[string]any{"status": statusValue}
+		if containsConditions(body) {
+			// A freshly created object has no condition history: every
+			// timeless condition is stamped with the write time.
+			body = kruntime.DeepCopyJSON(body)
+			mergeConditionTimes(body, nil, conditionWriteTime())
+		}
 		if err := c.patch(ctx, newObj, body, true); err != nil {
 			return classifyWriteError(err), fmt.Errorf("consumer %s: create %s status: %w", c.Name(), key, err)
 		}
@@ -408,19 +421,19 @@ func (c *baseConsumer) applyRetract(ctx context.Context, oldObj kobject.Object) 
 	}
 
 	view := isViewObject(oldObj)
-	mainPatch, statusPatch, err := writePatches(oldObj, nil, view)
+	ps, err := writePatches(oldObj, nil, view)
 	if err != nil {
 		return Refused, fmt.Errorf("consumer %s: diff %s: %w", c.Name(), key, err)
 	}
 
-	if len(mainPatch) > 0 {
-		err := c.patch(ctx, oldObj, mainPatch, false)
+	if len(ps.main) > 0 {
+		err := c.patch(ctx, oldObj, ps.main, false)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return classifyWriteError(err), fmt.Errorf("consumer %s: retract %s: %w", c.Name(), key, err)
 		}
 	}
-	if len(statusPatch) > 0 {
-		err := c.patch(ctx, oldObj, statusPatch, true)
+	if len(ps.status) > 0 {
+		err := c.patch(ctx, oldObj, ps.status, true)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return classifyWriteError(err), fmt.Errorf("consumer %s: retract %s status: %w", c.Name(), key, err)
 		}
@@ -443,18 +456,27 @@ func (c *baseConsumer) patch(ctx context.Context, target kobject.Object, body ma
 	return c.client.Patch(ctx, obj, client.RawPatch(types.MergePatchType, raw))
 }
 
+// patchSet is the wire form of one folded pair: the main and status merge
+// patches, plus the wrapped status sides the condition-time merge needs.
+type patchSet struct {
+	main      map[string]any
+	status    map[string]any
+	oldStatus map[string]any
+	newStatus map[string]any
+}
+
 // writePatches builds the main and status merge patches for a pair. Either
 // side may be nil (bare assertion or retraction). Identity fields are
 // stripped before diffing: they address the request and never appear in a
 // patch body. View objects have no status subresource, so their status
 // rides the main patch.
-func writePatches(oldObj, newObj kobject.Object, view bool) (map[string]any, map[string]any, error) {
+func writePatches(oldObj, newObj kobject.Object, view bool) (patchSet, error) {
 	oldContent := writeContent(oldObj)
 	newContent := writeContent(newObj)
 
 	if view {
 		mainPatch, err := datamodel.CreateMergePatch(oldContent, newContent)
-		return mainPatch, nil, err
+		return patchSet{main: mainPatch}, err
 	}
 
 	oldStatus := splitStatus(oldContent)
@@ -462,13 +484,49 @@ func writePatches(oldObj, newObj kobject.Object, view bool) (map[string]any, map
 
 	mainPatch, err := datamodel.CreateMergePatch(oldContent, newContent)
 	if err != nil {
-		return nil, nil, err
+		return patchSet{}, err
 	}
 	statusPatch, err := datamodel.CreateMergePatch(oldStatus, newStatus)
 	if err != nil {
-		return nil, nil, err
+		return patchSet{}, err
 	}
-	return mainPatch, statusPatch, nil
+	return patchSet{main: mainPatch, status: statusPatch, oldStatus: oldStatus, newStatus: newStatus}, nil
+}
+
+// stampStatusPatch performs the write-side condition-time merge: pipelines
+// emit conditions without lastTransitionTime, and the connector stamps
+// them the way SetStatusCondition does, carrying the observed timestamp
+// while (type, status) is unchanged and stamping the write time on a flip.
+// The observed side is the pair's own old status when it carries
+// timestamps (a document that came from observation); otherwise it is read
+// from the plant. That read supplies nothing but timestamps the connector
+// itself wrote, never a merge base or a precondition. The returned patch
+// is the re-diff against the old side, so a status whose only difference
+// from the observed state was the missing timestamps diffs empty and
+// nothing is written.
+func (c *baseConsumer) stampStatusPatch(ctx context.Context, target kobject.Object, ps patchSet) (map[string]any, error) {
+	observed := any(ps.oldStatus)
+	if !hasConditionTimes(observed) {
+		observed = c.observedStatus(ctx, target)
+	}
+
+	stamped := kruntime.DeepCopyJSON(ps.newStatus)
+	mergeConditionTimes(stamped, observed, conditionWriteTime())
+	return datamodel.CreateMergePatch(ps.oldStatus, stamped)
+}
+
+// observedStatus reads the target's current status for the condition-time
+// merge; nil when the object or its status is not there.
+func (c *baseConsumer) observedStatus(ctx context.Context, target kobject.Object) any {
+	obj := identityObject(target)
+	if err := c.client.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		return nil
+	}
+	status, ok := obj.Object["status"]
+	if !ok {
+		return nil
+	}
+	return map[string]any{"status": status}
 }
 
 // splitStatus removes the status from a write content and returns it
