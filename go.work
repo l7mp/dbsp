@@ -3,6 +3,7 @@ go 1.26.0
 use (
 	./connectors/kubernetes
 	./connectors/misc
+	./connectors/xds
 	./dcontroller
 	./engine
 	./js
@@ -13,6 +14,8 @@ replace github.com/l7mp/dbsp/engine v0.0.0 => ./engine
 replace github.com/l7mp/dbsp/connectors/kubernetes v0.0.0 => ./connectors/kubernetes
 
 replace github.com/l7mp/dbsp/connectors/misc v0.0.0 => ./connectors/misc
+
+replace github.com/l7mp/dbsp/connectors/xds v0.0.0 => ./connectors/xds
 
 replace github.com/l7mp/dbsp/dcontroller v0.0.0 => ./dcontroller
 

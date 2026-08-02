@@ -24,6 +24,7 @@ import (
 	"github.com/go-logr/logr"
 
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
+	xds "github.com/l7mp/dbsp/connectors/xds"
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
@@ -62,6 +63,9 @@ type VM struct {
 	k8sRuntime         *k8sruntime.Runtime
 	k8sNativeAvailable bool
 	k8sStartConfig     *k8sRuntimeStartConfig
+
+	xdsMu      sync.Mutex
+	xdsServers map[string]*xds.Server
 
 	// compileStarted flips when the first circuit is compiled and never
 	// resets: expression-operator registration is init-phase only (a
@@ -759,6 +763,14 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 	if err := v.rt.Set("kubernetes", kubeObj); err != nil {
+		return err
+	}
+
+	xdsObj, err := v.newXDSNamespace()
+	if err != nil {
+		return err
+	}
+	if err := v.rt.Set("xds", xdsObj); err != nil {
 		return err
 	}
 
