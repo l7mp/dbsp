@@ -31,6 +31,7 @@ const Registrant = "kubernetes"
 func Ops() map[string]dbspexpr.CallbackFunc {
 	return map[string]dbspexpr.CallbackFunc{
 		"@selectorMatches": selectorMatches,
+		"@rego":            regoEval,
 	}
 }
 
