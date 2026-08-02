@@ -32,6 +32,9 @@ const (
 
 type k8sRuntimeStartConfig struct {
 	Kubeconfig string                     `json:"kubeconfig,omitempty"`
+	QPS        float32                    `json:"qps,omitempty"`
+	Burst      int                        `json:"burst,omitempty"`
+	UserAgent  string                     `json:"userAgent,omitempty"`
 	APIServer  *k8sRuntimeAPIServerConfig `json:"apiServer,omitempty"`
 	Auth       *k8sRuntimeAuthConfig      `json:"auth,omitempty"`
 }
@@ -43,7 +46,7 @@ type k8sRuntimeAPIServerConfig struct {
 	Insecure      bool   `json:"insecure"`
 	CertFile      string `json:"certFile"`
 	KeyFile       string `json:"keyFile"`
-	EnableOpenAPI bool   `json:"enableOpenAPI"` //nolint:tagliatelle
+	EnableOpenAPI bool   `json:"enableOpenAPI"` //nolint:tagliatelle // established option name
 }
 
 type k8sRuntimeAuthConfig struct {
@@ -53,6 +56,9 @@ type k8sRuntimeAuthConfig struct {
 
 type k8sRuntimeConfigInput struct {
 	Kubeconfig string                    `json:"kubeconfig"`
+	QPS        float64                   `json:"qps"`
+	Burst      int                       `json:"burst"`
+	UserAgent  string                    `json:"userAgent"`
 	APIServer  *k8sRuntimeAPIServerInput `json:"apiServer"`
 	Auth       *k8sRuntimeAuthInput      `json:"auth"`
 }
@@ -64,7 +70,7 @@ type k8sRuntimeAPIServerInput struct {
 	Insecure      bool   `json:"insecure"`
 	CertFile      string `json:"certFile"`
 	KeyFile       string `json:"keyFile"`
-	EnableOpenAPI *bool  `json:"enableOpenAPI"` //nolint:tagliatelle
+	EnableOpenAPI *bool  `json:"enableOpenAPI"` //nolint:tagliatelle // established option name
 }
 
 type k8sRuntimeAuthInput struct {
@@ -431,7 +437,15 @@ func (v *VM) decodeK8sRuntimeConfigValue(value goja.Value) (k8sRuntimeStartConfi
 }
 
 func normalizeK8sRuntimeConfig(in k8sRuntimeConfigInput) (k8sRuntimeStartConfig, error) {
-	cfg := k8sRuntimeStartConfig{Kubeconfig: strings.TrimSpace(in.Kubeconfig)}
+	cfg := k8sRuntimeStartConfig{
+		Kubeconfig: strings.TrimSpace(in.Kubeconfig),
+		QPS:        float32(in.QPS),
+		Burst:      in.Burst,
+		UserAgent:  strings.TrimSpace(in.UserAgent),
+	}
+	if in.QPS < 0 || in.Burst < 0 {
+		return k8sRuntimeStartConfig{}, fmt.Errorf("qps and burst must be non-negative")
+	}
 
 	if in.APIServer != nil {
 		enableOpenAPI := true
@@ -522,6 +536,26 @@ func (v *VM) startK8sRuntime(cfg k8sRuntimeStartConfig) error {
 			nativeAvailable = false
 			restCfg = nil
 			fmt.Fprintln(os.Stderr, "warning: kubeconfig is unavailable: native Kubernetes resources are disabled, only view resources can be used")
+		}
+	}
+
+	if restCfg != nil {
+		// The client-go default rate limit (5 QPS, burst 10) throttles an
+		// operator-scale workload; every connector client is built from this
+		// config, so the budget applies per connector. Defaults are
+		// operator-typical; {qps, burst} overrides per start.
+		restCfg.QPS = cfg.QPS
+		restCfg.Burst = cfg.Burst
+		if restCfg.QPS == 0 {
+			restCfg.QPS = 50
+		}
+		if restCfg.Burst == 0 {
+			restCfg.Burst = 100
+		}
+		// The user agent identifies this runtime in API-server request
+		// logs (defaults to the binary name).
+		if cfg.UserAgent != "" {
+			restCfg.UserAgent = cfg.UserAgent
 		}
 	}
 
