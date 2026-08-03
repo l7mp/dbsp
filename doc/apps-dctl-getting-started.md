@@ -15,7 +15,7 @@ make -C js build
 
 This produces `js/bin/dbsp`.
 
-Build the dcontroller image and chart assets from `dcontroller/` as needed:
+Build the dcontroller image and chart assets from `apps/dcontroller/` as needed:
 
 ```bash
 make -C dcontroller docker-build
@@ -92,7 +92,7 @@ helm upgrade --install dcontroller dcontroller/dcontroller \
 
 The deployment runs `/dbsp <script>`. API-server behavior is expected to be
 declared in the script via `kubernetes.runtime.config(...).start()`.
-The repository-provided manager script is `dcontroller/dcontroller.js`.
+The repository-provided manager script is `apps/dcontroller/dcontroller.js`.
 
 ## Script-driven configuration pattern
 
@@ -141,8 +141,8 @@ KUBECONFIG=/tmp/dcontroller.config kubectl api-resources
 ## Apply an example operator
 
 ```bash
-kubectl apply -f dcontroller/examples/service-health-monitor/svc-health-operator.yaml
-kubectl apply -f dcontroller/examples/service-health-monitor/web-app.yaml
+kubectl apply -f apps/dcontroller/examples/service-health-monitor/svc-health-operator.yaml
+kubectl apply -f apps/dcontroller/examples/service-health-monitor/web-app.yaml
 kubectl get operator svc-health-operator -o yaml
 ```
 

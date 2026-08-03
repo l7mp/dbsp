@@ -5,13 +5,13 @@ small operator that annotates each `Service` with a ready-pod count such as `2/2
 controller watches labeled pods and builds a `HealthView`. The second controller joins that view
 with native `Service` objects and patches the result back onto the service.
 
-The example files live in `dcontroller/examples/service-health-monitor/`.
+The example files live in `apps/dcontroller/examples/service-health-monitor/`.
 
 ## Apply the operator and workload
 
 ```bash
-kubectl apply -f dcontroller/examples/service-health-monitor/svc-health-operator.yaml
-kubectl apply -f dcontroller/examples/service-health-monitor/web-app.yaml
+kubectl apply -f apps/dcontroller/examples/service-health-monitor/svc-health-operator.yaml
+kubectl apply -f apps/dcontroller/examples/service-health-monitor/web-app.yaml
 ```
 
 ## Verify the annotation

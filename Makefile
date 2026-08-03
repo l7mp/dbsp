@@ -5,7 +5,7 @@ SHELL := /usr/bin/env bash
 
 K8S_ENVTEST_VERSION ?= 1.30.0
 K8S_LOCALBIN := connectors/kubernetes/bin
-DCTRL_LOCALBIN := dcontroller/bin
+DCTRL_LOCALBIN := apps/dcontroller/bin
 K8S_LOCALBIN_ABS := $(abspath $(K8S_LOCALBIN))
 DCTRL_LOCALBIN_ABS := $(abspath $(DCTRL_LOCALBIN))
 
@@ -28,11 +28,11 @@ help:
 
 generate:
 	@printf "==> [dcontroller] generate\n"
-	@$(MAKE) -C dcontroller generate
+	@$(MAKE) -C apps/dcontroller generate
 
 manifests:
 	@printf "==> [dcontroller] manifests\n"
-	@$(MAKE) -C dcontroller manifests
+	@$(MAKE) -C apps/dcontroller manifests
 
 build: build-connectors-kubernetes build-connectors-misc build-engine build-js build-dcontroller
 
@@ -54,19 +54,19 @@ build-js:
 
 build-dcontroller:
 	@printf "==> [dcontroller] build\n"
-	@$(MAKE) -C dcontroller build-bin
+	@$(MAKE) -C apps/dcontroller build-bin
 	@$(MAKE) build-dcontroller-examples
 
 build-dcontroller-examples:
-	@mkdir -p dcontroller/bin
-	@pkgs="$$( $(GO) -C dcontroller list -f '{{if and (eq .Name "main") (gt (len .GoFiles) 0)}}{{.ImportPath}}{{end}}' ./examples/... )"; \
+	@mkdir -p apps/dcontroller/bin
+	@pkgs="$$( $(GO) -C apps/dcontroller list -f '{{if and (eq .Name "main") (gt (len .GoFiles) 0)}}{{.ImportPath}}{{end}}' ./examples/... )"; \
 	if [ -z "$$pkgs" ]; then \
 		printf "==> [dcontroller] no buildable example binaries\\n"; \
 	else \
 		for pkg in $$pkgs; do \
 			name="$${pkg##*/}"; \
 			printf "==> [dcontroller] build %s\\n" "$$name"; \
-			$(GO) -C dcontroller build -trimpath -o "bin/$$name" "$$pkg"; \
+			$(GO) -C apps/dcontroller build -trimpath -o "bin/$$name" "$$pkg"; \
 		done; \
 	fi
 
@@ -100,7 +100,7 @@ test-fast-js:
 
 test-fast-dcontroller:
 	@printf "==> [dcontroller] fast test\n"
-	@pkgs="$$( $(GO) -C dcontroller list ./... )"; \
+	@pkgs="$$( $(GO) -C apps/dcontroller list ./... )"; \
 	keep=""; \
 	for p in $$pkgs; do \
 		case "$$p" in \
@@ -108,7 +108,7 @@ test-fast-dcontroller:
 			*) keep="$$keep $$p" ;; \
 		esac; \
 	done; \
-	$(GO) -C dcontroller test $$keep -count=1
+	$(GO) -C apps/dcontroller test $$keep -count=1
 
 test-connectors-kubernetes:
 	@printf "==> [connectors/kubernetes] test\n"
@@ -130,9 +130,9 @@ test-js:
 
 test-dcontroller:
 	@printf "==> [dcontroller] test\n"
-	@$(MAKE) -C dcontroller envtest
+	@$(MAKE) -C apps/dcontroller envtest
 	@KUBEBUILDER_ASSETS="$$( $(DCTRL_LOCALBIN_ABS)/setup-envtest use $(K8S_ENVTEST_VERSION) --bin-dir $(DCTRL_LOCALBIN_ABS) -p path )" \
-		$(GO) -C dcontroller test ./... -count=1
+		$(GO) -C apps/dcontroller test ./... -count=1
 
 test-report:
 	@failed=0; \
@@ -153,7 +153,7 @@ test-report:
 
 lint:
 	@printf "==> [workspace] golangci-lint\n"
-	@$(GOLANGCI_LINT) run ./connectors/kubernetes/... ./connectors/misc/... ./dcontroller/... ./engine/... ./js/...
+	@$(GOLANGCI_LINT) run ./connectors/kubernetes/... ./connectors/misc/... ./apps/dcontroller/... ./engine/... ./js/...
 
 clean:
 	@printf "==> [connectors/kubernetes] clean\n"
@@ -161,4 +161,4 @@ clean:
 	@printf "==> [js] clean\n"
 	@$(MAKE) -C js clean
 	@printf "==> [dcontroller] clean artifacts\n"
-	@rm -rf dcontroller/bin dcontroller/cover.out
+	@rm -rf apps/dcontroller/bin apps/dcontroller/cover.out

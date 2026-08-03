@@ -244,7 +244,7 @@ kubernetes.runtime.config({
 }).start();
 ```
 
-In the Helm deployment, the repository-provided `dcontroller/dcontroller.js` script reads runtime settings from environment variables set by the chart.
+In the Helm deployment, the repository-provided `apps/dcontroller/dcontroller.js` script reads runtime settings from environment variables set by the chart.
 
 ## Accessing Views With Kubectl
 

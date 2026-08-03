@@ -22,8 +22,8 @@ RUN go mod tidy
 COPY js /workspace/js
 
 # Copy the dcontroller JavaScript manager sources.
-COPY dcontroller/dcontroller.js /workspace/dcontroller/dcontroller.js
-COPY dcontroller/lib /workspace/dcontroller/lib
+COPY apps/dcontroller/dcontroller.js /workspace/dcontroller/dcontroller.js
+COPY apps/dcontroller/lib /workspace/dcontroller/lib
 
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /workspace/bin/dbsp ./cmd
 

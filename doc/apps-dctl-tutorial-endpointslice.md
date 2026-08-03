@@ -7,7 +7,7 @@ server it consumes the resulting view deltas in Go. That makes it a good example
 can just as well feed another consumer that programs some external system or another in-process
 component.
 
-The example files live in `dcontroller/examples/endpointslice-controller/`.
+The example files live in `apps/dcontroller/examples/endpointslice-controller/`.
 
 ## What the example does
 
@@ -25,14 +25,14 @@ delete events.
 From the workspace root:
 
 ```bash
-go run ./dcontroller/examples/endpointslice-controller
+go run ./apps/dcontroller/examples/endpointslice-controller
 ```
 
 In the current implementation, the default mode groups addresses by service port, so one view
 object contains a list of addresses. To get one object per endpoint address, disable pooling:
 
 ```bash
-go run ./dcontroller/examples/endpointslice-controller --disable-endpoint-pooling
+go run ./apps/dcontroller/examples/endpointslice-controller --disable-endpoint-pooling
 ```
 
 ## Create test resources

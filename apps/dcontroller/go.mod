@@ -13,13 +13,13 @@ require (
 	sigs.k8s.io/controller-runtime v0.24.1
 )
 
-replace github.com/l7mp/dbsp/engine v0.0.0 => ../engine
+replace github.com/l7mp/dbsp/engine v0.0.0 => ../../engine
 
-replace github.com/l7mp/dbsp/connectors/kubernetes v0.0.0 => ../connectors/kubernetes
+replace github.com/l7mp/dbsp/connectors/kubernetes v0.0.0 => ../../connectors/kubernetes
 
-replace github.com/l7mp/dbsp/connectors/misc v0.0.0 => ../connectors/misc
+replace github.com/l7mp/dbsp/connectors/misc v0.0.0 => ../../connectors/misc
 
-replace github.com/l7mp/dbsp/js v0.0.0 => ../js
+replace github.com/l7mp/dbsp/js v0.0.0 => ../../js
 
 require (
 	cel.dev/expr v0.25.2 // indirect

@@ -13,13 +13,13 @@ The pipeline joins those objects by name and namespace, then writes a hash of th
 into the deployment pod template annotations. That small pod template change is enough to trigger a
 rollout.
 
-The example files live in `dcontroller/examples/configmap-deployment-controller/`.
+The example files live in `apps/dcontroller/examples/configmap-deployment-controller/`.
 
 ## Apply the CRD and operator
 
 ```bash
-kubectl apply -f dcontroller/examples/configmap-deployment-controller/configdeployment-crd.yaml
-kubectl apply -f dcontroller/examples/configmap-deployment-controller/configdeployment-operator.yaml
+kubectl apply -f apps/dcontroller/examples/configmap-deployment-controller/configdeployment-crd.yaml
+kubectl apply -f apps/dcontroller/examples/configmap-deployment-controller/configdeployment-operator.yaml
 ```
 
 The operator itself is named `configdep-operator` in the current example manifest.

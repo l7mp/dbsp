@@ -9,9 +9,9 @@ connectors/kubernetes/bin/
 
 # Ignore JS scripts by default; force-add selected examples when needed.
 *.js
-!dcontroller/*.js
-!dcontroller/lib/**/*.js
-!dcontroller/test/**/*.js
+!apps/dcontroller/*.js
+!apps/dcontroller/lib/**/*.js
+!apps/dcontroller/test/**/*.js
 !js/examples/join_project.js
 !js/examples/endpoints.js
 !js/stdlib/**/*.js
