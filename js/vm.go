@@ -839,6 +839,9 @@ func (v *VM) injectGlobals() error {
 	if err := runtimeObj.Set("subscribe", v.rt.Get("subscribe")); err != nil {
 		return err
 	}
+	if err := runtimeObj.Set("resetTopic", v.wrap(v.runtimeResetTopic)); err != nil {
+		return err
+	}
 	if err := runtimeObj.Set("onError", v.wrap(v.runtimeOnError)); err != nil {
 		return err
 	}

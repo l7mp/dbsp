@@ -177,6 +177,14 @@ function startController(operatorName, controllerSpec, logger) {
 
     const circuitName = `dcontroller.${controllerPrefix}`;
 
+    // The controller owns its topics: start from clean retained integrals
+    // so this instance never bootstraps from a predecessor's leftovers (a
+    // stopped circuit is cancelled, not drained, so its last output may
+    // land after its close).
+    for (const binding of sourceBindings.concat(targetBindings)) {
+        runtime.resetTopic(binding.name);
+    }
+
     logger.info({
         event_type: "controller_compiling",
         topic: controllerSpec.name,
@@ -196,13 +204,16 @@ function startController(operatorName, controllerSpec, logger) {
     const components = new Set([circuitName]);
     const handles = [];
     try {
-        for (const sourceConfig of sourceConfigs) {
-            const h = startSourceHandle(controllerPrefix, controllerSpec, sourceConfig);
+        // Targets first: the output consumers must be subscribed before any
+        // source starts flowing, or the circuit's first outputs land in the
+        // topic integral and replay as one batched delta.
+        for (const targetConfig of targetConfigs) {
+            const h = startTargetHandle(controllerPrefix, targetConfig);
             handles.push(h);
             components.add(h.name());
         }
-        for (const targetConfig of targetConfigs) {
-            const h = startTargetHandle(controllerPrefix, targetConfig);
+        for (const sourceConfig of sourceConfigs) {
+            const h = startSourceHandle(controllerPrefix, controllerSpec, sourceConfig);
             handles.push(h);
             components.add(h.name());
         }
@@ -222,6 +233,13 @@ function startController(operatorName, controllerSpec, logger) {
                 closeHandle(handles[i], logger);
             }
             closeHandle(circuitHandle, logger);
+            // The controller owns its topics: reset their retained
+            // integrals so a restarted instance bootstraps from its own
+            // output alone, not from a multiset mixing the dead circuit's
+            // state with the new one's.
+            for (const binding of sourceBindings.concat(targetBindings)) {
+                runtime.resetTopic(binding.name);
+            }
         },
     };
 }

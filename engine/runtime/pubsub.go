@@ -249,6 +249,25 @@ func NewPubSub() *PubSub {
 	return &PubSub{topics: map[string]*topicState{}}
 }
 
+// ResetTopic clears a topic's retained integral. Retention outlives
+// subscriber churn by design, so the integral of a topic whose producing
+// circuit was uninstalled keeps carrying the dead circuit's state, and a
+// replacement subscriber would bootstrap from a multiset mixing dead and
+// live outputs. Whoever owns the circuit lifecycle resets the topic when
+// tearing the producer down; live subscribers are unaffected (no event is
+// emitted), only future replays start empty.
+func (ps *PubSub) ResetTopic(name string) {
+	ps.mu.RLock()
+	ts, ok := ps.topics[name]
+	ps.mu.RUnlock()
+	if !ok {
+		return
+	}
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.acc = zset.New()
+}
+
 // topic returns the state for a topic, creating it on first use.
 func (ps *PubSub) topic(name string) *topicState {
 	ps.mu.RLock()

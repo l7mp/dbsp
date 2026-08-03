@@ -33,6 +33,22 @@ func (v *VM) publish(call goja.FunctionCall) (goja.Value, error) {
 	return goja.Undefined(), nil
 }
 
+// runtimeResetTopic implements runtime.resetTopic(topic): it clears the
+// topic's retained integral, for lifecycle owners tearing down the topic's
+// producing circuit. Live subscribers are unaffected; only future replays
+// start empty.
+func (v *VM) runtimeResetTopic(call goja.FunctionCall) (goja.Value, error) {
+	if len(call.Arguments) < 1 {
+		return nil, fmt.Errorf("runtime.resetTopic(topic) requires a topic")
+	}
+	topic := call.Argument(0).String()
+	if topic == "" {
+		return nil, fmt.Errorf("runtime.resetTopic: empty topic")
+	}
+	v.runtime.ResetTopic(topic)
+	return goja.Undefined(), nil
+}
+
 func (v *VM) runtimeOnError(call goja.FunctionCall) (goja.Value, error) {
 	if len(call.Arguments) < 1 {
 		return nil, fmt.Errorf("runtime.onError(fn) requires a callback")
