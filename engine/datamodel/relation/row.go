@@ -20,20 +20,27 @@ import (
 type Row struct {
 	Table *Table
 	Data  []any
+	hash  string
 }
 
 // Ensure Row implements Document
 var _ datamodel.Document = (*Row)(nil)
 
+// Hash returns the content digest of the row: the orderedcode encoding of
+// all fields. The digest is cached and reused until the row mutates.
 func (r *Row) Hash() string {
-	// Full content key: encode ALL fields
+	if r.hash != "" {
+		return r.hash
+	}
 	values := orderedCodeValues(r.Data)
 	s, err := orderedcode.Append(nil, values...)
 	if err != nil {
 		// Fallback for types orderedcode doesn't like, though it supports most
-		return fmt.Sprintf("%v", r.Data)
+		r.hash = fmt.Sprintf("%v", r.Data)
+	} else {
+		r.hash = string(s)
 	}
-	return string(s)
+	return r.hash
 }
 
 func (r *Row) PrimaryKey() (string, error) {
@@ -110,13 +117,14 @@ func (r *Row) UnmarshalJSON(data []byte) error {
 	}
 
 	r.Data = values
+	r.hash = ""
 	return nil
 }
 
 func (r *Row) Copy() datamodel.Document {
 	data := make([]any, len(r.Data))
 	copy(data, r.Data)
-	return &Row{Table: r.Table, Data: data}
+	return &Row{Table: r.Table, Data: data, hash: r.hash}
 }
 
 func (r *Row) New() datamodel.Document {
@@ -161,6 +169,7 @@ func (r *Row) SetField(field string, value any) error {
 	for i, col := range schema.Columns {
 		if strings.EqualFold(col.QualifiedName, field) || strings.EqualFold(col.Name, field) {
 			r.Data[i] = value
+			r.hash = ""
 			return nil
 		}
 	}
@@ -169,6 +178,7 @@ func (r *Row) SetField(field string, value any) error {
 			for i, col := range schema.Columns {
 				if strings.EqualFold(col.QualifiedName, alias) || strings.EqualFold(col.Name, alias) {
 					r.Data[i] = value
+					r.hash = ""
 					return nil
 				}
 			}

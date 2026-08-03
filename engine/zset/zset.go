@@ -1,3 +1,8 @@
+// Package zset implements Z-sets: weighted multisets of documents keyed by
+// content hash. Documents stored in a Z-set are immutable by convention:
+// the content hash is the entry's identity, so mutating a stored document
+// would corrupt the set. Operators evaluate user expressions on per-element
+// copies and never mutate stored elements.
 package zset
 
 import (
@@ -45,7 +50,12 @@ func (z ZSet) Insert(elem datamodel.Document, weight Weight) {
 	if weight == 0 {
 		return
 	}
-	key := elem.Hash()
+	z.insert(elem.Hash(), elem, weight)
+}
+
+// insert adds an element under a known content hash, sparing the interface
+// call when the hash is already at hand (the entry key of another Z-set).
+func (z ZSet) insert(key string, elem datamodel.Document, weight Weight) {
 	if e, exists := z.entries[key]; exists {
 		e.Weight += weight
 		if e.Weight == 0 {
@@ -83,10 +93,9 @@ func (z ZSet) Iter(fn func(elem datamodel.Document, weight Weight) bool) {
 // Add returns z + other.
 func (z ZSet) Add(other ZSet) ZSet {
 	result := z.ShallowCopy()
-	other.Iter(func(elem datamodel.Document, weight Weight) bool {
-		result.Insert(elem, weight)
-		return true
-	})
+	for key, e := range other.entries {
+		result.insert(key, e.Document, e.Weight)
+	}
 	return result
 }
 
@@ -167,7 +176,7 @@ func (z ZSet) Size() int {
 func (z ZSet) Entries() []Elem {
 	result := make([]Elem, 0, len(z.entries))
 	for _, e := range z.entries {
-		result = append(result, Elem{Document: e.Document, Weight: e.Weight})
+		result = append(result, *e)
 	}
 	return result
 }
