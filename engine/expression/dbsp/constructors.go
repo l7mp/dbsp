@@ -124,6 +124,17 @@ func NewSortBy(compare, list Expression) Expression {
 	return &sortByExpr{binaryOp{"@sortBy", compare, list}}
 }
 
+// NewSortByKey creates a stable ascending list sort expression with a
+// per-element key.
+func NewSortByKey(key, list Expression) Expression {
+	return &sortByKeyExpr{binaryOp{"@sortByKey", key, list}}
+}
+
+// NewReverse creates a list reversal expression.
+func NewReverse(operand Expression) Expression {
+	return &reverseExpr{unaryOp{"@reverse", operand}}
+}
+
 // NewIsNil creates a nil-check expression.
 func NewIsNil(operand Expression) Expression { return &isNilExpr{unaryOp{"@isnil", operand}} }
 

@@ -508,6 +508,34 @@ two fields: `a` and `b`, the two candidate values being compared. The comparator
 This sorts the list in ascending order. The structure looks heavy, but the logic is simple: compare
 two candidates and tell the sorter which one comes first.
 
+### `@sortByKey`
+
+Stable ascending sort by a key expression, evaluated once per element with the element as the
+subject (like `@map`). Number keys order numerically, string keys lexicographically (never
+coerced: `"10"` sorts before `"9"`); any other or mixed-type key pair falls back to a
+deterministic canonical order.
+
+```yaml
+"@sortByKey": ["$$.priority", "$.spec.rules"]
+```
+
+The sort is stable, so a multi-key order is nested sorts with the least significant key
+innermost:
+
+```yaml
+"@sortByKey": ["$$.rank", {"@sortByKey": ["$$.name", "$.items"]}]
+```
+
+Use `@sortBy` instead when the order needs a genuine two-sided comparator.
+
+### `@reverse`
+
+Reverse a list. A descending sort is `@reverse` of the ascending one:
+
+```yaml
+"@reverse": {"@sortByKey": ["$$.priority", "$.spec.rules"]}
+```
+
 ### `@len`
 
 Returns the length of a list, string, or map.

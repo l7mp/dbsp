@@ -125,6 +125,131 @@ func (e *sortByExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
+// sortByKeyExpr implements @sortByKey - sorts a list ascending by a key
+// expression evaluated once per element (the element is the subject, as in
+// @map). Number keys order numerically, string keys lexicographically; any
+// other or mixed-type key pair falls back to the lexKey canonical
+// serialization order, which is deterministic but not meaningful. The sort
+// is stable, so a multi-key order is nested stable sorts (innermost sort by
+// the least significant key); a descending order is @reverse of the
+// ascending sort. Use @sortBy when the order needs a genuine two-sided
+// comparator.
+type sortByKeyExpr struct{ binaryOp }
+
+func (e *sortByKeyExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	listValue, err := e.right.Evaluate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("@sortByKey: failed to evaluate list: %w", err)
+	}
+
+	list, err := AsList(listValue)
+	if err != nil {
+		return nil, fmt.Errorf("@sortByKey: second argument must be a list: %w", err)
+	}
+
+	keys := make([]any, len(list))
+	for i, item := range list {
+		k, err := e.left.Evaluate(ctx.WithSubject(item))
+		if err != nil {
+			return nil, fmt.Errorf("@sortByKey: key[%d]: %w", i, err)
+		}
+		keys[i] = k
+	}
+
+	order := make([]int, len(list))
+	for i := range order {
+		order[i] = i
+	}
+	var sortErr error
+	sort.SliceStable(order, func(x, y int) bool {
+		if sortErr != nil {
+			return false
+		}
+		less, err := keyLess(keys[order[x]], keys[order[y]])
+		if err != nil {
+			sortErr = fmt.Errorf("@sortByKey: %w", err)
+			return false
+		}
+		return less
+	})
+	if sortErr != nil {
+		return nil, sortErr
+	}
+
+	result := make([]any, len(list))
+	for i, j := range order {
+		result[i] = list[j]
+	}
+	ctx.Logger().V(8).Info("eval", "op", "@sortByKey", "result", result)
+	return result, nil
+}
+
+// keyLess orders two @sortByKey keys: numbers numerically, strings
+// lexicographically, everything else (and mixed-type pairs) by the lexKey
+// canonical serialization. Strings are never coerced to numbers: "10"
+// sorts before "9".
+func keyLess(a, b any) (bool, error) {
+	if fa, ok := numericKey(a); ok {
+		if fb, ok := numericKey(b); ok {
+			return fa < fb, nil
+		}
+	}
+	if sa, ok := a.(string); ok {
+		if sb, ok := b.(string); ok {
+			return sa < sb, nil
+		}
+	}
+	ka, err := lexKey(a)
+	if err != nil {
+		return false, err
+	}
+	kb, err := lexKey(b)
+	if err != nil {
+		return false, err
+	}
+	return ka < kb, nil
+}
+
+func numericKey(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// reverseExpr implements @reverse - reverses a list. A nil list reverses
+// to an empty list, following the @map convention.
+type reverseExpr struct{ unaryOp }
+
+func (e *reverseExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	value, err := e.operand.Evaluate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("@reverse: %w", err)
+	}
+
+	list, err := AsList(value)
+	if err != nil {
+		return nil, fmt.Errorf("@reverse: argument must be a list: %w", err)
+	}
+
+	result := make([]any, len(list))
+	for i, item := range list {
+		result[len(list)-1-i] = item
+	}
+
+	ctx.Logger().V(8).Info("eval", "op", "@reverse", "result", result)
+	return result, nil
+}
+
 // sumExpr implements @sum - sums all elements.
 type sumExpr struct{ variadicOp }
 
@@ -574,6 +699,20 @@ func init() {
 			return nil, fmt.Errorf("@sortBy: expected [compare, list] arguments")
 		}
 		return &sortByExpr{binaryOp{"@sortBy", list[0], list[1]}}, nil
+	})
+	MustRegister("@sortByKey", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || len(list) != 2 {
+			return nil, fmt.Errorf("@sortByKey: expected [key, list] arguments")
+		}
+		return &sortByKeyExpr{binaryOp{"@sortByKey", list[0], list[1]}}, nil
+	})
+	MustRegister("@reverse", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@reverse: %w", err)
+		}
+		return &reverseExpr{unaryOp{"@reverse", operand}}, nil
 	})
 	MustRegister("@sum", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)

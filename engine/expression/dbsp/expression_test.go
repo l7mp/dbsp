@@ -875,6 +875,84 @@ var _ = Describe("List Operators", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
+	It("should evaluate @sortByKey with numeric keys numerically", func() {
+		expr, err := dbsp.Compile([]byte(`{"@sortByKey": ["$$.", [10, 9, 2]]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{int64(2), int64(9), int64(10)}))
+	})
+
+	It("should evaluate @sortByKey with string keys lexicographically, without numeric coercion", func() {
+		expr, err := dbsp.Compile([]byte(`{"@sortByKey": ["$$.", ["9", "10", "a"]]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{"10", "9", "a"}))
+	})
+
+	It("should evaluate @sortByKey over document elements via the subject", func() {
+		expr, err := dbsp.Compile([]byte(`{"@sortByKey": ["$$.k", "$.items"]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		doc := NewTestDoc(map[string]any{"items": []any{
+			map[string]any{"k": int64(2), "v": "second"},
+			map[string]any{"k": int64(1), "v": "first"},
+		}})
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{
+			map[string]any{"k": int64(1), "v": "first"},
+			map[string]any{"k": int64(2), "v": "second"},
+		}))
+	})
+
+	It("should order multi-key via nested stable @sortByKey sorts", func() {
+		expr, err := dbsp.Compile([]byte(`{"@sortByKey": ["$$.a", {"@sortByKey": ["$$.b", "$.items"]}]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		doc := NewTestDoc(map[string]any{"items": []any{
+			map[string]any{"a": int64(1), "b": int64(2)},
+			map[string]any{"a": int64(1), "b": int64(1)},
+			map[string]any{"a": int64(0), "b": int64(9)},
+		}})
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{
+			map[string]any{"a": int64(0), "b": int64(9)},
+			map[string]any{"a": int64(1), "b": int64(1)},
+			map[string]any{"a": int64(1), "b": int64(2)},
+		}))
+	})
+
+	It("should evaluate @reverse", func() {
+		expr, err := dbsp.Compile([]byte(`{"@reverse": {"@list": [1, 2, 3]}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{int64(3), int64(2), int64(1)}))
+	})
+
+	It("should express descending order as @reverse of @sortByKey", func() {
+		expr, err := dbsp.Compile([]byte(`{"@reverse": {"@sortByKey": ["$$.", [2, 3, 1]]}}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{int64(3), int64(2), int64(1)}))
+	})
+
+	It("should reject @reverse on a non-list", func() {
+		expr, err := dbsp.Compile([]byte(`{"@reverse": "scalar"}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = expr.Evaluate(expression.NewContext(nil))
+		Expect(err).To(HaveOccurred())
+	})
+
 	It("should evaluate @map", func() {
 		// Map each element by adding 10.
 		expr, err := dbsp.Compile([]byte(`{"@map": [{"@add": ["$$.", 10]}, [1, 2, 3]]}`))
