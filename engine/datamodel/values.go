@@ -2,6 +2,7 @@ package datamodel
 
 import (
 	"encoding/json"
+	"reflect"
 )
 
 // DeepCopyAny returns a deep copy of a JSON-shaped value: map[string]any
@@ -25,6 +26,105 @@ func DeepCopyAny(v any) any {
 	default:
 		return v
 	}
+}
+
+// DeepEqual reports value equality of two JSON-shaped values in canonical
+// JSON semantics, computed structurally instead of through serialization:
+// numbers compare by value whatever Go numeric type carries them (the
+// int64/float64 split is a decode-path artifact, not data), maps and lists
+// compare element-wise through the same normalization, and everything else
+// compares strictly. Two values are DeepEqual exactly when their
+// NormalizeAny forms are reflect.DeepEqual.
+func DeepEqual(a, b any) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	if ai, aInt := asInt(a); aInt {
+		if bi, bInt := asInt(b); bInt {
+			return ai == bi
+		}
+	}
+	if af, aNum := asFloat(a); aNum {
+		bf, bNum := asFloat(b)
+		if bNum {
+			return af == bf
+		}
+		return false
+	}
+
+	switch av := a.(type) {
+	case map[string]any:
+		bv, ok := b.(map[string]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for k, v := range av {
+			bvv, ok := bv[k]
+			if !ok || !DeepEqual(v, bvv) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		bv, ok := b.([]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for i := range av {
+			if !DeepEqual(av[i], bv[i]) {
+				return false
+			}
+		}
+		return true
+	}
+
+	return reflect.DeepEqual(a, b)
+}
+
+// asInt returns v as an int64 when it is an integer type (bools and numeric
+// strings are not numbers).
+func asInt(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int8:
+		return int64(n), true
+	case int16:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int64:
+		return n, true
+	case uint:
+		return int64(n), true
+	case uint8:
+		return int64(n), true
+	case uint16:
+		return int64(n), true
+	case uint32:
+		return int64(n), true
+	case uint64:
+		return int64(n), true
+	}
+	return 0, false
+}
+
+// asFloat returns v as a float64 when it is any numeric type.
+func asFloat(v any) (float64, bool) {
+	if i, ok := asInt(v); ok {
+		return float64(i), true
+	}
+	switch n := v.(type) {
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	}
+	return 0, false
 }
 
 // NormalizeAny returns the canonical JSON form of a value: the value

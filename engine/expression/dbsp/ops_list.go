@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/expression"
 )
 
@@ -508,7 +509,7 @@ func (e *inExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	}
 
 	for _, item := range list {
-		if deepEqual(elemVal, item) {
+		if datamodel.DeepEqual(elemVal, item) {
 			ctx.Logger().V(8).Info("eval", "op", "@in", "result", true)
 			return true, nil
 		}

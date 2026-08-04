@@ -2,7 +2,6 @@ package datamodel
 
 import (
 	"fmt"
-	"reflect"
 )
 
 // CreateMergePatch returns the RFC 7386 merge patch that transforms old
@@ -47,7 +46,7 @@ func diffMaps(old, new map[string]any) map[string]any {
 			}
 			continue
 		}
-		if !reflect.DeepEqual(ov, nv) {
+		if !DeepEqual(ov, nv) {
 			out[k] = nv
 		}
 	}

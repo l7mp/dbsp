@@ -945,6 +945,19 @@ var _ = Describe("List Operators", func() {
 		Expect(result).To(Equal([]any{int64(3), int64(2), int64(1)}))
 	})
 
+	It("should evaluate @eq on containers with mixed numeric types", func() {
+		expr, err := dbsp.Compile([]byte(`{"@eq": ["$.a", "$.b"]}`))
+		Expect(err).NotTo(HaveOccurred())
+
+		doc := NewTestDoc(map[string]any{
+			"a": map[string]any{"port": int64(80), "list": []any{int64(1)}},
+			"b": map[string]any{"port": float64(80), "list": []any{float64(1)}},
+		})
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(true))
+	})
+
 	It("should reject @reverse on a non-list", func() {
 		expr, err := dbsp.Compile([]byte(`{"@reverse": "scalar"}`))
 		Expect(err).NotTo(HaveOccurred())

@@ -2,8 +2,8 @@ package dbsp
 
 import (
 	"fmt"
-	"reflect"
 
+	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/expression"
 )
 
@@ -21,7 +21,7 @@ func (e *eqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@eq: right operand: %w", err)
 	}
 
-	result := deepEqual(aVal, bVal)
+	result := datamodel.DeepEqual(aVal, bVal)
 	ctx.Logger().V(8).Info("eval", "op", "@eq", "a", aVal, "b", bVal, "result", result)
 	return result, nil
 }
@@ -40,7 +40,7 @@ func (e *neqExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 		return nil, fmt.Errorf("@neq: right operand: %w", err)
 	}
 
-	result := !deepEqual(aVal, bVal)
+	result := !datamodel.DeepEqual(aVal, bVal)
 	ctx.Logger().V(8).Info("eval", "op", "@neq", "a", aVal, "b", bVal, "result", result)
 	return result, nil
 }
@@ -130,35 +130,6 @@ func compareNumeric(ctx *expression.EvalContext, left, right Expression, opName 
 	result := cmpFn(cmp)
 	ctx.Logger().V(8).Info("eval", "op", opName, "a", aVal, "b", bVal, "result", result)
 	return result, nil
-}
-
-// deepEqual performs deep equality comparison, normalizing numeric types.
-func deepEqual(a, b any) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-
-	// Handle numeric type normalization.
-	if IsNumeric(a) && IsNumeric(b) {
-		// If both are int, compare as int.
-		if IsInt(a) && IsInt(b) {
-			aInt, _ := AsInt(a)
-			bInt, _ := AsInt(b)
-			return aInt == bInt
-		}
-		// Otherwise compare as float.
-		aFloat, err1 := AsFloat(a)
-		bFloat, err2 := AsFloat(b)
-		if err1 == nil && err2 == nil {
-			return aFloat == bFloat
-		}
-	}
-
-	// Fall back to reflect.DeepEqual for other types.
-	return reflect.DeepEqual(a, b)
 }
 
 func init() {
