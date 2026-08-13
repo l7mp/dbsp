@@ -26,7 +26,7 @@ touches all of them, even if the only thing that changed since the last query wa
 order.
 
 This is what we call the **snapshot model**: treat the full current state as input, run the full
-computation, get the full output. It is simple and correct, but computationally expensive and many
+computation, get the full output. It is simple and correct, but computationally expensive and may
 produce enormous amounts of data (all data records are fully re-generated in every update). Cost
 scales with the total data size, not with how much changed.
 
