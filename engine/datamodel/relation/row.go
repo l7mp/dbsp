@@ -227,7 +227,7 @@ func (r *Row) Fields() map[string]any {
 	for i, col := range r.Table.Schema.Columns {
 		var value any
 		if i < len(r.Data) {
-			value = deepCopyRowValue(r.Data[i])
+			value = datamodel.DeepCopyAny(r.Data[i])
 		}
 		fields[col.Name] = value
 		if col.QualifiedName != "" {
@@ -235,25 +235,6 @@ func (r *Row) Fields() map[string]any {
 		}
 	}
 	return fields
-}
-
-func deepCopyRowValue(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		m := make(map[string]any, len(x))
-		for k, vv := range x {
-			m[k] = deepCopyRowValue(vv)
-		}
-		return m
-	case []any:
-		s := make([]any, len(x))
-		for i, vv := range x {
-			s[i] = deepCopyRowValue(vv)
-		}
-		return s
-	default:
-		return v
-	}
 }
 
 func (s *Schema) AliasForColumn(name string) (string, bool) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"sync"
 
 	"github.com/ohler55/ojg/jp"
 
@@ -92,14 +93,56 @@ func (p *Product) Merge(other datamodel.Document) datamodel.Document {
 
 func (p *Product) New() datamodel.Document { return &Product{parts: map[string]datamodel.Document{}} }
 
+// nsSplit is the namespace-dispatch split of a $-rooted JSONPath: ns is the
+// member the first child fragment names, rest is the remainder path
+// delegated to that member ("" when the path names the member itself). ok
+// is false when the first fragment is not a plain child name (a wildcard,
+// filter or descent), in which case the path cannot dispatch and evaluates
+// against the whole materialized product instead.
+type nsSplit struct {
+	ns   string
+	rest string
+	ok   bool
+}
+
+// splitPaths caches namespace splits keyed by the path string. Field paths
+// come from compiled expression programs, so the live set is small and hot
+// (the same argument as the unstructured package's parsed-path cache).
+var splitPaths sync.Map // string -> nsSplit
+
+// splitNamespace splits key into the member name and the remainder path
+// using the full JSONPath grammar, so every spelling of a child fragment
+// (dotted, bracketed, or mixed) dispatches identically.
+func splitNamespace(key string) (nsSplit, error) {
+	if cached, ok := splitPaths.Load(key); ok {
+		return cached.(nsSplit), nil
+	}
+	expr, err := jp.ParseString(key)
+	if err != nil {
+		return nsSplit{}, fmt.Errorf("invalid JSONPath %q: %w", key, err)
+	}
+	s := nsSplit{}
+	if len(expr) >= 2 {
+		if child, isChild := expr[1].(jp.Child); isChild {
+			s.ns = string(child)
+			s.ok = true
+			if len(expr) > 2 {
+				s.rest = append(jp.Expr{expr[0]}, expr[2:]...).String()
+			}
+		}
+	}
+	splitPaths.Store(key, s)
+	return s, nil
+}
+
 // GetField resolves a $-rooted JSONPath against the product: the first
 // child fragment names the join input (the namespace), and the rest of the
 // path delegates to that member document with the member evaluating its own
-// share of the path.
+// share of the path. The split uses the full JSONPath grammar, so dotted,
+// bracketed and mixed spellings dispatch identically; a path whose first
+// fragment is not a plain child name (a wildcard, filter or descent)
+// evaluates against the whole materialized product.
 func (p *Product) GetField(key string) (any, error) {
-	if strings.HasPrefix(key, "$[") {
-		return p.getJSONPath(key)
-	}
 	if key == "$" || key == "$." {
 		root := map[string]any{}
 		for k, v := range p.parts {
@@ -107,23 +150,32 @@ func (p *Product) GetField(key string) (any, error) {
 		}
 		return root, nil
 	}
-	if !strings.HasPrefix(key, "$.") {
+	if !strings.HasPrefix(key, "$") {
 		return nil, fmt.Errorf("field path %q is not a $-rooted JSONPath", key)
 	}
-	parts := strings.SplitN(key[2:], ".", 2)
-	d, ok := p.parts[parts[0]]
+	split, err := splitNamespace(key)
+	if err != nil {
+		return nil, err
+	}
+	if !split.ok {
+		return p.getJSONPath(key)
+	}
+	d, ok := p.parts[split.ns]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
 	}
-	if len(parts) == 1 {
+	if split.rest == "" {
 		return d, nil
 	}
 	if d == nil {
 		return nil, fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, key)
 	}
-	return d.GetField("$." + parts[1])
+	return d.GetField(split.rest)
 }
 
+// getJSONPath evaluates key against the whole materialized product: the
+// fallback for paths that do not start with a plain child fragment and so
+// cannot dispatch to a single member.
 func (p *Product) getJSONPath(key string) (any, error) {
 	expr, err := jp.ParseString(key)
 	if err != nil {
@@ -150,26 +202,35 @@ func (p *Product) getJSONPath(key string) (any, error) {
 	return results, nil
 }
 
+// SetField writes through the same namespace dispatch as GetField: the
+// first child fragment names the member, the remainder delegates to it. A
+// path naming the member itself replaces the whole member document.
 func (p *Product) SetField(key string, value any) error {
-	if !strings.HasPrefix(key, "$.") {
+	if !strings.HasPrefix(key, "$") {
 		return fmt.Errorf("field path %q is not a $-rooted JSONPath", key)
 	}
-	parts := strings.SplitN(key[2:], ".", 2)
-	if len(parts) == 1 {
+	split, err := splitNamespace(key)
+	if err != nil {
+		return err
+	}
+	if !split.ok {
+		return fmt.Errorf("field path %q does not name a product member", key)
+	}
+	if split.rest == "" {
 		d, ok := value.(datamodel.Document)
 		if !ok {
-			return fmt.Errorf("set part %q: expected datamodel.Document, got %T", parts[0], value)
+			return fmt.Errorf("set part %q: expected datamodel.Document, got %T", split.ns, value)
 		}
-		p.parts[parts[0]] = d.Copy()
+		p.parts[split.ns] = d.Copy()
 		p.hash = ""
 		return nil
 	}
-	d, ok := p.parts[parts[0]]
+	d, ok := p.parts[split.ns]
 	if !ok {
-		return fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, parts[0])
+		return fmt.Errorf("%w: %s", datamodel.ErrFieldNotFound, split.ns)
 	}
 	p.hash = ""
-	return d.SetField("$."+parts[1], value)
+	return d.SetField(split.rest, value)
 }
 
 func (p *Product) Fields() map[string]any {

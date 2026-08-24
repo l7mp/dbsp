@@ -15,6 +15,7 @@ import (
 	"github.com/l7mp/dbsp/engine/expression"
 	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/operator"
+	"github.com/ohler55/ojg/jp"
 )
 
 // Compiler compiles aggregation pipelines into DBSP circuits.
@@ -670,6 +671,9 @@ func ensureMergedStream(compiled *circuit.Circuit, name string, producers []stri
 }
 
 type projectAssignment struct {
+	// path is the $-rooted JSONPath the assignment writes through
+	// unstructured.SetField; "" means the whole-document copy stage (the
+	// value's fields merge into the accumulator).
 	path string
 	expr expression.Expression
 }
@@ -697,12 +701,28 @@ func compileProjectExpression(args json.RawMessage, stageIndex int, stageOp stri
 			}
 			if key == "$." {
 				hasCopy = true
-				assignments = append(assignments, projectAssignment{path: "", expr: expr})
+				assignments = append(assignments, projectAssignment{expr: expr})
 				continue
 			}
+			// A bare name is the dotted Go-API convenience (dots traverse);
+			// a $-rooted key is used as it is, validated to be a chain of
+			// child fragments so the assignment names exactly one field.
 			path := key
-			if strings.HasPrefix(path, "$.") {
-				path = strings.TrimPrefix(path, "$.")
+			if !strings.HasPrefix(path, "$") {
+				path = "$." + path
+			}
+			target, err := jp.ParseString(path)
+			if err != nil {
+				return nil, wrapStageErr(stageIndex, stageOp, fmt.Sprintf("projection[%q]", key), rawExpr,
+					fmt.Errorf("invalid projection target %q: %w", key, err))
+			}
+			for _, frag := range target {
+				switch frag.(type) {
+				case jp.Root, jp.Child:
+				default:
+					return nil, wrapStageErr(stageIndex, stageOp, fmt.Sprintf("projection[%q]", key), rawExpr,
+						fmt.Errorf("projection target %q is not a chain of child fragments", key))
+				}
 			}
 			assignments = append(assignments, projectAssignment{path: path, expr: expr})
 		}
@@ -715,6 +735,7 @@ func compileProjectExpression(args json.RawMessage, stageIndex int, stageOp stri
 
 	return expression.NewCompiled(func(ctx *expression.EvalContext) (any, error) {
 		accum := map[string]any{}
+		doc := unstructured.Wrap(accum)
 		for _, asg := range assignments {
 			val, err := asg.expr.Evaluate(ctx)
 			if err != nil {
@@ -737,7 +758,9 @@ func compileProjectExpression(args json.RawMessage, stageIndex int, stageOp stri
 				}
 				continue
 			}
-			setNestedMap(accum, asg.path, val)
+			if err := doc.SetField(asg.path, val); err != nil {
+				return nil, err
+			}
 		}
 		if !hasCopy && len(assignments) == 0 {
 			return unstructured.New(map[string]any{}), nil
@@ -813,20 +836,5 @@ func compileGroupByOp(args json.RawMessage, stageIndex int, stageOp string) (ope
 
 	return op, nil
 }
-
-func setNestedMap(m map[string]any, path string, value any) {
-	parts := strings.SplitN(path, ".", 2)
-	if len(parts) == 1 {
-		m[path] = value
-		return
-	}
-	sub, ok := m[parts[0]].(map[string]any)
-	if !ok {
-		sub = map[string]any{}
-		m[parts[0]] = sub
-	}
-	setNestedMap(sub, parts[1], value)
-}
-
 
 var _ compiler.Compiler = (*Compiler)(nil)

@@ -125,6 +125,42 @@ var _ = Describe("Aggregation compiler parity", func() {
 		Expect(a).To(Equal(int64(2)))
 	})
 
+	It("evaluates project targets in any path spelling", func() {
+		exec, outID := makeExec([]string{"Pod"},
+			`[{"@project":[{"$['tls.crt']":"cert"},{"$.data['tls.key']":"key"},{"$['spec'].a":"$.spec.b"}]}]`)
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{
+			"spec": map[string]any{"b": int64(2)},
+		}), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
+		Expect(err).NotTo(HaveOccurred())
+		docs := collectDocs(outs[outID])
+		Expect(docs).To(HaveLen(1))
+		crt, err := docs[0].GetField(`$["tls.crt"]`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(crt).To(Equal("cert"))
+		key, err := docs[0].GetField(`$.data["tls.key"]`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(key).To(Equal("key"))
+		a, err := docs[0].GetField("$.spec.a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(a).To(Equal(int64(2)))
+	})
+
+	It("evaluates unwind on a bracket-form path", func() {
+		exec, outID := makeExec([]string{"Pod"}, `[{"@unwind":"$['spec'].items"}]`)
+		in := zset.New()
+		in.Insert(unstructured.New(map[string]any{
+			"metadata": map[string]any{"name": "p1"},
+			"spec":     map[string]any{"items": []any{"a", "b"}},
+		}), 1)
+
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_Pod": in})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(outs[outID].Size()).To(Equal(2))
+	})
+
 	It("evaluates project copy+override using $. key", func() {
 		exec, outID := makeExec([]string{"Pod"}, `[{"@project":[{"$.":"$."},{"$.metadata.name":"fixed"}]}]`)
 		in := zset.New()
@@ -731,7 +767,7 @@ var _ = Describe("Aggregation compiler parity", func() {
 		c := New(toIdentityBindings([]string{"Pod"}), toIdentityBindings([]string{"output"}))
 		_, err := c.CompileString(`[{"@unwind":{"path":"$.spec.list","index":"$.i"}}]`)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring(`"$.path" string`))
+		Expect(err.Error()).To(ContainSubstring("$-rooted JSONPath string"))
 	})
 
 	It("uses configured logical output name", func() {

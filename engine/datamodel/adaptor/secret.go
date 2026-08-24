@@ -3,15 +3,21 @@ package adaptor
 import (
 	"encoding/base64"
 	"fmt"
-	"strings"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
+	"github.com/ohler55/ojg/jp"
 )
 
-// isSecretDataPath reports whether a canonical $-rooted JSONPath addresses
-// a value under .data, both child forms: $.data.K and $["data"][...].
+// isSecretDataPath reports whether a $-rooted JSONPath addresses a value
+// under .data, in any child-fragment spelling ($.data.K, $["data"]["K"],
+// $.data["tls.crt"], ...).
 func isSecretDataPath(path string) bool {
-	return strings.HasPrefix(path, "$.data.") || strings.HasPrefix(path, `$["data"]`)
+	expr, err := jp.ParseString(path)
+	if err != nil || len(expr) < 3 {
+		return false
+	}
+	child, ok := expr[1].(jp.Child)
+	return ok && string(child) == "data"
 }
 
 // SecretDataAdaptor returns an adaptor that decodes/encodes Secret .data.* values.

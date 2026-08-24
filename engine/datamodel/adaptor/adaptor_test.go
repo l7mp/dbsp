@@ -56,6 +56,10 @@ var _ = Describe("SecretDataAdaptor", func() {
 		v, err := a.GetField(`$["data"]["tls.crt"]`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v).To(Equal("pem"))
+
+		v, err = a.GetField(`$.data["tls.crt"]`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(Equal("pem"))
 	})
 
 	It("leaves paths outside .data untouched", func() {

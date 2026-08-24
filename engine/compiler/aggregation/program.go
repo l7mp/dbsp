@@ -9,6 +9,7 @@ import (
 	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/internal/utils"
 	"github.com/l7mp/dbsp/engine/operator"
+	"github.com/ohler55/ojg/jp"
 
 	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/simple"
@@ -258,17 +259,21 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 		}
 		s.Projection = proj
 	case "@unwind":
-		// One form: a bare "$.path" string. Unwinding injects nothing;
+		// One form: a $-rooted JSONPath string. Unwinding injects nothing;
 		// pipelines that need the element order (or row-distinct outputs)
 		// pair the list with @enumerate before unwinding.
 		var path string
 		if err := json.Unmarshal(stage.Args, &path); err != nil {
 			return s, wrapStageErr(i, stage.Op, "path", stage.Args,
-				fmt.Errorf("argument must be a \"$.path\" string: %w", err))
+				fmt.Errorf("argument must be a $-rooted JSONPath string: %w", err))
 		}
-		if !strings.HasPrefix(path, "$.") {
+		if !strings.HasPrefix(path, "$") {
 			return s, wrapStageErr(i, stage.Op, "path", stage.Args,
-				fmt.Errorf("argument must start with '$.': %q", path))
+				fmt.Errorf("path %q is not a $-rooted JSONPath", path))
+		}
+		if _, err := jp.ParseString(path); err != nil {
+			return s, wrapStageErr(i, stage.Op, "path", stage.Args,
+				fmt.Errorf("invalid JSONPath %q: %w", path, err))
 		}
 		s.UnwindPath = path
 	case "@groupBy":
