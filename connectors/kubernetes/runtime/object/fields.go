@@ -14,10 +14,9 @@ const LastAppliedConfigAnnotation = "kubectl.kubernetes.io/last-applied-configur
 //
 // Kubernetes objects carry fields that belong to the API machinery rather than to the
 // controller. This table decides what the connector does with them; every reader and writer
-// consults it, so the rules cannot drift apart. There is a third class the table cannot express:
-// fields the connector must write but must not compute inside a circuit, because the value is a
-// clock read. Those are bound at the write boundary instead, and today the only one is the
-// lastTransitionTime of a status condition.
+// consults it, so the rules cannot drift apart. Everything else in an object is data: the
+// connector neither adds nor removes fields on either side, and a pipeline that needs a value it
+// cannot compute (a clock read) has no source for it here.
 var apiFields = []apiField{
 	// Server-side-apply bookkeeping: rewritten by every writer, large, and
 	// never data.
