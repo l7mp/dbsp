@@ -1235,6 +1235,38 @@ var _ = Describe("Time Operators", func() {
 	})
 })
 
+var _ = Describe("@append", func() {
+	It("concatenates lists in argument order", func() {
+		expr, err := dbsp.Compile([]byte(`{"@append": [{"@list": [1, 2]}, {"@list": [3]}, {"@list": []}, {"@list": [4, 5]}]}`))
+		Expect(err).NotTo(HaveOccurred())
+		result, err := expr.Evaluate(expression.NewContext(nil))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{int64(1), int64(2), int64(3), int64(4), int64(5)}))
+	})
+
+	It("reads its arguments from the document", func() {
+		expr, err := dbsp.Compile([]byte(`{"@append": ["$.set", "$.add"]}`))
+		Expect(err).NotTo(HaveOccurred())
+		doc := unstructured.New(map[string]any{"set": []any{"a"}, "add": []any{"b", "c"}})
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal([]any{"a", "b", "c"}))
+	})
+
+	It("rejects a non-list argument", func() {
+		expr, err := dbsp.Compile([]byte(`{"@append": [{"@list": [1]}, "scalar"]}`))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = expr.Evaluate(expression.NewContext(nil))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("@append[1]: argument must be a list"))
+	})
+
+	It("rejects fewer than two arguments", func() {
+		_, err := dbsp.Compile([]byte(`{"@append": [{"@list": [1]}]}`))
+		Expect(err).To(HaveOccurred())
+	})
+})
+
 var _ = Describe("Expression flags", func() {
 	DescribeTable("taint the parsed tree", func(src string, variant bool, culprit string) {
 		expr, err := dbsp.CompileString(src)

@@ -536,6 +536,20 @@ Reverse a list. A descending sort is `@reverse` of the ascending one:
 "@reverse": {"@sortByKey": ["$$.priority", "$.spec.rules"]}
 ```
 
+### `@append`
+
+Concatenates lists: the first argument followed by the elements of every further argument, like
+Go's `append(base, more...)`. Every argument must be a list.
+
+```yaml
+"@append":
+  - {"@map": [{"header": "$$.", "action": "set"}, "$.spec.set"]}
+  - {"@map": [{"header": "$$.", "action": "add"}, "$.spec.add"]}
+```
+
+This builds one list of header mutations from two differently mapped source lists. To append a
+single element, wrap it: `{"@append": ["$.items", {"@list": ["$.extra"]}]}`.
+
 ### `@len`
 
 Returns the length of a list, string, or map.

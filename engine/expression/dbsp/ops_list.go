@@ -379,6 +379,28 @@ func (e *minExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return minVal, nil
 }
 
+// appendExpr implements @append - concatenates lists: the first argument
+// followed by the elements of every further argument, like Go's
+// append(base, more...). Every argument must be a list.
+type appendExpr struct{ variadicOp }
+
+func (e *appendExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	result := []any{}
+	for i, arg := range e.args {
+		value, err := arg.Evaluate(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("@append[%d]: %w", i, err)
+		}
+		list, err := AsList(value)
+		if err != nil {
+			return nil, fmt.Errorf("@append[%d]: argument must be a list: %w", i, err)
+		}
+		result = append(result, list...)
+	}
+	ctx.Logger().V(8).Info("eval", "op", "@append", "result", result)
+	return result, nil
+}
+
 // lexMinExpr implements @lexmin - returns the lexicographically minimal element.
 type lexMinExpr struct{ variadicOp }
 
@@ -742,6 +764,16 @@ func init() {
 			return nil, fmt.Errorf("@max: %w", err)
 		}
 		return &maxExpr{variadicOp{"@max", list}}, nil
+	})
+	MustRegister("@append", func(args any) (Expression, error) {
+		list, err := asExprListOrSingle(args)
+		if err != nil {
+			return nil, fmt.Errorf("@append: %w", err)
+		}
+		if len(list) < 2 {
+			return nil, fmt.Errorf("@append: argument must be a list of at least two lists")
+		}
+		return &appendExpr{variadicOp{"@append", list}}, nil
 	})
 	MustRegister("@lexmin", func(args any) (Expression, error) {
 		list, err := asExprListOrSingle(args)
