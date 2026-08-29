@@ -21,9 +21,6 @@ func (e *nowExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-// Flags implements expression.Flagged: a clock read is time-variant.
-func (e *nowExpr) Flags() expression.Flags { return expression.TimeVariant }
-
 func init() {
 	MustRegister("@now", func(args any) (Expression, error) {
 		if err := utils.ValidateNullaryArgs(args, "@now"); err != nil {

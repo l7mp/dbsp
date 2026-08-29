@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/l7mp/dbsp/engine/circuit"
-	"github.com/l7mp/dbsp/engine/expression"
 	"github.com/l7mp/dbsp/engine/operator"
 )
 
@@ -45,21 +44,6 @@ type nodeMapping struct {
 //   - D^Δ = identity (bypass).
 //   - δ₀^Δ = δ₀.
 func (t *incrementalizer) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
-	// A time-variant expression (a clock read, a random draw) has no
-	// incremental form: the rules below assume every operator applies the
-	// same function at every step.
-	for _, node := range c.Nodes() {
-		eo, ok := node.Operator.(operator.ExpressionOperator)
-		if !ok {
-			continue
-		}
-		for _, e := range eo.Expressions() {
-			if culprit, variant := expression.TimeVariantCulprit(e); variant {
-				return nil, fmt.Errorf("incrementalizer: node %s: expression %s is not time-invariant", node.ID, culprit)
-			}
-		}
-	}
-
 	c, err := NewRewriter().Transform(c)
 	if err != nil {
 		return nil, fmt.Errorf("incrementalizer: rewrite pass: %w", err)

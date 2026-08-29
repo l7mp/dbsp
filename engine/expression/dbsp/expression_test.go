@@ -1267,33 +1267,6 @@ var _ = Describe("@append", func() {
 	})
 })
 
-var _ = Describe("Expression flags", func() {
-	DescribeTable("taint the parsed tree", func(src string, variant bool, culprit string) {
-		expr, err := dbsp.CompileString(src)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(expression.TimeInvariant(expr)).To(Equal(!variant))
-		name, found := expression.TimeVariantCulprit(expr)
-		Expect(found).To(Equal(variant))
-		Expect(name).To(Equal(culprit))
-		// A tainted tree marshals as its source, and the taint survives
-		// the round trip.
-		b, err := json.Marshal(expr)
-		Expect(err).NotTo(HaveOccurred())
-		again, err := dbsp.Compile(b)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(expression.TimeInvariant(again)).To(Equal(!variant))
-	},
-		Entry("@now at the root", `{"@now":null}`, true, "@now"),
-		Entry("@rnd at the root", `{"@rnd":[1,3]}`, true, "@rnd"),
-		Entry("@now in a branch", `{"@cond":[true,{"@now":null},"x"]}`, true, "@now"),
-		Entry("@now in a dict literal", `{"metadata":{"annotations":{"at":{"@now":null}}}}`, true, "@now"),
-		Entry("@rnd in a list", `{"@list":[1,{"@rnd":[1,3]}]}`, true, "@rnd"),
-		Entry("@now under a map", `{"@map":[{"t":{"@now":null}},"$.items"]}`, true, "@now"),
-		Entry("a pure tree", `{"@concat":["$.a",{"@hash":"$.b"}]}`, false, ""),
-		Entry("a literal that looks like an operator", `{"@literal":{"@now":null}}`, false, ""),
-	)
-})
-
 var _ = Describe("Nullary Operator Arguments", func() {
 	DescribeTable("rejects non-empty object arguments", func(expr string) {
 		_, err := dbsp.CompileString(expr)

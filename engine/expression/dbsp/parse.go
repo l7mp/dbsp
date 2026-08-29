@@ -4,17 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/l7mp/dbsp/engine/expression"
 )
 
 // Parser converts JSON to expression trees.
 type Parser struct {
 	registry *Registry
-	// flags collects the flags of every operator instantiated by the
-	// current Parse call; culprit names the first one that set any.
-	flags   expression.Flags
-	culprit string
 }
 
 // NewParser creates a parser with the default registry.
@@ -33,15 +27,7 @@ func (p *Parser) Parse(data []byte) (Expression, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
-	p.flags, p.culprit = 0, ""
-	expr, err := p.parseValue(raw)
-	if err != nil {
-		return nil, err
-	}
-	if p.flags != 0 {
-		return expression.NewTaint(expr, p.flags, p.culprit), nil
-	}
-	return expr, nil
+	return p.parseValue(raw)
 }
 
 // splitPathRoot recognizes a rooted path: a "$" (document) or "$$"
@@ -238,15 +224,5 @@ func (p *Parser) callFactory(name string, args any) (Expression, error) {
 	if !ok {
 		return nil, fmt.Errorf("built-in operator %s not registered", name)
 	}
-	expr, err := factory(args)
-	if err != nil {
-		return nil, err
-	}
-	if f, ok := expr.(expression.Flagged); ok && f.Flags() != 0 {
-		if p.flags == 0 {
-			p.culprit = name
-		}
-		p.flags |= f.Flags()
-	}
-	return expr, nil
+	return factory(args)
 }

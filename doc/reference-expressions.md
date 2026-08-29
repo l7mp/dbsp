@@ -750,11 +750,8 @@ inclusive.
 "@rnd": [1, 3]
 ```
 
-`@rnd` is time-variant: its value depends on the evaluation, not on the inputs. It is fine in a
-snapshot circuit and the Incrementalizer rejects a circuit that contains it (`expression @rnd(...) is not
-time-invariant`): a row carrying a random value cannot be retracted by recomputation. A stable
-pseudo-random value that survives incrementalization is `@hash` of a stable field such as
-`metadata.uid`.
+This is mainly useful in examples, synthetic data, or quick experiments rather than deterministic
+production logic.
 
 ### `@abs`
 
@@ -793,14 +790,6 @@ metadata:
     reconciled-at: {"@now": null}
 ```
 
-`@now` is time-variant: its value depends on when it is evaluated, not on the inputs. It is fine
-in a snapshot circuit, where every step recomputes every value, and the Incrementalizer rejects a
-circuit that contains it (`expression @now is not time-invariant`): in an incremental circuit a row
-is retracted by recomputing the function that inserted it, and a different clock at retraction
-time produces a row that never cancels the insertion. A value that must change on a transition
-(a status condition's `lastTransitionTime`) is taken from data the input already carries, such as
-the object's `creationTimestamp`.
-
 ## Custom operators
 
 The operator set is extensible: an embedder can register additional operators backed by host
@@ -832,8 +821,7 @@ Two things to keep in mind:
 
 - **Callbacks must be pure functions of their arguments.** A custom operator runs inside
   incremental circuit operators, so a stateful or non-deterministic callback breaks retraction
-  symmetry exactly like `@now` in a projection. The built-in time-variant operators (`@now`,
-  `@rnd`) are rejected by the Incrementalizer; for callbacks this is not enforced.
+  symmetry exactly like `@now` in a group key. This is not enforced.
 - **Callbacks run on the JS event loop.** Circuit steps execute on their own goroutine and block
   until the event loop services the call, so the function must be a plain synchronous
   transformation; it must never wait on circuit output.

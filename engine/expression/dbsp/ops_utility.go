@@ -91,9 +91,6 @@ func (e *rndExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
-// Flags implements expression.Flagged: a random draw is time-variant.
-func (e *rndExpr) Flags() expression.Flags { return expression.TimeVariant }
-
 // concatExpr implements @concat - concatenates strings.
 type concatExpr struct{ variadicOp }
 
