@@ -750,8 +750,9 @@ inclusive.
 "@rnd": [1, 3]
 ```
 
-This is mainly useful in examples, synthetic data, or quick experiments rather than deterministic
-production logic.
+Note that `@rnd` is time-variant: its value depends on when it is evaluated, not on the inputs. Use
+in a snapshot circuit is safe, but in incremental circuits `@rnd` must always be protected with a
+[`@stamp`](reference-aggregations.md#assign-once-fields-stamp) operator.
 
 ### `@abs`
 
@@ -776,19 +777,16 @@ These are useful when converting floating-point ratios into bucket or threshold 
 
 ### `@now`
 
-Returns the current UTC timestamp in RFC3339 format.
+Returns the current UTC timestamp in RFC3339 format, frozen for the duration of a circuit step:
+every expression evaluated in one step sees the same clock.
 
 ```yaml
 "@now": null
 ```
 
-The common use is to stamp generated output with a reconciliation time.
-
-```yaml
-metadata:
-  annotations:
-    reconciled-at: {"@now": null}
-```
+Note that `@now` is time-variant: its value depends on when it is evaluated, not on the inputs. Use
+in a snapshot circuit is safe, but in incremental circuits `@now` must always be protected with a
+[`@stamp`](reference-aggregations.md#assign-once-fields-stamp) operator.
 
 ## Custom operators
 
@@ -821,7 +819,8 @@ Two things to keep in mind:
 
 - **Callbacks must be pure functions of their arguments.** A custom operator runs inside
   incremental circuit operators, so a stateful or non-deterministic callback breaks retraction
-  symmetry exactly like `@now` in a group key. This is not enforced.
+  symmetry exactly like `@now` in a projection. Sample such values once per key with
+  [`@stamp`](reference-aggregations.md#assign-once-fields-stamp). This is not enforced.
 - **Callbacks run on the JS event loop.** Circuit steps execute on their own goroutine and block
   until the event loop services the call, so the function must be a plain synchronous
   transformation; it must never wait on circuit output.

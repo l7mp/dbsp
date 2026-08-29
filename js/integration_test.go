@@ -237,6 +237,41 @@ publish("once-out", first);
 		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
 	})
 
+	It("compiles @stamp pipelines and holds the stamp across an edit", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("stamp-collector", vm.runtime, "stamp-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const c = aggregate.compile([
+  {"@stamp": [["$.obj", "$.status"], {"$.lastTransitionTime": {"@now": null}}]},
+], { inputs: "stamp-in", outputs: ["stamp-out"] });
+c.transform({ name: "Incrementalizer" });
+c.commit();
+publish("stamp-in", [[{obj: "x", status: "False", reason: "Init"}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+		Eventually(func() int { return len(collector.Snapshot()) }, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+		first := collector.Snapshot()[0].Data.Entries()
+		Expect(first).To(HaveLen(1))
+		stamp, err := first[0].Document.GetField("$.lastTransitionTime")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stamp).To(MatchRegexp(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`))
+
+		// A reason edit keeps the key: both edges carry the held stamp.
+		Expect(runScript(vm, `publish("stamp-in", [[{obj: "x", status: "False", reason: "Init"}, -1], [{obj: "x", status: "False", reason: "Waiting"}, 1]]);`)).To(Succeed())
+		Eventually(func() int { return len(collector.Snapshot()) }, 2*time.Second, 10*time.Millisecond).Should(Equal(2))
+		for _, e := range collector.Snapshot()[1].Data.Entries() {
+			v, err := e.Document.GetField("$.lastTransitionTime")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(v).To(Equal(stamp))
+		}
+	})
+
 	It("subscribe.then receives events from topic", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

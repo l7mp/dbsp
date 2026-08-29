@@ -89,9 +89,10 @@ produced by the previous stage. The
 [`@select`](reference-aggregations.md#filtering-select),
 [`@project`](reference-aggregations.md#reshaping-project),
 [`@unwind`](reference-aggregations.md#expanding-lists-unwind),
-[`@distinct`](reference-aggregations.md#deduplication-distinct), and
-[`@groupBy`](reference-aggregations.md#grouping-groupby) stages are covered in the aggregation
-reference.
+[`@distinct`](reference-aggregations.md#deduplication-distinct),
+[`@groupBy`](reference-aggregations.md#grouping-groupby), and
+[`@stamp`](reference-aggregations.md#assign-once-fields-stamp) stages are covered in the
+aggregation reference.
 
 ```js
 const c = aggregate.compile([
@@ -171,7 +172,9 @@ Available expressions in this implementation:
 - **List**: The [list operators](reference-expressions.md#list-operators) include `@len`, `@in`, `@map`, `@filter`, `@sortBy`, `@sum`, `@min`, and `@max`.
 - **Conditional**: The [`@cond`](reference-expressions.md#cond) operator is a ternary if-then-else: `{ "@cond": [test, true-branch, false-branch] }`.
 - **Null handling**: The [null, SQL boolean, and utility operators](reference-expressions.md#null-sql-boolean-and-utility-operators) include `@isnull`, `@isnil`, and `@nil`.
-- **Time**: The [`@now`](reference-expressions.md#now) operator produces a timestamp.
+- **Time**: The [`@now`](reference-expressions.md#now) operator produces a timestamp; fields that
+  must remember when something happened sample it through the
+  [`@stamp`](reference-aggregations.md#assign-once-fields-stamp) stage.
 
 ## A Kubernetes controller
 

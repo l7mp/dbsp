@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/datamodel"
@@ -615,6 +616,59 @@ var _ = Describe("Aggregation compiler parity", func() {
 		_, err := c.CompileString(`[{"@gather":["$.metadata.namespace","$.spec.a"]}]`)
 		Expect(err).To(HaveOccurred())
 	})
+
+	It("supports @stamp: samples once per key, holds across edits, restamps on a flip", func() {
+		exec, outID := makeExec([]string{"cond"}, `[{"@stamp": [["$.obj", "$.status"], {"$.lastTransitionTime": {"@now": null}}]}]`)
+		clock := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+		exec.SetClock(func() time.Time { return clock })
+		cond := func(status, reason string) datamodel.Document {
+			return unstructured.New(map[string]any{"obj": "x", "status": status, "reason": reason})
+		}
+		stampOf := func(outs map[string]zset.ZSet, status, reason string) any {
+			GinkgoHelper()
+			for _, d := range collectDocs(outs[outID]) {
+				s, _ := d.GetField("$.status")
+				r, _ := d.GetField("$.reason")
+				if s == status && r == reason {
+					v, err := d.GetField("$.lastTransitionTime")
+					Expect(err).NotTo(HaveOccurred())
+					return v
+				}
+			}
+			Fail(fmt.Sprintf("no row %s/%s in %s", status, reason, outs[outID].String()))
+			return nil
+		}
+
+		// Snapshot circuit: the level is re-fed every step, the clock moves.
+		level := zset.New().WithElems(zset.Elem{Document: cond("False", "Init"), Weight: 1})
+		outs, err := exec.Execute(map[string]zset.ZSet{"input_cond": level})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stampOf(outs, "False", "Init")).To(Equal("2026-01-01T10:00:00Z"))
+
+		clock = clock.Add(time.Minute)
+		level = zset.New().WithElems(zset.Elem{Document: cond("False", "Waiting"), Weight: 1})
+		outs, err = exec.Execute(map[string]zset.ZSet{"input_cond": level})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stampOf(outs, "False", "Waiting")).To(Equal("2026-01-01T10:00:00Z"))
+
+		clock = clock.Add(time.Minute)
+		level = zset.New().WithElems(zset.Elem{Document: cond("True", "Ok"), Weight: 1})
+		outs, err = exec.Execute(map[string]zset.ZSet{"input_cond": level})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stampOf(outs, "True", "Ok")).To(Equal("2026-01-01T10:02:00Z"))
+	})
+
+	DescribeTable("rejects malformed @stamp stages", func(pipeline, msg string) {
+		c := New(toIdentityBindings([]string{"cond"}), toIdentityBindings([]string{"output"}))
+		_, err := c.CompileString(pipeline)
+		Expect(err).To(MatchError(ContainSubstring(msg)))
+	},
+		Entry("missing fields", `[{"@stamp": ["$.obj"]}]`, "argument must be [keyExpr"),
+		Entry("null key", `[{"@stamp": [null, {"$.t": {"@now": null}}]}]`, "key expression is required"),
+		Entry("empty fields", `[{"@stamp": ["$.obj", {}]}]`, "non-empty object"),
+		Entry("bare field name", `[{"@stamp": ["$.obj", {"t": {"@now": null}}]}]`, "not a $-rooted JSONPath"),
+		Entry("options not supported", `[{"@stamp": ["$.obj", {"$.t": null}, {"count": true}]}]`, "argument must be [keyExpr"),
+	)
 
 	It("supports @groupBy bag semantics", func() {
 		exec, outID := makeExec([]string{"pod"}, `[{"@groupBy":["$.metadata.namespace","$.spec.a"]}]`)

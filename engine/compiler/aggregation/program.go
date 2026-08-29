@@ -45,6 +45,7 @@ type stageSpec struct {
 	Projection expression.Expression
 	UnwindPath string
 	GroupBy    operator.Operator
+	Stamp      operator.Operator
 	Distinct   bool
 }
 
@@ -282,6 +283,12 @@ func parseStage(i int, stage PipelineOp) (stageSpec, error) {
 			return s, err
 		}
 		s.GroupBy = op
+	case "@stamp":
+		op, err := compileStampOp(stage.Args, i, stage.Op)
+		if err != nil {
+			return s, err
+		}
+		s.Stamp = op
 	case "@distinct":
 		if err := utils.ValidateNullaryArgs(stage.Args, stage.Op); err != nil {
 			return s, wrapStageErr(i, stage.Op, "arguments", stage.Args, err)

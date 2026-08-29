@@ -386,6 +386,13 @@ func (c *Compiler) compileBranch(compiled *circuit.Circuit, b branchSpec, stream
 			if err := compiled.AddNode(circuit.Op(id, stage.GroupBy)); err != nil {
 				return "", err
 			}
+		case "@stamp":
+			if stage.Stamp == nil {
+				return "", wrapStageErr(stage.Index, stage.Op, "arguments", stage.RawArgs, fmt.Errorf("missing parsed stamp op"))
+			}
+			if err := compiled.AddNode(circuit.Op(id, stage.Stamp)); err != nil {
+				return "", err
+			}
 		case "@distinct":
 			if !stage.Distinct {
 				return "", wrapStageErr(stage.Index, stage.Op, "arguments", stage.RawArgs, fmt.Errorf("missing parsed distinct op"))
@@ -835,6 +842,54 @@ func compileGroupByOp(args json.RawMessage, stageIndex int, stageOp string) (ope
 	}
 
 	return op, nil
+}
+
+// compileStampOp compiles @stamp arguments into an engine/operator Stamp.
+//
+// Argument form: [keyExpr, fields], where fields is a non-empty object
+// mapping "$.path" targets to value expressions (null holds the value the
+// document carries). The key is evaluated against the unstamped document,
+// like the @groupBy key.
+func compileStampOp(args json.RawMessage, stageIndex int, stageOp string) (operator.Operator, error) {
+	var list []json.RawMessage
+	if err := json.Unmarshal(args, &list); err != nil || len(list) != 2 {
+		return nil, wrapStageErr(stageIndex, stageOp, "arguments", args,
+			fmt.Errorf("argument must be [keyExpr, {\"$.path\": valueExpr, ...}]"))
+	}
+	if string(list[0]) == "null" {
+		return nil, wrapStageErr(stageIndex, stageOp, "keyExpr", list[0],
+			fmt.Errorf("stamp key expression is required (null is not allowed)"))
+	}
+	keyExpr, err := dbspexpr.NewParser().Parse(list[0])
+	if err != nil {
+		return nil, wrapStageErr(stageIndex, stageOp, "keyExpr", list[0], err)
+	}
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(list[1], &rawFields); err != nil || len(rawFields) == 0 {
+		return nil, wrapStageErr(stageIndex, stageOp, "fields", list[1],
+			fmt.Errorf("fields must be a non-empty object of \"$.path\": valueExpr"))
+	}
+	fields := make(map[string]expression.Expression, len(rawFields))
+	for path, raw := range rawFields {
+		if !strings.HasPrefix(path, "$.") {
+			return nil, wrapStageErr(stageIndex, stageOp, "fields", list[1],
+				fmt.Errorf("field %q is not a $-rooted JSONPath", path))
+		}
+		if _, err := jp.ParseString(path); err != nil {
+			return nil, wrapStageErr(stageIndex, stageOp, "fields", list[1],
+				fmt.Errorf("invalid JSONPath %q: %w", path, err))
+		}
+		if string(raw) == "null" {
+			fields[path] = nil
+			continue
+		}
+		e, err := dbspexpr.NewParser().Parse(raw)
+		if err != nil {
+			return nil, wrapStageErr(stageIndex, stageOp, path, raw, err)
+		}
+		fields[path] = e
+	}
+	return operator.NewStamp(keyExpr, fields), nil
 }
 
 var _ compiler.Compiler = (*Compiler)(nil)

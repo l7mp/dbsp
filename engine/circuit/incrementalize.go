@@ -89,6 +89,17 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 		incrID := incrementalID(id)
 		result.AddNode(Op(incrID, incrOp))
 		return incrID, incrID
+	case op.Kind() == operator.KindStamp:
+		// Stamp = ∫ ∘ StampIncremental ∘ D, so the generic sandwich would be
+		// correct; the delta form avoids materializing the input integral
+		// (it holds one entry per live key instead).
+		st, ok := op.(*operator.Stamp)
+		if !ok {
+			return "", ""
+		}
+		incrID := incrementalID(id)
+		result.AddNode(Op(incrID, st.Incremental()))
+		return incrID, incrID
 	case op.Kind() == operator.KindEquiJoin:
 		// The indexed join incrementalizes into a single stateful operator
 		// that keeps both sides indexed by join key (no generic bilinear

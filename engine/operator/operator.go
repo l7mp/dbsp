@@ -103,6 +103,8 @@ const (
 	KindDistinct           // Distinct: set conversion.
 	KindGroupBy            // GroupBy: stateless grouping.
 	KindGroupByIncremental // GroupByIncremental: stateful delta grouping.
+	KindStamp              // Stamp: assign-once fields, snapshot form.
+	KindStampIncremental   // StampIncremental: assign-once fields, delta form.
 
 	// Indexed join (incrementalized into a dedicated stateful operator).
 	KindEquiJoin  // EquiJoin: key-equality join.
@@ -148,6 +150,10 @@ func (k Kind) String() string {
 		return "group_by"
 	case KindGroupByIncremental:
 		return "group_by_incremental"
+	case KindStamp:
+		return "stamp"
+	case KindStampIncremental:
+		return "stamp_incremental"
 	case KindEquiJoin:
 		return "equi_join"
 	case KindEquiJoinH:

@@ -74,6 +74,10 @@ internally and emitting only the change in the output. Note that certain aggrega
 optimized and DBSP does its best to make typical aggregations (e.g., group-by) much more efficient
 than the snapshot version.
 
+One kind of field sits outside this classification altogether: the
+[`@stamp`](reference-aggregations.md#assign-once-fields-stamp) operator is a special operator to
+handle time-variant transformations (timestamps, random draws, etc).
+
 ## The incrementalization recipe
 
 The snapshot model defines what the correct output is. The incremental model computes it

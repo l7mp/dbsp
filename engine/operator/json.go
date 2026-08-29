@@ -12,19 +12,20 @@ import (
 // UnmarshalJSON so it can be embedded directly in operator structs whose only
 // wire representation is a {"type":"..."} object (no extra fields).
 type jsonOp struct {
-	Type       string          `json:"type"`
-	Coeffs     []int           `json:"coeffs,omitempty"`
-	Predicate  json.RawMessage `json:"predicate,omitempty"`
-	Projection json.RawMessage `json:"projection,omitempty"`
-	Field      string          `json:"field,omitempty"`
-	SumField   string          `json:"sumField,omitempty"`
-	KeyExpr    json.RawMessage `json:"keyExpr,omitempty"`
-	ValueExpr  json.RawMessage `json:"valueExpr,omitempty"`
-	Distinct   bool            `json:"distinct,omitempty"`
-	LeftNS     string          `json:"leftNs,omitempty"`
-	RightNS    string          `json:"rightNs,omitempty"`
-	LeftKey    json.RawMessage `json:"leftKey,omitempty"`
-	RightKey   json.RawMessage `json:"rightKey,omitempty"`
+	Type       string                     `json:"type"`
+	Coeffs     []int                      `json:"coeffs,omitempty"`
+	Predicate  json.RawMessage            `json:"predicate,omitempty"`
+	Projection json.RawMessage            `json:"projection,omitempty"`
+	Field      string                     `json:"field,omitempty"`
+	SumField   string                     `json:"sumField,omitempty"`
+	KeyExpr    json.RawMessage            `json:"keyExpr,omitempty"`
+	ValueExpr  json.RawMessage            `json:"valueExpr,omitempty"`
+	Distinct   bool                       `json:"distinct,omitempty"`
+	Fields     map[string]json.RawMessage `json:"fields,omitempty"`
+	LeftNS     string                     `json:"leftNs,omitempty"`
+	RightNS    string                     `json:"rightNs,omitempty"`
+	LeftKey    json.RawMessage            `json:"leftKey,omitempty"`
+	RightKey   json.RawMessage            `json:"rightKey,omitempty"`
 }
 
 // MarshalJSON implements json.Marshaler. Uses a local type alias to avoid
@@ -208,6 +209,15 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 			return nil, fmt.Errorf("group_by_incremental operator: compile valueExpr: %w", err)
 		}
 		return NewGroupByIncremental(keyExpr, valueExpr).WithDistinct(p.Distinct), nil
+	case "stamp", "stamp_incremental":
+		keyExpr, fields, err := unmarshalStamp(p.Type, p)
+		if err != nil {
+			return nil, fmt.Errorf("%s operator: %w", p.Type, err)
+		}
+		if p.Type == "stamp_incremental" {
+			return NewStampIncremental(keyExpr, fields), nil
+		}
+		return NewStamp(keyExpr, fields), nil
 	case "select":
 		if len(p.Predicate) == 0 {
 			return nil, fmt.Errorf("select operator: predicate required")

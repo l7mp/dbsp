@@ -78,6 +78,7 @@ type Executor struct {
 	schedule []string
 	logger   logr.Logger
 	round    uint64
+	clock    func() time.Time
 }
 
 // ObserverFunc receives callbacks during execution.
@@ -104,6 +105,10 @@ func New(c *circuit.Circuit, log logr.Logger) (*Executor, error) {
 	}, nil
 }
 
+// SetClock replaces the wall clock that stamps ExecContext.Now; nil restores
+// time.Now. The round clock is frozen for the duration of a step.
+func (e *Executor) SetClock(clock func() time.Time) { e.clock = clock }
+
 // Execute runs one step of the circuit with the given inputs.
 func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, error) {
 	return e.ExecuteWithObserver(inputs, nil)
@@ -112,9 +117,13 @@ func (e *Executor) Execute(inputs map[string]zset.ZSet) (map[string]zset.ZSet, e
 // ExecuteWithObserver runs one step of the circuit with optional callbacks.
 func (e *Executor) ExecuteWithObserver(inputs map[string]zset.ZSet, observer ObserverFunc) (map[string]zset.ZSet, error) {
 	e.round++
+	now := time.Now()
+	if e.clock != nil {
+		now = e.clock()
+	}
 	execCtx := &operator.ExecContext{
 		RoundID: e.round,
-		Now:     time.Now().UTC().Format(time.RFC3339),
+		Now:     now.UTC().Format(time.RFC3339),
 	}
 
 	// Inject inputs: set each input node's stored value before execution.

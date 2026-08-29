@@ -1,18 +1,14 @@
 # Reference: Aggregation Pipelines
 
-Aggregation pipelines are the declarative query language used by the DBSP aggregation compiler.
-They appear in the JavaScript runtime, in Δ-controller specs, and in test and example programs
-across this repository.
+Aggregation pipelines are the preferred declarative query language used by the DBSP aggregation
+compiler.
 
 An aggregation pipeline is an ordered list of stages. Each stage reads the stream produced by the
-previous stage and emits a new stream. In the single-input case, this feels like a document
-transformation pipeline. In the multi-input case, the first stage is usually a join that turns
-several input streams into one combined stream.
+previous stage, applies a DBSP operator to it, and emits a new stream. In the single-input case,
+this feels like a document transformation pipeline. In the multi-input case, the first stage is
+usually a join that turns several input streams into one combined stream.
 
-For the Δ-controller view of pipelines, see `apps-dctl-sources-targets-pipeline.md`. This page is
-the precise reference for the pipeline language supported by the current compiler.
-
-## Shape of a pipeline
+## Pipelines
 
 A pipeline can be written in three useful forms.
 
@@ -25,7 +21,7 @@ pipeline:
       name: "$.metadata.name"
 ```
 
-The common form is a list of stages:
+The common form is a list of stages, each an operator plus arguments:
 
 ```yaml
 pipeline:
@@ -54,33 +50,14 @@ not by most Δ-controller examples.
 ]
 ```
 
-## Mental model
-
-It helps to think of the pipeline as working on one document at a time.
-
-- `@select` decides whether the document stays in the stream.
-- `@project` reshapes it.
-- `@unwind` turns one document into many.
-- `@distinct` collapses duplicates into set membership.
-- `@groupBy` turns many documents into grouped summary documents.
-- `@join` combines several source streams into one stream of compound documents.
-
-```mermaid
-flowchart LR
-    A["Input stream or streams"] --> B["join or single source"]
-    B --> C["select"]
-    C --> D["project"]
-    D --> E["unwind or groupBy"]
-    E --> F["Output stream"]
-```
+The important rule is that the branch dependency graph must be acyclic. A branch may depend on an
+earlier branch output, but cyclic branch wiring is rejected.
 
 ## Inputs, outputs, and branches
 
 The compiler supports two directive stages that are only needed in explicit multi-branch programs.
 
-### `@inputs`
-
-Selects which named logical streams a branch reads from.
+`@inputs` selects which named logical streams a branch reads from.
 
 ```yaml
 {"@inputs": ["pods", "services"]}
@@ -89,9 +66,7 @@ Selects which named logical streams a branch reads from.
 If you are compiling a single pipeline with one configured input, you normally do not need this at
 all. It becomes useful when you explicitly wire several branches together.
 
-### `@output`
-
-Names the logical output stream produced by a branch.
+`@output` names the logical output stream produced by a branch.
 
 ```yaml
 {"@output": "service-view"}
@@ -101,8 +76,9 @@ Again, in the simple single-branch case this is usually implied by the configure
 
 ## Multi-source pipelines: `@join`
 
-`@join` is the only stage that can combine several input streams into one stream. In the current
-compiler, if a branch reads from more than one input, `@join` must be the first non-directive stage.
+The `@join` operator is the only operator that can combine several input streams into a single
+stream. In the current compiler, if a branch reads from more than one input, `@join` must be the
+first non-directive stage.
 
 ```yaml
 pipeline:
@@ -130,16 +106,9 @@ dep:
     name: dep-1
 ```
 
-The join stage conceptually takes the Cartesian product of the inputs and keeps only the pairs or
-tuples whose predicate evaluates to `true`.
-
-This means:
-
-- with two inputs, `@join` behaves like an inner join,
-- with three or more inputs, the predicate usually becomes an `@and` of several equality checks,
-- after the join, later stages see one merged document, not several separate streams.
-
-Example with three inputs:
+The join operator conceptually takes the Cartesian product of the inputs and keeps only the pairs
+or tuples whose predicate evaluates to `true`. With two inputs `@join` behaves like an inner join,
+and with three or more inputs the predicate usually becomes an `@and` of several equality checks.
 
 ```yaml
 "@join":
@@ -151,17 +120,65 @@ Example with three inputs:
 That reads naturally as: join a deployment, pod, and ReplicaSet when they all belong to the same
 deployment name.
 
+The two-element form `["@join": [predicate, options]]` takes an options object next to the
+predicate.
+
+The `soft` option turns the named inputs into left-join sides: rows of the other (hard) inputs are
+kept even when no partner matches, with the soft input's namespace set to `null` (test it with
+`@isnull`, or default fields with `@definedOr`).
+
+```yaml
+"@join":
+  - {"@eq": ["$.listeners.gateway", "$.counts.key"]}
+  - soft: [counts]
+```
+
+The `index` option makes a join indexed: it names exactly two participants and gives each a
+join-key expression, evaluated against that input's own document (so `$.` is the Service, the
+Gateway, not the compound join document). The pair is joined by key equality through a hash index
+instead of filtering the full Cartesian product, and after incrementalization the index is
+persistent: a delta on either side only touches the rows with the same key, instead of re-scanning
+the whole other side. This is usually much faster than the non-indexed form; otherwise, indexed and
+the non-indexed results are equivalent.
+
+Semantically the index adds a key-equality condition `AND`-ed with the predicate, so the equality
+it expresses can be dropped from the predicate. In the example below the gw-gwc equality lives
+entirely in the index and the predicate carries only the residual controller-name filter (use
+`true` as the predicate when nothing is left):
+
+```yaml
+"@join":
+  - {"@eq": ["$.gwc.spec.controllerName", "example.com/our-controller"]}
+  - index:
+      gw: "$.spec.gatewayClassName"      # gw.spec.gatewayClassName ==
+      gwc: "$.metadata.name"             #   gwc.metadata.name
+```
+ Keys may be arbitrary expressions, including
+composite objects: two keys are equal when their canonical serializations are equal, so both sides
+should build the same shape:
+
+```yaml
+index:
+  backends: {name: "$.backendService.name", namespace: "$.backendService.namespace"}
+  svcports: {name: "$.service.name", namespace: "$.service.namespace"}
+```
+
+`index` composes with `soft` (the indexed pair may be the hard/soft pair of a left join), and with
+three or more participants it accelerates the one join site where the two named inputs meet; the
+remaining sites stay Cartesian. Rows whose key expression does not resolve simply never match,
+mirroring the field-not-found-is-false convention of predicates.
+
 ## Filtering: `@select`
 
-`@select` keeps only the documents whose predicate evaluates to `true`. The surviving documents pass
-through unchanged.
+The `@select` operator keeps only the documents whose predicate evaluates to `true`. The surviving
+documents pass through unchanged.
 
 ```yaml
 "@select":
   "@gt": ["$.spec.replicas", 3]
 ```
 
-This means “let only large deployments through”. If the input object is:
+This means "let only large deployments through". If the input object is:
 
 ```yaml
 metadata:
@@ -172,51 +189,36 @@ spec:
 
 then the document survives. If `replicas` is `2`, it is dropped.
 
-Another useful example is filtering after a join:
-
-```yaml
-- "@join":
-    "@eq": ["$.dep.metadata.name", "$.pod.spec.parent"]
-- "@select":
-    "@eq": ["$.pod.metadata.namespace", "default"]
-```
-
-This first builds deployment or pod pairs, then keeps only the ones whose pod is in the `default`
-namespace.
-
-One implementation detail matters here: if a field is missing during `@select`, the compiler treats
-that predicate result as `false`, so the document is simply filtered out.
+Note that if a field is missing during `@select`, the compiler treats that predicate result as
+`false`, so the document is simply filtered out.
 
 ## Reshaping: `@project`
 
-`@project` is the main shape-changing stage. It takes the current document and produces a new one.
+The `@project` operator is the main shape-changing operator. It takes the current document and
+produces a new one.
 
 There are two modes: object construction and sequential projection.
 
-### Object construction
-
-The most common form is an object whose values are expressions.
+The most common form contains only a single projection:
 
 ```yaml
 "@project":
   metadata:
-    name: "$.metadata.name"
-    namespace: "$.metadata.namespace"
-  node: "$.spec.nodeName"
+    name: "$.name"
+    namespace: "$.namespace"
+  node: "$.nodeName"
 ```
 
 If the input is:
 
 ```yaml
-metadata:
-  name: pod-a
-  namespace: default
-spec:
-  nodeName: node-1
-  restartPolicy: Always
+name: pod-a
+namespace: default
+nodeName: node-1
+restartPolicy: Always
 ```
 
-then the output is roughly:
+then the output is:
 
 ```yaml
 metadata:
@@ -228,11 +230,7 @@ node: node-1
 The important rule is that `@project` does not preserve fields automatically. If you do not copy a
 field, it is gone from the result.
 
-That is why most useful projections explicitly rebuild `metadata.name` and `metadata.namespace`.
-
-### Sequential projection
-
-The other form is a list of small object fragments applied in order.
+The other form is a list of projections applied in order.
 
 ```yaml
 "@project":
@@ -241,25 +239,14 @@ The other form is a list of small object fragments applied in order.
   - {"$.spec.done": true}
 ```
 
-This starts from a full copy of the input document, then overrides or adds a few fields.
-
-This is often easier to read than rebuilding a large object from scratch when most of the original
-document should stay intact.
-
-Another example is targeted construction without copying the whole source:
-
-```yaml
-"@project":
-  - {metadata: {name: name2}}
-  - {"$.metadata.namespace": default2}
-  - {"$.spec.a": "$.spec.b"}
-```
-
-This uses successive fragments to build the output object step by step.
+This starts from a full copy of the input document, then overrides or adds a few fields. This is
+often easier to read than rebuilding a large object from scratch when most of the original document
+should stay intact.
 
 ## Expanding lists: `@unwind`
 
-`@unwind` takes one document containing a list field and emits one output document per list item.
+The `@unwind` operator takes one document containing a list field and emits one output document per
+list item.
 
 ```yaml
 "@unwind": "$.spec.ports"
@@ -276,31 +263,17 @@ spec:
     - {name: https, port: 443}
 ```
 
-then the stage emits two documents. In each output document, `spec.ports` is replaced by one single
-port object. Nothing else is touched: the stage injects no bookkeeping and rewrites no fields.
+then the operator emits two documents. In each output document, `spec.ports` is replaced by one
+single port object. Nothing else is touched: the operator injects no bookkeeping and rewrites no
+fields. 
 
 Note that equal rows merge: When two output documents come out identical (duplicate elements in one
 list, or two inputs that differ only inside the unwound field), their weights add up into a single
-Z-set entry. The arithmetic stays exact (retracting one source subtracts its contribution), but
-downstream consumers that treat documents as distinct objects, most importantly Kubernetes-style
-targets keyed by `metadata.name`, see one object where the application means several. Unwound rows
-that materialize as named objects must therefore derive a distinguishing name explicitly, from
-whatever identifies the element (a port number, a rule position):
-
-```yaml
-[
-  {"@unwind": "$.spec.ports"},
-  {"@project": [
-    {"$.": "$."},
-    {"$.metadata.name": {"@concat": ["$.metadata.name", "-", "$.spec.ports.port"]}}
-  ]}
-]
-```
-
-Note also that the original list order is lost after `@unwind`: Z-sets are unordered, so once a
-list is unwound the original element positions are unrecoverable, unless they were captured in the
-documents first. Pair the list with [`@enumerate`](reference-expressions.md#enumerate) before
-unwinding; the index then travels with each row:
+Z-set entry. Note also that the original list order is lost after `@unwind`: DBSP's internal Z-sets
+are unordered, so once a list is unwound the original element positions are unrecoverable, unless
+they were captured in the documents first. Pair the list with
+[`@enumerate`](reference-expressions.md#enumerate) before unwinding; the index then travels with
+each row:
 
 ```yaml
 [
@@ -340,8 +313,8 @@ endpoint.
 
 ## Deduplication: `@distinct`
 
-`@distinct` converts a Z-set into set membership. It takes no argument, so the bare string form
-is the natural spelling; `{"@distinct": null}` is the equivalent explicit form.
+The `@distinct` operator converts a Z-set into set membership. It takes no argument, so the bare
+string form is the natural spelling; `{"@distinct": null}` is the equivalent explicit form.
 
 ```yaml
 "@distinct": {}
@@ -351,24 +324,10 @@ For each document hash, `@distinct` emits weight `1` when the accumulated multip
 and emits nothing otherwise. This is useful after projection when several inputs can map to the same
 output object.
 
-```yaml
-[
-  {"@project": {name: "$.metadata.name", namespace: "$.metadata.namespace"}},
-  {"@distinct": null}
-]
-```
-
-In incremental mode, membership transitions are emitted as deltas:
-
-- `0 -> 1` emits `+1`,
-- `1 -> 2` emits `0`,
-- `2 -> 1` emits `0`,
-- `1 -> 0` emits `-1`.
-
 ## Grouping: `@groupBy`
 
-`@groupBy` is the inverse pattern of `@unwind`: many input documents become grouped summary
-documents.
+The `@groupBy` operator is the inverse pattern of `@unwind`: many input documents become grouped
+summary documents.
 
 Its argument is:
 
@@ -383,15 +342,14 @@ or:
 ```
 
 The key expression is required (`null` is a compile error); the value expression may be `null`, in
-which case the whole document is collected.
+which case the whole document is collected. With `{distinct: true}`, duplicate values are collapsed.
 
 The output shape of `@groupBy` in the current implementation is a document with three fields:
-
 - `key`: the grouping key,
 - `values`: the collected values,
 - `documents`: the original input documents that contributed to the group.
 
-### Basic example
+A basic example:
 
 ```yaml
 "@groupBy": ["$.metadata.namespace", "$.spec.a"]
@@ -414,283 +372,47 @@ documents:
   - {metadata: {name: b, namespace: default}, spec: {a: 2}}
 ```
 
-This is the right mental model: `@groupBy` does not directly build your final application object. It
-builds a grouping result that is usually followed by `@project`.
+## Time-variant fields: `@stamp`
 
-### Distinct mode
+Some fields cannot be generated from the input: a Kubernetes condition's `lastTransitionTime`, a
+generated name or port, a random pick, etc. For instance, writing `{"@now": null}` into a
+`@project` gets the object restamped every time it is recomputed, and in an incremental circuit
+when the object is retracted at a later clock it never cancels the object that was inserted since
+they hold different timestamps. Such fields are called "time-variant" in DBSP, and they are
+generally cannot be incrementalized with the default DBSP engine.
 
-With `{distinct: true}`, duplicate values are collapsed.
-
-```yaml
-"@groupBy": ["$.metadata.namespace", "$.spec.a", {distinct: true}]
-```
-
-If two input rows both contribute value `1`, the output `values` list contains only one `1`.
-
-### Typical follow-up projection
+The `@stamp` operator embeds a special machinery to handle such time-variant fields:
 
 ```yaml
-[
-  {"@groupBy": ["$.metadata.namespace", "$.spec.a"]},
-  {"@project": {key: "$.key", items: "$.values"}}
-]
+- "@stamp": [keyExpr, {"$.path.to.field": valueExpr, ...}]
 ```
 
-This is how you turn the generic grouping result into an application-specific output shape.
+Here, `keyExpr` identifies the key to the time-variant field, and `$.path.to.field` is the JSONPath
+and `valueExpr` is the expression to be used for setting the field. Then, `@stamp` will handle all
+internal complexity of incrementalizing the time-variant field. 
 
-## Replacing the old `@gather`
-
-Older Δ-controller documentation used `@gather`. The current compiler does not support `@gather`,
-`@aggregate`, or `@mux`. Use `@groupBy` followed by `@project` instead.
-
-For example, suppose a previous stage produced one document per endpoint address and you want to
-group them back by service port.
+For instance, Kubernetes status conditions require the `lastTransitionTime` to hold the time the
+status changed last. This can be handled with `@stamp` as follows:
 
 ```yaml
-[
-  {"@groupBy": ["$.id", "$.endpoints.addresses"]},
-  {"@project": {
-      metadata: {name: "$.key.service", namespace: "$.key.namespace"},
-      spec: {port: "$.key.port", protocol: "$.key.protocol", addresses: "$.values"}
-  }}
-]
+- "@unwind": "$.status.conditions"
+- "@stamp":
+    - ["$.metadata.namespace", "$.metadata.name",
+       "$.status.conditions.type", "$.status.conditions.status"]
+    - "$.status.conditions.lastTransitionTime": {"@now": null}
+- "@groupBy": [["$.metadata.namespace", "$.metadata.name"], "$.status.conditions"]
 ```
 
-This is exactly the pattern used in the EndpointSlice-style examples in the test suite.
+This will unroll the `status.conditions` list, apply `@stamp` per each condition, and then
+multiplexes conditions back into the list.
 
-## Single-source examples
-
-### Copy and override
+A port chosen once per object and kept for the object's lifetime:
 
 ```yaml
-pipeline:
-  - "@project":
-      - {"$.": "$."}
-      - {"$.metadata.name": fixed}
+- "@stamp":
+    - ["$.metadata.namespace", "$.metadata.name"]
+    - "$.spec.nodePort": {"@rnd": [30000, 32767]}
 ```
 
-Intuition: keep the whole input object, but force a stable name.
-
-### Filter and normalize
-
-```yaml
-pipeline:
-  - "@select":
-      "@eq": ["$.metadata.namespace", "prod"]
-  - "@project":
-      metadata:
-        name: "$.metadata.name"
-        namespace: "$.metadata.namespace"
-      spec:
-        replicas: "$.spec.replicas"
-        ready: "$.status.readyReplicas"
-```
-
-Intuition: keep only production objects and reshape them into a smaller reporting view.
-
-### Expand a list into one object per element
-
-```yaml
-pipeline:
-  - "@unwind": "$.spec.ports"
-  - "@project":
-      metadata:
-        name: "$.metadata.name"
-        namespace: "$.metadata.namespace"
-      spec:
-        portName: "$.spec.ports.name"
-        port: "$.spec.ports.port"
-```
-
-Intuition: turn one service with many ports into a stream of per-port records.
-
-## Multi-source examples
-
-### Simple inner join
-
-```yaml
-pipeline:
-  - "@join":
-      "@eq": ["$.dep.metadata.name", "$.pod.spec.parent"]
-  - "@project":
-      metadata:
-        name: result
-        namespace: default
-      dep: "$.dep"
-      pod: "$.pod"
-```
-
-Intuition: attach each pod to its parent deployment.
-
-### Join options: `soft` and `index`
-
-The two-element form `["@join": [predicate, options]]` takes an options object next to the
-predicate.
-
-`soft` turns the named inputs into left-join sides: rows of the other (hard) inputs are kept even
-when no partner matches, with the soft input's namespace set to `null` (test it with `@isnull`, or
-default fields with `@definedOr`).
-
-```yaml
-"@join":
-  - {"@eq": ["$.listeners.gateway", "$.counts.key"]}
-  - soft: [counts]
-```
-
-`index` makes a join **indexed**: it names exactly two participants and gives each a join-key
-expression, evaluated against *that input's own document* (so `$.` is the Service, the Gateway,
-not the compound join document). The pair is joined by key equality through a hash index instead of
-filtering the full Cartesian product, and after incrementalization the index is persistent: a delta
-on either side only touches the rows with the same key, instead of re-scanning the whole other
-side.
-
-Semantically the index adds a key-equality condition `AND`-ed with the predicate, so the equality
-it expresses can be dropped from the predicate. In the example below the gw-gwc equality lives
-entirely in the index and the predicate carries only the residual controller-name filter (use
-`true` as the predicate when nothing is left):
-
-```yaml
-"@join":
-  - {"@eq": ["$.gwc.spec.controllerName", "example.com/our-controller"]}
-  - index:
-      gw: "$.spec.gatewayClassName"      # gw.spec.gatewayClassName ==
-      gwc: "$.metadata.name"             #   gwc.metadata.name
-```
- Keys may be arbitrary expressions, including
-composite objects: two keys are equal when their canonical serializations are equal, so both sides
-should build the same shape:
-
-```yaml
-index:
-  backends: {name: "$.backendService.name", namespace: "$.backendService.namespace"}
-  svcports: {name: "$.service.name", namespace: "$.service.namespace"}
-```
-
-`index` composes with `soft` (the indexed pair may be the hard/soft pair of a left join), and with
-three or more participants it accelerates the one join site where the two named inputs meet; the
-remaining sites stay Cartesian. Rows whose key expression does not resolve simply never match,
-mirroring the field-not-found-is-false convention of predicates.
-
-### Join with extra filtering
-
-```yaml
-pipeline:
-  - "@join":
-      "@eq": ["$.dep.metadata.name", "$.pod.spec.parent"]
-  - "@select":
-      "@eq": ["$.pod.metadata.namespace", "default"]
-  - "@project":
-      metadata:
-        name: result
-      pod: "$.pod"
-      dep: "$.dep"
-```
-
-Intuition: same join as above, but only for default-namespace pods.
-
-### Join using bracketed JSONPath
-
-```yaml
-pipeline:
-  - "@join":
-      "@and":
-        - {"@eq": ["$.ServiceView.spec.serviceName", "$[\"EndpointSlice\"][\"metadata\"][\"labels\"][\"kubernetes.io/service-name\"]"]}
-        - {"@eq": ["$.ServiceView.metadata.namespace", "$.EndpointSlice.metadata.namespace"]}
-```
-
-Intuition: match a view object to an EndpointSlice by service-name label, even though the label key
-contains dots and slashes.
-
-## Branching programs
-
-The compiler also supports explicit multi-branch programs. Each branch has its own `@inputs` and
-`@output`, and later branches may consume earlier outputs.
-
-```yaml
-[
-  [
-    {"@inputs": ["Pod"]},
-    {"@project": {"$.metadata.name": "a"}},
-    {"@output": "branch1"}
-  ],
-  [
-    {"@inputs": ["branch1"]},
-    {"@project": [{"$.": "$."}, {"$.spec.done": true}]},
-    {"@output": "final"}
-  ]
-]
-```
-
-The important rule is that the branch dependency graph must be acyclic. A branch may depend on an
-earlier branch output, but cyclic branch wiring is rejected.
-
-### Stream union
-
-Several branches may produce the same stream, internal or bound to a configured output. The
-compiler unions their outputs by Z-set addition (a merge node in front of every consumer):
-
-```yaml
-[
-  [
-    {"@inputs": ["evals"]},
-    {"@project": {...violation rows...}},
-    {"@output": "rows"}
-  ],
-  [
-    {"@inputs": ["evals"]},
-    {"@select": {...the error branch...}},
-    {"@project": {...error rows...}},
-    {"@output": "rows"}
-  ]
-]
-```
-
-The union is *additive* (bag semantics): if two branches emit the same document, the weights sum;
-follow with `@distinct` when set union is intended. One consequence to keep in mind: two branches
-accidentally sharing an `@output` name are silently merged rather than rejected, so a typo in a
-stream name becomes a union, not an error.
-
-## What is not supported
-
-In the current implementation, these stage names are rejected:
-
-- `@gather`
-- `@aggregate`
-- `@mux`
-
-Use `@groupBy` and `@project` instead.
-
-## Putting it together
-
-A realistic pipeline often mixes several of these ideas. This example expands a service into one
-record per port, groups endpoint addresses by port, and reshapes the grouped result into the final
-document.
-
-```yaml
-[
-  {"@unwind": "$.spec.ports"},
-  {"@project": {
-      metadata: {
-        name: "$.metadata.name",
-        namespace: "$.metadata.namespace"
-      },
-      id: {
-        service: "$.metadata.name",
-        namespace: "$.metadata.namespace",
-        port: "$.spec.ports.port",
-        protocol: "$.spec.ports.protocol"
-      },
-      endpoints: "$.spec.endpoints"
-  }},
-  {"@unwind": "$.endpoints"},
-  {"@unwind": "$.endpoints.addresses"},
-  {"@groupBy": ["$.id", "$.endpoints.addresses"]},
-  {"@project": {
-      metadata: {name: "$.key.service", namespace: "$.key.namespace"},
-      spec: {port: "$.key.port", protocol: "$.key.protocol", addresses: "$.values"}
-  }}
-]
-```
-
-This is the main style to aim for: each stage does one clear job, and the whole pipeline reads as a
-dataflow story rather than as a single monolithic transformation.
+Note: currently neither the key expression nor the value expression can to refer to the stamped
+fields. 

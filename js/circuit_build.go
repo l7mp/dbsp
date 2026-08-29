@@ -99,6 +99,7 @@ func (h *circuitHandle) addEdge(from, to string, port int) error {
 var opAliases = map[string]string{
 	"groupBy":             "group_by",
 	"groupByIncremental":  "group_by_incremental",
+	"stampIncremental":    "stamp_incremental",
 	"linearCombination":   "linear_combination",
 	"equiJoin":            "equi_join",
 	"equijoin":            "equi_join",
@@ -173,6 +174,16 @@ func parseOpSpecString(s string) (operator.Operator, error) {
 		switch {
 		case opArgFields[wireType] != "":
 			wire[opArgFields[wireType]] = arg
+		case wireType == "stamp" || wireType == "stamp_incremental":
+			if a, ok := arg.([]any); ok && len(a) == 2 {
+				wire["keyExpr"], wire["fields"] = a[0], a[1]
+			} else if m, ok := arg.(map[string]any); ok {
+				for k, v := range m {
+					wire[k] = v
+				}
+			} else {
+				return nil, fmt.Errorf("operator %q expects [keyExpr, fields] or an object argument", wireType)
+			}
 		case wireType == "group_by" || wireType == "group_by_incremental":
 			if a, ok := arg.([]any); ok && len(a) == 2 {
 				wire["keyExpr"], wire["valueExpr"] = a[0], a[1]

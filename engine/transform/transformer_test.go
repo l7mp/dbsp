@@ -9,6 +9,7 @@ import (
 
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/expression"
+	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	"github.com/l7mp/dbsp/engine/operator"
 )
 
@@ -134,6 +135,34 @@ var _ = Describe("Incrementalize", func() {
 			outEdges := incr.EdgesTo("out")
 			Expect(outEdges).To(HaveLen(1))
 			Expect(outEdges[0].From).To(Equal("nlin^Δ_diff"))
+		})
+
+		It("substitutes stamp with its delta form", func() {
+			// in -> stamp -> out.
+			c := circuit.New("stamp-test")
+			c.AddNode(circuit.Input("in"))
+			key, err := dbspexpr.CompileString(`["$.obj", "$.status"]`)
+			Expect(err).NotTo(HaveOccurred())
+			now, err := dbspexpr.CompileString(`{"@now": null}`)
+			Expect(err).NotTo(HaveOccurred())
+			c.AddNode(circuit.Op("st", operator.NewStamp(key, map[string]expression.Expression{"$.t": now})))
+			c.AddNode(circuit.Output("out"))
+			c.AddEdge(circuit.NewEdge("in", "st", 0))
+			c.AddEdge(circuit.NewEdge("st", "out", 0))
+
+			incr, err := NewIncrementalizer().Transform(c)
+			Expect(err).NotTo(HaveOccurred())
+
+			// No generic D ∘ O ∘ ∫ sandwich: the delta form holds its own
+			// state.
+			Expect(incr.Node("st^Δ_int")).To(BeNil())
+			Expect(incr.Node("st^Δ_op")).To(BeNil())
+			Expect(incr.Node("st^Δ_diff")).To(BeNil())
+			Expect(incr.Node("st^Δ").Kind()).To(Equal(operator.KindStampIncremental))
+			Expect(incr.EdgesTo("st^Δ")).To(HaveLen(1))
+			Expect(incr.EdgesTo("st^Δ")[0].From).To(Equal("in"))
+			Expect(incr.EdgesFrom("st^Δ")).To(HaveLen(1))
+			Expect(incr.EdgesFrom("st^Δ")[0].To).To(Equal("out"))
 		})
 
 		It("substitutes group_by with incremental operator", func() {
