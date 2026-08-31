@@ -74,6 +74,68 @@ func (e *filterExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	return result, nil
 }
 
+// anyExpr implements @any - true when some element satisfies the
+// predicate; false on the empty list. Short-circuits on the first match.
+type anyExpr struct{ binaryOp }
+
+func (e *anyExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	listValue, err := e.right.Evaluate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("@any: failed to evaluate list: %w", err)
+	}
+	list, err := AsList(listValue)
+	if err != nil {
+		return nil, fmt.Errorf("@any: second argument must be a list: %w", err)
+	}
+	for i, item := range list {
+		v, err := e.left.Evaluate(ctx.WithSubject(item))
+		if err != nil {
+			return nil, fmt.Errorf("@any[%d]: %w", i, err)
+		}
+		ok, err := AsBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("@any[%d]: predicate must return bool: %w", i, err)
+		}
+		if ok {
+			ctx.Logger().V(8).Info("eval", "op", "@any", "result", true)
+			return true, nil
+		}
+	}
+	ctx.Logger().V(8).Info("eval", "op", "@any", "result", false)
+	return false, nil
+}
+
+// allExpr implements @all - true when every element satisfies the
+// predicate; true on the empty list. Short-circuits on the first failure.
+type allExpr struct{ binaryOp }
+
+func (e *allExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	listValue, err := e.right.Evaluate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("@all: failed to evaluate list: %w", err)
+	}
+	list, err := AsList(listValue)
+	if err != nil {
+		return nil, fmt.Errorf("@all: second argument must be a list: %w", err)
+	}
+	for i, item := range list {
+		v, err := e.left.Evaluate(ctx.WithSubject(item))
+		if err != nil {
+			return nil, fmt.Errorf("@all[%d]: %w", i, err)
+		}
+		ok, err := AsBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("@all[%d]: predicate must return bool: %w", i, err)
+		}
+		if !ok {
+			ctx.Logger().V(8).Info("eval", "op", "@all", "result", false)
+			return false, nil
+		}
+	}
+	ctx.Logger().V(8).Info("eval", "op", "@all", "result", true)
+	return true, nil
+}
+
 // sortByExpr implements @sortBy - sorts a list using a comparator expression.
 //
 // The comparator is evaluated with the subject set to a map holding:
@@ -715,6 +777,20 @@ func init() {
 			return nil, fmt.Errorf("@filter: expected [predicate, list] arguments")
 		}
 		return &filterExpr{binaryOp{"@filter", list[0], list[1]}}, nil
+	})
+	MustRegister("@any", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || len(list) != 2 {
+			return nil, fmt.Errorf("@any: expected [predicate, list] arguments")
+		}
+		return &anyExpr{binaryOp{"@any", list[0], list[1]}}, nil
+	})
+	MustRegister("@all", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || len(list) != 2 {
+			return nil, fmt.Errorf("@all: expected [predicate, list] arguments")
+		}
+		return &allExpr{binaryOp{"@all", list[0], list[1]}}, nil
 	})
 	MustRegister("@sortBy", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)

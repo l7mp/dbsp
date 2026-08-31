@@ -490,6 +490,17 @@ Keep only the elements whose predicate is true.
 
 This removes every non-TCP port from the list.
 
+### `@any`, `@all`
+
+Quantifiers over a list: `@any` is true when some element satisfies the predicate (false on an
+empty list), `@all` when every element does (true on an empty list). Both take the `@filter`
+argument shape, bind the element to `$$`, and short-circuit.
+
+```yaml
+"@any": [{"@eq": ["$$.accepted", true]}, "$.listeners"]
+"@all": [{"@eq": ["$$.accepted", true]}, "$.listeners"]
+```
+
 ### `@sortBy`
 
 Sort a list using a comparator expression. During comparison, the subject becomes an object with

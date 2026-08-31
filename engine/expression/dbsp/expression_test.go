@@ -1619,3 +1619,45 @@ var _ = Describe("Callback Operators", func() {
 		})).To(Succeed())
 	})
 })
+
+var _ = Describe("@any and @all", func() {
+	doc := unstructured.New(map[string]any{
+		"listeners": []any{
+			map[string]any{"name": "a", "accepted": true},
+			map[string]any{"name": "b", "accepted": false},
+		},
+		"empty": []any{},
+	})
+
+	DescribeTable("quantify over lists", func(src string, expected bool) {
+		expr, err := dbsp.CompileString(src)
+		Expect(err).NotTo(HaveOccurred())
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(expected))
+	},
+		Entry("any true", `{"@any": [{"@eq": ["$$.accepted", true]}, "$.listeners"]}`, true),
+		Entry("any false", `{"@any": [{"@eq": ["$$.name", "c"]}, "$.listeners"]}`, false),
+		Entry("any on empty list", `{"@any": [true, "$.empty"]}`, false),
+		Entry("all false", `{"@all": [{"@eq": ["$$.accepted", true]}, "$.listeners"]}`, false),
+		Entry("all true", `{"@all": [{"@exists": "$$.name"}, "$.listeners"]}`, true),
+		Entry("all on empty list", `{"@all": [false, "$.empty"]}`, true),
+	)
+
+	It("rejects a non-list argument and a non-bool predicate", func() {
+		expr, err := dbsp.CompileString(`{"@any": [true, "scalar"]}`)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = expr.Evaluate(expression.NewContext(doc))
+		Expect(err).To(MatchError(ContainSubstring("must be a list")))
+
+		expr, err = dbsp.CompileString(`{"@all": ["$$.name", "$.listeners"]}`)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = expr.Evaluate(expression.NewContext(doc))
+		Expect(err).To(MatchError(ContainSubstring("predicate must return bool")))
+	})
+
+	It("rejects malformed arguments", func() {
+		_, err := dbsp.CompileString(`{"@any": [true]}`)
+		Expect(err).To(HaveOccurred())
+	})
+})
