@@ -2,6 +2,7 @@ package dbsp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -71,6 +72,77 @@ func (e *filterExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	}
 
 	ctx.Logger().V(8).Info("eval", "op", "@filter", "result", result)
+	return result, nil
+}
+
+// keysExpr implements @keys - the sorted key list of a map (a document
+// counts as its field map); nil yields the empty list.
+type keysExpr struct{ unaryOp }
+
+func (e *keysExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	v, err := e.operand.Evaluate(ctx)
+	if err != nil && !errors.Is(err, datamodel.ErrFieldNotFound) {
+		return nil, fmt.Errorf("@keys: %w", err)
+	}
+	var m map[string]any
+	switch t := v.(type) {
+	case nil:
+	case map[string]any:
+		m = t
+	case datamodel.Document:
+		m = t.Fields()
+	default:
+		return nil, fmt.Errorf("@keys: argument must be a map, got %T", v)
+	}
+	keys := make([]any, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].(string) < keys[j].(string) })
+	ctx.Logger().V(8).Info("eval", "op", "@keys", "result", keys)
+	return keys, nil
+}
+
+// sliceExpr implements @slice - a clamped sub-list: [list, end] keeps the
+// first end elements, [list, start, end] the half-open [start, end) range.
+type sliceExpr struct{ variadicOp }
+
+func (e *sliceExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
+	listValue, err := e.args[0].Evaluate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("@slice: %w", err)
+	}
+	list, err := AsList(listValue)
+	if err != nil {
+		return nil, fmt.Errorf("@slice: first argument must be a list: %w", err)
+	}
+	bounds := make([]int, 0, 2)
+	for i, arg := range e.args[1:] {
+		v, err := arg.Evaluate(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("@slice[%d]: %w", i+1, err)
+		}
+		n, err := AsInt(v)
+		if err != nil {
+			return nil, fmt.Errorf("@slice[%d]: bound must be an integer: %w", i+1, err)
+		}
+		bounds = append(bounds, int(n))
+	}
+	start, end := 0, bounds[0]
+	if len(bounds) == 2 {
+		start, end = bounds[0], bounds[1]
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > len(list) {
+		end = len(list)
+	}
+	if start > end {
+		start = end
+	}
+	result := append([]any{}, list[start:end]...)
+	ctx.Logger().V(8).Info("eval", "op", "@slice", "result", result)
 	return result, nil
 }
 
@@ -777,6 +849,20 @@ func init() {
 			return nil, fmt.Errorf("@filter: expected [predicate, list] arguments")
 		}
 		return &filterExpr{binaryOp{"@filter", list[0], list[1]}}, nil
+	})
+	MustRegister("@keys", func(args any) (Expression, error) {
+		operand, err := asUnaryExprOrLiteral(args)
+		if err != nil {
+			return nil, fmt.Errorf("@keys: %w", err)
+		}
+		return &keysExpr{unaryOp{"@keys", operand}}, nil
+	})
+	MustRegister("@slice", func(args any) (Expression, error) {
+		list, ok := args.([]Expression)
+		if !ok || len(list) < 2 || len(list) > 3 {
+			return nil, fmt.Errorf("@slice: expected [list, end] or [list, start, end] arguments")
+		}
+		return &sliceExpr{variadicOp{"@slice", list}}, nil
 	})
 	MustRegister("@any", func(args any) (Expression, error) {
 		list, ok := args.([]Expression)

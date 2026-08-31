@@ -1661,3 +1661,40 @@ var _ = Describe("@any and @all", func() {
 		Expect(err).To(HaveOccurred())
 	})
 })
+
+var _ = Describe("@keys and @slice", func() {
+	doc := unstructured.New(map[string]any{
+		"match": map[string]any{"kinds": []any{}, "namespaces": []any{}, "scope": "*"},
+		"list":  []any{"a", "b", "c", "d"},
+	})
+
+	DescribeTable("evaluate", func(src string, expected any) {
+		expr, err := dbsp.CompileString(src)
+		Expect(err).NotTo(HaveOccurred())
+		result, err := expr.Evaluate(expression.NewContext(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(expected))
+	},
+		Entry("keys sorted", `{"@keys": "$.match"}`, []any{"kinds", "namespaces", "scope"}),
+		Entry("keys of nil", `{"@keys": "$.missing"}`, []any{}),
+		Entry("slice prefix", `{"@slice": ["$.list", 2]}`, []any{"a", "b"}),
+		Entry("slice range", `{"@slice": ["$.list", 1, 3]}`, []any{"b", "c"}),
+		Entry("slice clamps", `{"@slice": ["$.list", 99]}`, []any{"a", "b", "c", "d"}),
+		Entry("slice empty when inverted", `{"@slice": ["$.list", 3, 1]}`, []any{}),
+	)
+
+	It("rejects bad arguments", func() {
+		expr, err := dbsp.CompileString(`{"@keys": "$.list"}`)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = expr.Evaluate(expression.NewContext(doc))
+		Expect(err).To(MatchError(ContainSubstring("must be a map")))
+
+		expr, err = dbsp.CompileString(`{"@slice": ["$.match", 1]}`)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = expr.Evaluate(expression.NewContext(doc))
+		Expect(err).To(MatchError(ContainSubstring("must be a list")))
+
+		_, err = dbsp.CompileString(`{"@slice": ["$.list"]}`)
+		Expect(err).To(HaveOccurred())
+	})
+})

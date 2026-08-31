@@ -490,6 +490,26 @@ Keep only the elements whose predicate is true.
 
 This removes every non-TCP port from the list.
 
+### `@keys`
+
+The sorted key list of a map (a document counts as its field map); nil yields the empty list.
+
+```yaml
+"@keys": "$.spec.match"
+```
+
+Together with `@any`/`@all` this expresses allowlist checks over object fields:
+`{"@all": [{"@in": ["$$.", ["kinds", "namespaces"]]}, {"@keys": "$.spec.match"}]}`.
+
+### `@slice`
+
+A clamped sub-list: `[list, end]` keeps the first `end` elements, `[list, start, end]` the
+half-open `[start, end)` range. Out-of-range bounds clamp instead of erroring.
+
+```yaml
+"@slice": ["$.status.violations", 20]
+```
+
 ### `@any`, `@all`
 
 Quantifiers over a list: `@any` is true when some element satisfies the predicate (false on an
