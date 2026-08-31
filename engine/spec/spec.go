@@ -91,6 +91,13 @@ type Resource struct {
 // Source is a source that feeds deltas into the controller.
 type Source struct {
 	Resource `json:",inline"`
+	// As is the pipeline-facing stream name (the @inputs name the
+	// pipeline references); it defaults to Kind and matters when several
+	// sources share a kind or the stream name and the resource kind
+	// differ.
+	//
+	// +optional
+	As string `json:"as,omitempty"`
 	// Type names the binding connector's producer verb; the default is
 	// the connector's canonical one (Kubernetes and xds: Watcher, misc:
 	// Tick).
@@ -153,6 +160,13 @@ const (
 // Target is the resource endpoint a controller writes.
 type Target struct {
 	Resource `json:",inline"`
+	// As is the pipeline-facing stream name (the @output name the
+	// pipeline emits); it defaults to Kind and matters when the stream
+	// name and the resource kind differ (a status fragment stream
+	// "GatewayStatus" written to kind Gateway, say).
+	//
+	// +optional
+	As string `json:"as,omitempty"`
 	// Type is the type of the target. Default is Updater.
 	//
 	// +optional

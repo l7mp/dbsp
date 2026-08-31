@@ -22,13 +22,8 @@
 //                  views -> status documents, one writer per CRD, in
 //                  the CRD's own module
 //     xds.js:      views -> Xds{Listeners,RouteConfigurations,Clusters,
-//                  Endpoints} (Envoy protojson, served as is by
-//                  lib/xdsmap.js)
-//
-// The circuits communicate over the (retained) view topics, so the views
-// are introspectable live and each output layer can be transformed
-// independently - the k8s layer takes the desired-state Reconciler, the
-// unobservable xDS layer stays open loop.
+//                  Endpoints} (Envoy protojson, bound to the operator's
+//                  xDS egress server by the loader)
 //
 // Row conventions, all modules: a field named after an object holds the
 // object - {name, namespace} references for gateway, route (plus its
@@ -38,7 +33,14 @@
 // nouns; views, inputs and outputs are CamelCase. Only views and
 // Kubernetes documents carry a metadata identity.
 
-const { CONTROLLER_NAME, TOPICS } = require("./config.js");
+const {
+  CONTROLLER_NAME,
+  OPERATOR,
+  RESOURCES,
+  TOPIC_GROUP,
+  XDS_GROUP,
+  TOPICS,
+} = require("./config.js");
 
 // @selectorMatches (Kubernetes LabelSelector semantics: matchLabels plus
 // matchExpressions) is implemented in Go by the Kubernetes connector; apps
@@ -81,83 +83,32 @@ function buildPrograms(options = {}) {
   };
 }
 
-// Pipeline is one controller's compiled circuit stack: the input layer and
-// the two output layers, bound to the configured topics. One instance per
-// controller; the circuit handles are exposed as .input/.k8s/.xds and
-// debug observers attach per layer via .observe().
-class Pipeline {
-  constructor(options = {}) {
-    const compiled = compileCircuits(options);
-    this.stem = compiled.stem;
-    this.topics = compiled.topics;
-    this.input = compiled.input;
-    this.k8s = compiled.k8s;
-    this.xds = compiled.xds;
-  }
+// The operator's shared streams, bound as plain retained topics.
+const topic = (kind) => ({ apiGroup: TOPIC_GROUP, kind });
+const VIEWS = ["GatewayClassView", "GatewayView", "RouteView", "BackendView"];
+const OBSERVED = ["GatewayClassStatusObserved", "GatewayStatusObserved", "HTTPRouteStatusObserved"];
+// (observed stream, status stream) pairs: the closed loop's plant feedback.
+const STATUS_PAIRS = [
+  ["GatewayClassStatusObserved", "GatewayClassStatus"],
+  ["GatewayStatusObserved", "GatewayStatus"],
+  ["HTTPRouteStatusObserved", "HTTPRouteStatus"],
+];
 
-  // observe attaches a debug observer to one layer ("input", "k8s" or
-  // "xds"): fn receives every event the layer's circuit processes. Any
-  // internal state worth inspecting beyond that should be (and mostly is)
-  // a pipeline output - the view topics are ordinary retained topics, so
-  // subscribe() to this.topics.views.* sees the controller's internal
-  // state live.
-  observe(layer, fn) {
-    const names = { input: `${this.stem}-input`, k8s: `${this.stem}-k8s`, xds: `${this.stem}-xds` };
-    const name = names[layer];
-    if (!name) {
-      throw new Error(`pipeline.observe: unknown layer ${layer}; use input, k8s or xds`);
-    }
-    runtime.observe(name, fn);
-  }
-}
+// buildOperatorSpec assembles the serialized operator: three controllers
+// meeting on the shared view and observed streams. With bindings
+// "kubernetes" the sources watch the cluster and the statuses go through
+// Patchers (the deployable spec); with bindings "topics" (the default,
+// the self-contained test mode) the watched resources and the status
+// outputs are plain topics driven and read by the harness. The xDS
+// targets are real in both modes: the egress server must be started
+// under the operator's name before loading.
+function buildOperatorSpec(options = {}) {
+  const k8sBindings = options.bindings === "kubernetes";
+  const source = (resource) => (k8sBindings ? resource : topic(resource.kind));
+  const statusTarget = (resource, as) =>
+    k8sBindings ? { ...resource, type: "Patcher", as } : topic(as);
 
-// compilePipeline compiles the three circuits, incrementalizes them, and
-// binds them to the configured topics. Returns the Pipeline instance.
-function compilePipeline(options = {}) {
-  return new Pipeline(options);
-}
-
-function compileCircuits(options = {}) {
-  const topics = options.topics || TOPICS;
-  const programs = buildPrograms(options);
-  const stem = options.name || "delta-gateway";
-
-  const views = [
-    { name: topics.views.gatewayClass, logical: "GatewayClassView" },
-    { name: topics.views.gateway, logical: "GatewayView" },
-    { name: topics.views.route, logical: "RouteView" },
-    { name: topics.views.backend, logical: "BackendView" },
-  ];
-  // Observed statuses (the π_U projection curated by the input layer) and
-  // the Reconciler pairs matching them to the k8s status outputs.
-  const observed = [
-    { name: topics.observed.gatewayClass, logical: "GatewayClassStatusObserved" },
-    { name: topics.observed.gateway, logical: "GatewayStatusObserved" },
-    { name: topics.observed.httpRoute, logical: "HTTPRouteStatusObserved" },
-  ];
-  // Reconciler pairs are (input, output) circuit nodes, named by topic.
-  const reconcilerPairs = [
-    [topics.observed.gatewayClass, topics.status.gatewayClass],
-    [topics.observed.gateway, topics.status.gateway],
-    [topics.observed.httpRoute, topics.status.httpRoute],
-  ];
-
-  const input = aggregate.compile(programs.input, {
-    inputs: [
-      { name: topics.inputs.gatewayClass, logical: "GatewayClass" },
-      { name: topics.inputs.gateway, logical: "Gateway" },
-      { name: topics.inputs.route, logical: "HTTPRoute" },
-      { name: topics.inputs.service, logical: "Service" },
-      { name: topics.inputs.endpointSlice, logical: "EndpointSlice" },
-      { name: topics.inputs.secret, logical: "Secret" },
-      { name: topics.inputs.backendTLSPolicy, logical: "BackendTLSPolicy" },
-      { name: topics.inputs.namespace, logical: "Namespace" },
-    ],
-    outputs: [...views, ...observed],
-    name: `${stem}-input`,
-  });
-  // Transform lists: the engine applies a list in canonical order as one
-  // atomic step, so the pipeline states WHAT each layer is, not the order.
+  const k8sTransforms = [{ name: "Incrementalizer" }];
   if (options.sotw) {
     // State-of-the-world mode needs full-snapshot ingest and
     // state-of-the-world writes end to end, which the connector stack
@@ -165,21 +116,6 @@ function compileCircuits(options = {}) {
     // with deltas.
     throw new Error("pipeline: sotw mode is not available; the state-of-the-world stack is not wired");
   }
-  const layerTransforms = () => [{ name: "Incrementalizer" }];
-
-  input.transform(layerTransforms());
-  input.commit();
-
-  const k8s = aggregate.compile(programs.outputK8s, {
-    inputs: [...views, ...observed],
-    outputs: [
-      { name: topics.status.gatewayClass, logical: "GatewayClassStatus" },
-      { name: topics.status.gateway, logical: "GatewayStatus" },
-      { name: topics.status.httpRoute, logical: "HTTPRouteStatus" },
-    ],
-    name: `${stem}-k8s`,
-  });
-  const k8sTransforms = layerTransforms();
   if (options.reconcile) {
     // Close the loop on everything we can observe: the status outputs
     // emit the outstanding correction U = ∫(δD - δY_U) - re-emitted every
@@ -189,7 +125,7 @@ function compileCircuits(options = {}) {
     // feedback (the self-contained tests have no plant, so U would never
     // quiesce there); the xDS circuit stays open loop either way - Envoy
     // state is not observed (yet).
-    k8sTransforms.push({ name: "Reconciler", pairs: reconcilerPairs });
+    k8sTransforms.push({ name: "Reconciler", pairs: STATUS_PAIRS });
   } else if (options.smith) {
     // The dead-time compensated loop: same closed-loop pairs, but the
     // SmithPredictor emits U_out = (δD - δY_U) + (δY_U ⋉ z⁻¹U) - every
@@ -201,29 +137,81 @@ function compileCircuits(options = {}) {
     if (!Number.isInteger(k) || k < 2) {
       throw new Error(`pipeline: smith mode needs an integer dead time k >= 2, got ${options.smithK}`);
     }
-    k8sTransforms.push({ name: "SmithPredictor", pairs: reconcilerPairs, k });
+    k8sTransforms.push({ name: "SmithPredictor", pairs: STATUS_PAIRS, k });
   }
-  k8s.transform(k8sTransforms);
-  k8s.commit();
 
-  const xds = aggregate.compile(programs.outputXds, {
-    inputs: views,
-    outputs: [
-      { name: topics.xds.listeners, logical: "XdsListeners" },
-      { name: topics.xds.routes, logical: "XdsRouteConfigurations" },
-      { name: topics.xds.clusters, logical: "XdsClusters" },
-      { name: topics.xds.endpoints, logical: "XdsEndpoints" },
+  const programs = buildPrograms(options);
+  return {
+    controllers: [
+      {
+        name: "input",
+        sources: Object.values(RESOURCES).map(source),
+        pipeline: programs.input,
+        targets: [...VIEWS, ...OBSERVED].map(topic),
+        transforms: [{ name: "Incrementalizer" }],
+      },
+      {
+        name: "k8s",
+        sources: [...VIEWS, ...OBSERVED].map(topic),
+        pipeline: programs.outputK8s,
+        targets: [
+          statusTarget(RESOURCES.gatewayClass, "GatewayClassStatus"),
+          statusTarget(RESOURCES.gateway, "GatewayStatus"),
+          statusTarget(RESOURCES.httpRoute, "HTTPRouteStatus"),
+        ],
+        transforms: k8sTransforms,
+      },
+      {
+        name: "xds",
+        sources: VIEWS.map(topic),
+        pipeline: programs.outputXds,
+        targets: [
+          { apiGroup: XDS_GROUP, kind: "Listener", as: "XdsListeners" },
+          { apiGroup: XDS_GROUP, kind: "RouteConfiguration", as: "XdsRouteConfigurations" },
+          { apiGroup: XDS_GROUP, kind: "Cluster", as: "XdsClusters" },
+          { apiGroup: XDS_GROUP, kind: "ClusterLoadAssignment", as: "XdsEndpoints" },
+        ],
+        transforms: [{ name: "Incrementalizer" }],
+      },
     ],
-    name: `${stem}-xds`,
-  });
-  xds.transform(layerTransforms());
-  xds.commit();
+  };
+}
 
-  return { stem, topics, input, k8s, xds };
+// Pipeline is one loaded operator: the serialized spec fed through
+// operator.load. The circuits are named "<operator>.<controller>" and the
+// shared streams live on the "<operator>/topic/<stream>" retained topics
+// (this.topics), so the controller's internal state is introspectable
+// live with a plain subscribe().
+class Pipeline {
+  constructor(options = {}) {
+    this.stem = options.name || OPERATOR;
+    this.spec = buildOperatorSpec(options);
+    this.handle = operator.load(this.stem, this.spec);
+    this.topics = TOPICS;
+  }
+
+  // observe attaches a debug observer to one layer ("input", "k8s" or
+  // "xds"): fn receives every event the layer's circuit processes.
+  observe(layer, fn) {
+    if (!["input", "k8s", "xds"].includes(layer)) {
+      throw new Error(`pipeline.observe: unknown layer ${layer}; use input, k8s or xds`);
+    }
+    runtime.observe(`${this.stem}.${layer}`, fn);
+  }
+
+  close() {
+    this.handle.close();
+  }
+}
+
+// compilePipeline loads the operator and returns the Pipeline instance.
+function compilePipeline(options = {}) {
+  return new Pipeline(options);
 }
 
 module.exports = {
   Pipeline,
   buildPrograms,
+  buildOperatorSpec,
   compilePipeline,
 };

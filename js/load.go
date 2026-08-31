@@ -35,7 +35,22 @@ import (
 const (
 	xdsGroup  = "xds.connector.dcontroller.io"
 	miscGroup = "misc.connector.dcontroller.io"
+	// topicGroup binds a plain retained topic of the runtime's pub/sub:
+	// no connector and no component, just the shared topic
+	// "<operator>/topic/<stream>". It is how the controllers of one
+	// operator meet on bare topics (curated views without the Kubernetes
+	// view store), and how a harness drives a pipeline without any
+	// connector.
+	topicGroup = "topic.connector.dcontroller.io"
 )
+
+// streamName is the pipeline-facing name of a source or target.
+func streamName(as, kind string) string {
+	if as != "" {
+		return as
+	}
+	return kind
+}
 
 // xdsKinds maps the xds connector's resource kinds to delta-ADS type
 // shorthands.
@@ -94,7 +109,7 @@ func (v *VM) operatorLoad(call goja.FunctionCall) (goja.Value, error) {
 func (inst *operatorInstance) resolveSpecGVK(r spec.Resource) (schema.GroupVersionKind, error) {
 	if r.Group != nil {
 		switch g := strings.TrimSpace(*r.Group); g {
-		case xdsGroup, miscGroup:
+		case xdsGroup, miscGroup, topicGroup:
 			return schema.GroupVersionKind{Group: g, Version: "v1", Kind: r.Kind}, nil
 		}
 	}
@@ -138,12 +153,43 @@ func (inst *operatorInstance) load(op *spec.OperatorSpec) error {
 		}
 	}
 
+	// Shared plain topics reset once, before any controller compiles, so
+	// a producing controller's rows survive its consumers' startup.
+	sharedSeen := map[string]bool{}
+	for ci := range op.Controllers {
+		c := &op.Controllers[ci]
+		for _, s := range c.Sources {
+			if s.Group != nil && strings.TrimSpace(*s.Group) == topicGroup {
+				sharedSeen[inst.sharedTopic(streamName(s.As, s.Kind))] = true
+			}
+		}
+		for _, t := range c.Targets {
+			if t.Group != nil && strings.TrimSpace(*t.Group) == topicGroup {
+				sharedSeen[inst.sharedTopic(streamName(t.As, t.Kind))] = true
+			}
+		}
+	}
+	for t := range sharedSeen {
+		v.runtime.ResetTopic(t)
+		inst.topics = append(inst.topics, t)
+	}
+
 	for ci := range op.Controllers {
 		if err := inst.loadController(&op.Controllers[ci]); err != nil {
 			return fmt.Errorf("controller %q: %w", op.Controllers[ci].Name, err)
 		}
 	}
 	return nil
+}
+
+// sharedTopic names the operator-wide plain topic of a stream.
+func (inst *operatorInstance) sharedTopic(stream string) string {
+	return inst.name + "/topic/" + stream
+}
+
+// isTopicGroup reports whether a resource binds a plain shared topic.
+func isTopicGroup(r spec.Resource) bool {
+	return r.Group != nil && strings.TrimSpace(*r.Group) == topicGroup
 }
 
 func (inst *operatorInstance) loadController(c *spec.Controller) error {
@@ -153,20 +199,37 @@ func (inst *operatorInstance) loadController(c *spec.Controller) error {
 	}
 	prefix := inst.name + "." + c.Name
 
+	// Topic-group streams bind the operator-wide shared topic directly
+	// (reset once up front, never here); everything else gets a
+	// controller-owned topic, reset now so this instance never bootstraps
+	// from a predecessor's leftovers.
 	inputs := make([]aggcompiler.Binding, 0, len(c.Sources))
+	inTopics := map[string]string{} // stream -> topic, for transform pairs
 	for _, s := range c.Sources {
-		inputs = append(inputs, aggcompiler.Binding{Name: prefix + "/" + s.Kind + "/input", Logical: s.Kind})
+		stream := streamName(s.As, s.Kind)
+		topic := prefix + "/" + stream + "/input"
+		if isTopicGroup(s.Resource) {
+			topic = inst.sharedTopic(stream)
+		} else {
+			v.runtime.ResetTopic(topic)
+			inst.topics = append(inst.topics, topic)
+		}
+		inputs = append(inputs, aggcompiler.Binding{Name: topic, Logical: stream})
+		inTopics[stream] = topic
 	}
 	outputs := make([]aggcompiler.Binding, 0, len(c.Targets))
+	outTopics := map[string]string{}
 	for _, t := range c.Targets {
-		outputs = append(outputs, aggcompiler.Binding{Name: prefix + "/" + t.Kind + "/output", Logical: t.Kind})
-	}
-
-	// The controller owns its topics: start from clean retained integrals
-	// so this instance never bootstraps from a predecessor's leftovers.
-	for _, b := range append(append([]aggcompiler.Binding{}, inputs...), outputs...) {
-		v.runtime.ResetTopic(b.Name)
-		inst.topics = append(inst.topics, b.Name)
+		stream := streamName(t.As, t.Kind)
+		topic := prefix + "/" + stream + "/output"
+		if isTopicGroup(t.Resource) {
+			topic = inst.sharedTopic(stream)
+		} else {
+			v.runtime.ResetTopic(topic)
+			inst.topics = append(inst.topics, topic)
+		}
+		outputs = append(outputs, aggcompiler.Binding{Name: topic, Logical: stream})
+		outTopics[stream] = topic
 	}
 
 	compiled, err := aggcompiler.New(inputs, outputs).CompileString(string(*c.Pipeline))
@@ -184,6 +247,29 @@ func (inst *operatorInstance) loadController(c *spec.Controller) error {
 	if len(entries) == 0 {
 		entries = []transform.TransformSpec{{Name: "Reconciler"}, {Name: "Distincter"}, {Name: "Incrementalizer"}}
 	}
+	// Transform pairs name streams; the circuit's nodes are named by
+	// topic, so map them (unknown names pass through as given).
+	mapped := make([]transform.TransformSpec, 0, len(entries))
+	for _, e := range entries {
+		if len(e.Pairs) > 0 {
+			pairs := make([][]string, 0, len(e.Pairs))
+			for _, p := range e.Pairs {
+				q := append([]string{}, p...)
+				if len(q) == 2 {
+					if t, ok := inTopics[q[0]]; ok {
+						q[0] = t
+					}
+					if t, ok := outTopics[q[1]]; ok {
+						q[1] = t
+					}
+				}
+				pairs = append(pairs, q)
+			}
+			e.Pairs = pairs
+		}
+		mapped = append(mapped, e)
+	}
+	entries = mapped
 	chain, err := transform.NewChainFromSpecs(entries)
 	if err != nil {
 		return fmt.Errorf("transform: %w", err)
@@ -210,14 +296,21 @@ func (inst *operatorInstance) loadController(c *spec.Controller) error {
 
 	// Targets first: the output consumers must be subscribed before any
 	// source starts flowing, or the circuit's first outputs land in the
-	// topic integral and replay as one batched delta.
+	// topic integral and replay as one batched delta. Topic-group streams
+	// bind nothing: the shared topic is the binding.
 	for i := range c.Targets {
-		if err := inst.bindTarget(prefix, &c.Targets[i]); err != nil {
+		if isTopicGroup(c.Targets[i].Resource) {
+			continue
+		}
+		if err := inst.bindTarget(outTopics[streamName(c.Targets[i].As, c.Targets[i].Kind)], &c.Targets[i]); err != nil {
 			return err
 		}
 	}
 	for i := range c.Sources {
-		if err := inst.bindSource(prefix, &c.Sources[i]); err != nil {
+		if isTopicGroup(c.Sources[i].Resource) {
+			continue
+		}
+		if err := inst.bindSource(inTopics[streamName(c.Sources[i].As, c.Sources[i].Kind)], &c.Sources[i]); err != nil {
 			return err
 		}
 	}
@@ -240,9 +333,8 @@ func rawParams(p *json.RawMessage, target any) error {
 	return json.Unmarshal(*p, target)
 }
 
-func (inst *operatorInstance) bindTarget(prefix string, t *spec.Target) error {
+func (inst *operatorInstance) bindTarget(topic string, t *spec.Target) error {
 	v := inst.vm
-	topic := prefix + "/" + t.Kind + "/output"
 	gvk, err := inst.resolveSpecGVK(t.Resource)
 	if err != nil {
 		return err
@@ -297,9 +389,8 @@ func (inst *operatorInstance) bindTarget(prefix string, t *spec.Target) error {
 	}
 }
 
-func (inst *operatorInstance) bindSource(prefix string, s *spec.Source) error {
+func (inst *operatorInstance) bindSource(topic string, s *spec.Source) error {
 	v := inst.vm
-	topic := prefix + "/" + s.Kind + "/input"
 	gvk, err := inst.resolveSpecGVK(s.Resource)
 	if err != nil {
 		return err

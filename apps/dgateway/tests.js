@@ -13,9 +13,8 @@
 // Run from the repo root:  ./js/bin/dbsp apps/dgateway/index.js test
 
 const { describe, assert } = require("testing");
-const { TOPICS, CONTROLLER_NAME } = require("./lib/config.js");
+const { TOPICS, CONTROLLER_NAME, OPERATOR } = require("./lib/config.js");
 const { compilePipeline } = require("./lib/pipeline.js");
-const { installXds } = require("./lib/xdsmap.js");
 const {
   collector,
   expectEqual,
@@ -35,8 +34,12 @@ const timeOf = (conditions, type) => conditions.find((cc) => cc.type === type).l
 const held = {};
 
 function setup() {
-  compilePipeline({ topics: TOPICS });
-  const server = installXds({ topics: TOPICS, address: "127.0.0.1:0" });
+  // The xDS egress server carries the operator's name; the loader binds
+  // the xDS targets to it. Everything else is topic-driven: the watched
+  // resources are published by the cases and the statuses read back from
+  // the shared status topics.
+  const server = xds.server.start({ name: OPERATOR, address: "127.0.0.1:0" });
+  compilePipeline({});
 
   // Watch our own xDS server back into verification topics.
   xds.watch("verify.lds", { type: "lds", address: server.address });

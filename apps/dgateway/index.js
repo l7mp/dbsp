@@ -37,9 +37,8 @@ function runHelp() {
 }
 
 function runController() {
-  const { TOPICS, GVKS } = require("./lib/config.js");
+  const { OPERATOR } = require("./lib/config.js");
   const { compilePipeline } = require("./lib/pipeline.js");
-  const { installXds } = require("./lib/xdsmap.js");
   const { createLogger } = require("log");
 
   const logger = createLogger("delta-gateway");
@@ -57,8 +56,16 @@ function runController() {
   if (!["reconciler", "open", "sotw", "smith"].includes(loopMode)) {
     throw new Error(`unsupported --mode ${loopMode}; use reconciler, open, sotw or smith`);
   }
+  // The xDS egress server carries the operator's name; the loader binds
+  // the xDS targets to it.
+  const server = xds.server.start({
+    name: OPERATOR,
+    address: argv["xds-address"] || "127.0.0.1:18000",
+  });
+  logger.info(`xDS server listening on ${server.address}`);
+
   const pipeline = compilePipeline({
-    topics: TOPICS,
+    bindings: "kubernetes",
     addressPool: argv["address-pool"],
     reconcile: loopMode === "reconciler",
     sotw: loopMode === "sotw",
@@ -75,27 +82,6 @@ function runController() {
       pipeline.observe(layer, (e) => console.log(`[debug:${layer}]`, JSON.stringify(e)));
     }
   }
-  const server = installXds({
-    topics: TOPICS,
-    address: argv["xds-address"] || "127.0.0.1:18000",
-  });
-  logger.info(`xDS server listening on ${server.address}`);
-
-  kubernetes.watch(TOPICS.inputs.gatewayClass, { gvk: GVKS.gatewayClass });
-  kubernetes.watch(TOPICS.inputs.gateway, { gvk: GVKS.gateway });
-  kubernetes.watch(TOPICS.inputs.route, { gvk: GVKS.httpRoute });
-  kubernetes.watch(TOPICS.inputs.service, { gvk: GVKS.service });
-  kubernetes.watch(TOPICS.inputs.endpointSlice, { gvk: GVKS.endpointSlice });
-  kubernetes.watch(TOPICS.inputs.secret, { gvk: GVKS.secret });
-  kubernetes.watch(TOPICS.inputs.backendTLSPolicy, { gvk: GVKS.backendTLSPolicy });
-  kubernetes.watch(TOPICS.inputs.namespace, { gvk: GVKS.namespace });
-
-  // Status documents carry only metadata + status; the patcher writes the
-  // status via the status subresource.
-  kubernetes.patch(TOPICS.status.gatewayClass, { gvk: GVKS.gatewayClass });
-  kubernetes.patch(TOPICS.status.gateway, { gvk: GVKS.gateway });
-  kubernetes.patch(TOPICS.status.httpRoute, { gvk: GVKS.httpRoute });
-
   logger.info(`delta-gateway controller started (mode ${loopMode})`);
 }
 

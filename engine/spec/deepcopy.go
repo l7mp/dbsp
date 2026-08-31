@@ -45,6 +45,7 @@ func (in *Resource) DeepCopy() *Resource {
 // DeepCopyInto copies the receiver into out.
 func (in *Source) DeepCopyInto(out *Source) {
 	in.Resource.DeepCopyInto(&out.Resource)
+	out.As = in.As
 	out.Type = in.Type
 	out.Level = in.Level
 	out.Namespace = copyString(in.Namespace)
@@ -66,6 +67,7 @@ func (in *Source) DeepCopy() *Source {
 // DeepCopyInto copies the receiver into out.
 func (in *Target) DeepCopyInto(out *Target) {
 	in.Resource.DeepCopyInto(&out.Resource)
+	out.As = in.As
 	out.Type = in.Type
 	out.Level = in.Level
 	out.Parameters = copyRaw(in.Parameters)
