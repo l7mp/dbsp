@@ -1,0 +1,3 @@
+# Build artifacts of the conformance harness (rebuilt by run.sh).
+conformance/bin/
+*.log

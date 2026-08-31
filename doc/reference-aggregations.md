@@ -125,7 +125,7 @@ predicate.
 
 The `soft` option turns the named inputs into left-join sides: rows of the other (hard) inputs are
 kept even when no partner matches, with the soft input's namespace set to `null` (test it with
-`@isnull`, or default fields with `@definedOr`).
+`@isnil`, or default fields with `@definedOr`).
 
 ```yaml
 "@join":
