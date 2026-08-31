@@ -272,6 +272,56 @@ publish("stamp-in", [[{obj: "x", status: "False", reason: "Init"}, 1]]);
 		}
 	})
 
+	It("emits and retracts misc trigger documents", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		initC, err := newCollectingConsumer("init-collector", vm.runtime, "trigger-init")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(initC)).To(Succeed())
+		tickC, err := newCollectingConsumer("tick-collector", vm.runtime, "trigger-tick")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(tickC)).To(Succeed())
+
+		Expect(runScript(vm, `misc.init("x", {kind: "Boot"});`)).NotTo(Succeed())
+		Expect(runScript(vm, `
+misc.init("trigger-init", {kind: "Timer", name: "boot"});
+misc.tick("trigger-tick", {kind: "Timer", name: "fast", period: "30ms"});
+`)).To(Succeed())
+
+		Eventually(func() int { return len(initC.Snapshot()) }, 2*time.Second, 10*time.Millisecond).Should(BeNumerically(">=", 1))
+		first := initC.Snapshot()[0].Data.Entries()
+		Expect(first).To(HaveLen(1))
+		kind, err := first[0].Document.GetField("$.kind")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(kind).To(Equal("Timer"))
+		bootName, err := first[0].Document.GetField("$.name")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(bootName).To(Equal("boot"))
+
+		// The second tick retracts the first trigger document: the topic
+		// holds exactly the current trigger, carrying the Timer kind and
+		// the timer's name.
+		Eventually(func() bool {
+			for _, ev := range tickC.Snapshot() {
+				for _, e := range ev.Data.Entries() {
+					if e.Weight < 0 {
+						return true
+					}
+				}
+			}
+			return false
+		}, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
+		tick := tickC.Snapshot()[0].Data.Entries()[0].Document
+		kind, err = tick.GetField("$.kind")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(kind).To(Equal("Timer"))
+		name, err := tick.GetField("$.name")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(name).To(Equal("fast"))
+	})
+
 	It("subscribe.then receives events from topic", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

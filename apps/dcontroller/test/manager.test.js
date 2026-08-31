@@ -166,7 +166,8 @@ function waitForAnnotation(svcName, key, expected, timeoutMs = 45000) {
 // --- Domain helpers --------------------------------------------------------
 
 // Annotates every Service in TESTNS with its spec.type under annotationKey.
-function makeServiceTypeOperator(name, annotationKey) {
+// The optional transforms list replaces the default transform chain.
+function makeServiceTypeOperator(name, annotationKey, transforms) {
     return {
         apiVersion: "dcontroller.io/v1alpha1",
         kind: "Operator",
@@ -185,6 +186,7 @@ function makeServiceTypeOperator(name, annotationKey) {
                     } },
                 ],
                 targets: [{ apiGroup: "", kind: "Service", type: "Patcher" }],
+                ...(transforms ? { transforms } : {}),
             }],
         },
     };
@@ -284,6 +286,30 @@ describe("manager", (it) => {
         if (ann !== "NodePort") {
             throw new Error(`expected stale annotation "NodePort" after operator delete, got "${ann}"`);
         }
+    });
+
+    it("runs a controller with an explicit transforms list", async () => {
+        // Open loop: the Incrementalizer alone, no Reconciler pass.
+        injectSvc("transforms-svc");
+        await waitForSvcSeen("transforms-svc");
+        publish("write-operator", [[makeServiceTypeOperator("transforms-operator",
+            "dcontroller.io/service-type-t", [{ name: "Incrementalizer" }]), 1]]);
+        await waitForOpStatus("transforms-operator", "True", "Ready");
+        await waitForAnnotation("transforms-svc", "dcontroller.io/service-type-t", "ClusterIP");
+        deleteOperator("transforms-operator");
+        await sleep(300);
+        deleteSvc("transforms-svc");
+    });
+
+    it("rejects an unknown transform with a NotReady status", async () => {
+        publish("write-operator", [[makeServiceTypeOperator("bad-transforms-operator",
+            "dcontroller.io/service-type-x", [{ name: "NoSuchTransform" }]), 1]]);
+        const status = await waitForOpStatus("bad-transforms-operator", "False", "NotReady",
+            s => (s.lastErrors || []).length > 0);
+        if (!(status.lastErrors || []).join(" ").includes("NoSuchTransform")) {
+            throw new Error(`expected the unknown transform in lastErrors, got ${JSON.stringify(status.lastErrors)}`);
+        }
+        deleteOperator("bad-transforms-operator");
     });
 
     it("publishes NotReady status for invalid operator specs", async () => {

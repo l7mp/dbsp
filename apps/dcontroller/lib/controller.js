@@ -3,56 +3,24 @@
 const { resolveResourceGVK, gvkToString } = require("./gvk");
 
 const SOURCE_TYPE_WATCHER = "Watcher";
-const SOURCE_TYPE_LISTER = "Lister";
-const SOURCE_TYPE_PERIODIC = "Periodic";
-const SOURCE_TYPE_ONESHOT = "OneShot";
 
 const TARGET_TYPE_UPDATER = "Updater";
 const TARGET_TYPE_PATCHER = "Patcher";
 
-function parseDurationMillis(raw) {
-    const s = String(raw).trim();
-    const match = s.match(/^([0-9]+)(ms|s|m|h)$/);
-    if (!match) {
-        throw new Error(`unsupported duration format ${JSON.stringify(s)}`);
-    }
-    const n = Number(match[1]);
-    switch (match[2]) {
-    case "ms": return n;
-    case "s":  return n * 1000;
-    case "m":  return n * 60 * 1000;
-    default:   return n * 60 * 60 * 1000;
-    }
-}
-
-function virtualTriggerDocument(sourceType, triggerKind, namespace, triggerName) {
-    const doc = {
-        type: sourceType,
-        kind: triggerKind,
-        name: triggerName,
-        triggeredAt: new Date().toISOString(),
-    };
-    if (namespace) {
-        doc.namespace = namespace;
-    }
-    return doc;
-}
-
-function noopHandle(name) {
-    return { close() {}, name() { return name; } };
-}
-
-function timerHandle(name, closeFn) {
-    let closed = false;
-    return {
-        close() {
-            if (closed) return;
-            closed = true;
-            closeFn();
-        },
-        name() { return name; },
-    };
-}
+// Group routing: the resource group of a source/target selects the
+// connector that binds it, and the source/target type names the
+// connector's verb. Absent and Kubernetes API groups (and the operator's
+// own view group) bind through the Kubernetes connector; every other
+// connector lives under connector.dcontroller.io.
+const XDS_GROUP = "xds.connector.dcontroller.io";
+const MISC_GROUP = "misc.connector.dcontroller.io";
+// xds resource kinds to delta-ADS type URLs shorthands.
+const XDS_TYPES = {
+    Listener: "lds",
+    RouteConfiguration: "rds",
+    Cluster: "cds",
+    ClusterLoadAssignment: "eds",
+};
 
 function closeHandle(handle, logger) {
     try {
@@ -69,24 +37,18 @@ function exactlyOneOf3(a, b, c) {
     return [a, b, c].filter(Boolean).length === 1;
 }
 
-function applyTransforms(circuitHandle, opts) {
-    if (opts.disableIncrementalizer && !opts.disableReconciler) {
-        throw new Error("options.disableIncrementalizer=true requires options.disableReconciler=true");
+function applyTransforms(circuitHandle, controllerSpec) {
+    // The transforms list states WHAT the controller is; the engine
+    // applies the set in canonical order as one atomic step. An absent
+    // list means the default chain.
+    const transforms = controllerSpec.transforms || [
+        { name: "Reconciler" },
+        { name: "Distincter" },
+        { name: "Incrementalizer" },
+    ];
+    if (transforms.length > 0) {
+        circuitHandle.transform(transforms);
     }
-
-    // List form: the engine applies the set in canonical order as one
-    // atomic step.
-    const transforms = [];
-    if (!opts.disableIncrementalizer && !opts.disableReconciler) {
-        transforms.push({ name: "Reconciler" });
-    }
-    if (!opts.disableDistincter) {
-        transforms.push({ name: "Distincter" });
-    }
-    if (!opts.disableIncrementalizer) {
-        transforms.push({ name: "Incrementalizer" });
-    }
-    circuitHandle.transform(transforms);
 }
 
 function parseConfigs(operatorName, specs) {
@@ -100,6 +62,14 @@ function startSourceHandle(controllerPrefix, controllerSpec, sourceConfig) {
     const source = sourceConfig.spec;
     const sourceType = source.type || SOURCE_TYPE_WATCHER;
     const topic = `${controllerPrefix}/${source.kind}/input`;
+
+    if (sourceConfig.gvk.group === XDS_GROUP) {
+        return startXdsSourceHandle(topic, source);
+    }
+    if (sourceConfig.gvk.group === MISC_GROUP) {
+        return startMiscSourceHandle(topic, source, sourceType);
+    }
+
     const opts = { gvk: sourceConfig.gvkRef };
 
     if (source.namespace) {
@@ -114,49 +84,108 @@ function startSourceHandle(controllerPrefix, controllerSpec, sourceConfig) {
 
     switch (sourceType) {
     case SOURCE_TYPE_WATCHER:
-        return kubernetes.watch(topic, opts);
-    case SOURCE_TYPE_LISTER:
-        return kubernetes.list(topic, opts);
-    case SOURCE_TYPE_PERIODIC: {
-        if (source.parameters?.period == null) {
-            throw new Error(`periodic source ${JSON.stringify(source.kind)} requires parameters.period`);
-        }
-        const periodMs = parseDurationMillis(source.parameters.period);
-        const timer = setInterval(() => {
-            const doc = virtualTriggerDocument(SOURCE_TYPE_PERIODIC, source.kind, source.namespace || "", "periodic-trigger");
-            publish(topic, [[doc, 1]]);
-        }, periodMs);
-        return timerHandle(`dcontroller-periodic-${controllerSpec.name}-${source.kind}`, () => clearInterval(timer));
-    }
-    case SOURCE_TYPE_ONESHOT: {
-        const doc = virtualTriggerDocument(SOURCE_TYPE_ONESHOT, source.kind, source.namespace || "", "one-shot-trigger");
-        publish(topic, [[doc, 1]]);
-        return noopHandle(`dcontroller-oneshot-${controllerSpec.name}-${source.kind}`);
-    }
+        // level: full snapshots per event instead of deltas.
+        return source.level ? kubernetes.list(topic, opts) : kubernetes.watch(topic, opts);
     default:
         throw new Error(`unknown source type ${JSON.stringify(sourceType)} for ${JSON.stringify(source.kind)}`);
     }
 }
 
-function startTargetHandle(controllerPrefix, targetConfig) {
+// Misc-group sources bind through the connector's own verb table: the
+// source type names the verb (Tick -> misc.tick), and kind and
+// parameters pass through as is; the connector rejects what it does not
+// offer. Only the connector's default verb is known here.
+function startMiscSourceHandle(topic, source, sourceType) {
+    const type = sourceType === SOURCE_TYPE_WATCHER ? "Tick" : sourceType;
+    const bind = misc[type.toLowerCase()];
+    if (typeof bind !== "function") {
+        throw new Error(`unknown misc source type ${JSON.stringify(type)} for ${JSON.stringify(source.kind)}`);
+    }
+    const opts = { kind: source.kind, ...(source.parameters || {}) };
+    if (source.namespace) {
+        opts.namespace = source.namespace;
+    }
+    return bind(topic, opts);
+}
+
+function startTargetHandle(operatorName, controllerPrefix, targetConfig) {
     const target = targetConfig.spec;
     const targetType = target.type || TARGET_TYPE_UPDATER;
     const topic = `${controllerPrefix}/${target.kind}/output`;
-    const opts = { gvk: targetConfig.gvkRef };
 
+    if (targetConfig.gvk.group === XDS_GROUP) {
+        return startXdsTargetHandle(operatorName, topic, target, targetType);
+    }
+
+    const opts = { gvk: targetConfig.gvkRef };
     switch (targetType) {
     case TARGET_TYPE_UPDATER:
-        return kubernetes.update(topic, opts);
+        // level: state-of-the-world ownership of the kind.
+        return target.level ? kubernetes.set(topic, opts) : kubernetes.update(topic, opts);
     case TARGET_TYPE_PATCHER:
+        // level has no Patcher mode; it is ignored here.
         return kubernetes.patch(topic, opts);
     default:
         throw new Error(`unknown target type ${JSON.stringify(targetType)} for ${JSON.stringify(target.kind)}`);
     }
 }
 
+function xdsTypeOf(kind) {
+    const type = XDS_TYPES[kind];
+    if (!type) {
+        throw new Error(`unknown xds resource kind ${JSON.stringify(kind)}; one of ${Object.keys(XDS_TYPES).join(", ")}`);
+    }
+    return type;
+}
+
+// The per-operator xds egress servers, started lazily by the first target
+// naming an address (the server name is "<operator>[/<name>]", so
+// operators never share a server and a restarted operator reuses its
+// running one).
+const xdsServers = new Set();
+
+function ensureXdsServer(operatorName, parameters) {
+    const name = parameters?.server ? `${operatorName}/${parameters.server}` : operatorName;
+    if (!xdsServers.has(name)) {
+        if (!parameters?.address) {
+            throw new Error(`xds server ${JSON.stringify(name)} is not running and the target names no parameters.address to start it`);
+        }
+        xds.server.start({ name, address: parameters.address });
+        xdsServers.add(name);
+    }
+    return name;
+}
+
+function startXdsTargetHandle(operatorName, topic, target, targetType) {
+    if (targetType !== TARGET_TYPE_UPDATER) {
+        throw new Error(`xds target ${JSON.stringify(target.kind)}: only Updater targets exist on the xds connector`);
+    }
+    const server = ensureXdsServer(operatorName, target.parameters);
+    const opts = { type: xdsTypeOf(target.kind), server };
+    // level: state-of-the-world egress.
+    return target.level ? xds.set(topic, opts) : xds.update(topic, opts);
+}
+
+function startXdsSourceHandle(topic, source) {
+    if (!source.parameters?.address) {
+        throw new Error(`xds source ${JSON.stringify(source.kind)} requires parameters.address`);
+    }
+    const opts = { type: xdsTypeOf(source.kind), address: source.parameters.address };
+    if (source.level) {
+        opts.level = true;
+    }
+    return xds.watch(topic, opts);
+}
+
 function startController(operatorName, controllerSpec, logger) {
     if (!exactlyOneOf3(controllerSpec.pipeline, controllerSpec.sql, controllerSpec.circuit)) {
         throw new Error("exactly one of spec.pipeline, spec.sql, or spec.circuit must be set");
+    }
+    if (controllerSpec.options) {
+        throw new Error("spec.options is gone; state the controller's transforms explicitly in spec.transforms");
+    }
+    if (controllerSpec.type) {
+        throw new Error("spec.type is gone; a state-of-the-world controller lists spec.transforms without the Incrementalizer");
     }
     if (!controllerSpec.pipeline) {
         throw new Error(`controller ${JSON.stringify(controllerSpec.name)}: only pipeline is supported in JS runtime`);
@@ -198,7 +227,7 @@ function startController(operatorName, controllerSpec, logger) {
         name: circuitName,
     });
 
-    applyTransforms(circuitHandle, controllerSpec.options || {});
+    applyTransforms(circuitHandle, controllerSpec);
     circuitHandle.commit();
 
     const components = new Set([circuitName]);
@@ -208,7 +237,7 @@ function startController(operatorName, controllerSpec, logger) {
         // source starts flowing, or the circuit's first outputs land in the
         // topic integral and replay as one batched delta.
         for (const targetConfig of targetConfigs) {
-            const h = startTargetHandle(controllerPrefix, targetConfig);
+            const h = startTargetHandle(operatorName, controllerPrefix, targetConfig);
             handles.push(h);
             components.add(h.name());
         }
@@ -246,6 +275,5 @@ function startController(operatorName, controllerSpec, logger) {
 
 module.exports = {
     startController,
-    parseDurationMillis,
     exactlyOneOf3,
 };

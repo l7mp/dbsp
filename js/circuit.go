@@ -9,7 +9,6 @@ import (
 
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
-	dbspexpr "github.com/l7mp/dbsp/engine/expression/dbsp"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -50,58 +49,22 @@ func (h *circuitHandle) hasApplied(typ transform.TransformerType) bool {
 	return false
 }
 
-type circuitTransformOptions struct {
-	Pairs [][]string      `json:"pairs"`
-	K     int             `json:"k"`
-	Key   json.RawMessage `json:"key"`
-}
-
-// transformEntry is the .transform() argument: a transformer name with its
-// options inline, {name: "...", ...opts}. Every entry is an object, also
-// in the list form, so transform lists serialize uniformly (the same shape
-// a CRD field carries).
-type transformEntry struct {
-	Name string `json:"name"`
-	circuitTransformOptions
-}
-
-func parseTransformEntry(arg goja.Value) (transformEntry, error) {
-	var e transformEntry
+// parseTransformEntry decodes a .transform() argument, {name: "...",
+// ...opts}: the transform.TransformSpec wire shape, the same one a
+// serialized controller (engine/spec) carries. Every entry is an object,
+// also in the list form, so transform lists serialize uniformly.
+func parseTransformEntry(arg goja.Value) (transform.TransformSpec, error) {
+	var e transform.TransformSpec
 	if arg == nil || goja.IsUndefined(arg) || goja.IsNull(arg) {
 		return e, fmt.Errorf("missing transformer entry")
 	}
 	if err := decodeOptionValue(arg, &e); err != nil {
 		return e, fmt.Errorf("transform entry: %w", err)
 	}
-	e.Name = strings.TrimSpace(e.Name)
-	if e.Name == "" {
+	if strings.TrimSpace(e.Name) == "" {
 		return e, fmt.Errorf("empty transformer name")
 	}
 	return e, nil
-}
-
-// parseTopicPairs converts JS-side [input, output] topic-name pairs into
-// ReconcilerPairs with canonical node IDs.
-func parseTopicPairs(typ transform.TransformerType, raw [][]string) ([]transform.ReconcilerPair, error) {
-	pairs := make([]transform.ReconcilerPair, 0, len(raw))
-	for i, p := range raw {
-		if len(p) != 2 {
-			return nil, fmt.Errorf("transform %s: pair %d must have exactly 2 elements", typ, i)
-		}
-		inputID := strings.TrimSpace(p[0])
-		outputID := strings.TrimSpace(p[1])
-		if inputID == "" || outputID == "" {
-			return nil, fmt.Errorf("transform %s: pair %d must not contain empty values", typ, i)
-		}
-		if !strings.HasPrefix(inputID, "input_") {
-			inputID = circuit.InputNodeID(inputID)
-		}
-		if !strings.HasPrefix(outputID, "output_") {
-			outputID = circuit.OutputNodeID(outputID)
-		}
-		pairs = append(pairs, transform.ReconcilerPair{InputID: inputID, OutputID: outputID})
-	}
-	return pairs, nil
 }
 
 // commit validates the circuit and installs it into the runtime, replacing
@@ -137,47 +100,6 @@ func (h *circuitHandle) commit() error {
 	return nil
 }
 
-// parseTransformArgs converts JS-side transform options into the argument
-// list transform.New expects for the given transformer type.
-func parseTransformArgs(typ transform.TransformerType, jsOpts circuitTransformOptions) ([]any, error) {
-	var args []any
-
-	switch typ {
-	case transform.Incrementalizer:
-	case transform.Distincter:
-		// The optional key turns the plain distinct into distinct_π:
-		// group_by(key) plus a lexmin representative per key.
-		if len(jsOpts.Key) > 0 {
-			key, err := dbspexpr.Compile(jsOpts.Key)
-			if err != nil {
-				return nil, fmt.Errorf("transform %s: key: %w", typ, err)
-			}
-			args = append(args, key)
-		}
-	case transform.Rewriter:
-		return nil, fmt.Errorf("transform %s: not a user-facing transform", typ)
-	case transform.Reconciler:
-		if len(jsOpts.Pairs) > 0 {
-			pairs, err := parseTopicPairs(typ, jsOpts.Pairs)
-			if err != nil {
-				return nil, err
-			}
-			args = append(args, pairs)
-		}
-	case transform.SmithPredictor:
-		if len(jsOpts.Pairs) > 0 {
-			pairs, err := parseTopicPairs(typ, jsOpts.Pairs)
-			if err != nil {
-				return nil, err
-			}
-			args = append(args, pairs)
-		}
-		args = append(args, jsOpts.K)
-	}
-
-	return args, nil
-}
-
 // applyTransformer runs a transformer over the circuit and validates the
 // result. It does not install: the transformed circuit reaches the runtime on
 // the next commit. A failed transform leaves the handle on its previous
@@ -196,32 +118,30 @@ func (h *circuitHandle) applyTransformer(label string, t transform.Transformer) 
 	return nil
 }
 
-func (h *circuitHandle) doTransform(entry transformEntry) error {
-	typ := transform.TransformerType(entry.Name)
+func (h *circuitHandle) doTransform(entry transform.TransformSpec) error {
+	spec, err := entry.Spec()
+	if err != nil {
+		return fmt.Errorf("transform: %w", err)
+	}
 
 	// The Smith compensator is a snapshot-side construction: the distinct
 	// it injects must be compiled by the Incrementalizer, so applying it to
 	// an already-incremental circuit would run the distinct on delta
 	// streams.
-	if typ == transform.SmithPredictor && h.hasApplied(transform.Incrementalizer) {
-		return fmt.Errorf("transform %s: the circuit is already incremental", typ)
+	if spec.Type == transform.SmithPredictor && h.hasApplied(transform.Incrementalizer) {
+		return fmt.Errorf("transform %s: the circuit is already incremental", spec.Type)
 	}
 
-	args, err := parseTransformArgs(typ, entry.circuitTransformOptions)
-	if err != nil {
-		return err
-	}
-
-	t, err := transform.New(typ, args...)
+	t, err := transform.New(spec.Type, spec.Args...)
 	if err != nil {
 		return fmt.Errorf("transform: %w", err)
 	}
 
-	if err := h.applyTransformer(string(typ), t); err != nil {
+	if err := h.applyTransformer(string(spec.Type), t); err != nil {
 		return err
 	}
 
-	h.applied = append(h.applied, typ)
+	h.applied = append(h.applied, spec.Type)
 	return nil
 }
 
@@ -233,12 +153,12 @@ func (h *circuitHandle) doTransformChain(raw []any) error {
 		return fmt.Errorf("circuit.transform([...]) requires at least one transform")
 	}
 
-	specs := make([]transform.Spec, 0, len(raw))
+	entries := make([]transform.TransformSpec, 0, len(raw))
 	for i, el := range raw {
 		if _, ok := el.(string); ok {
 			return fmt.Errorf("transform list entry %d: expected a {name, ...} object, got a string", i)
 		}
-		var entry transformEntry
+		var entry transform.TransformSpec
 		data, err := json.Marshal(el)
 		if err != nil {
 			return fmt.Errorf("transform list entry %d: %w", i, err)
@@ -246,19 +166,10 @@ func (h *circuitHandle) doTransformChain(raw []any) error {
 		if err := json.Unmarshal(data, &entry); err != nil {
 			return fmt.Errorf("transform list entry %d: %w", i, err)
 		}
-		entry.Name = strings.TrimSpace(entry.Name)
-		if entry.Name == "" {
-			return fmt.Errorf("transform list entry %d: missing transformer name", i)
-		}
-		typ := transform.TransformerType(entry.Name)
-		args, err := parseTransformArgs(typ, entry.circuitTransformOptions)
-		if err != nil {
-			return err
-		}
-		specs = append(specs, transform.Spec{Type: typ, Args: args})
+		entries = append(entries, entry)
 	}
 
-	ch, err := transform.NewChain(specs...)
+	ch, err := transform.NewChainFromSpecs(entries)
 	if err != nil {
 		return fmt.Errorf("transform: %w", err)
 	}

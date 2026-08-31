@@ -774,6 +774,14 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 
+	miscObj, err := v.newMiscNamespace()
+	if err != nil {
+		return err
+	}
+	if err := v.rt.Set("misc", miscObj); err != nil {
+		return err
+	}
+
 	fmtObj := v.rt.NewObject()
 	if err := fmtObj.Set("jsonl", v.wrap(v.formatJSONL)); err != nil {
 		return err

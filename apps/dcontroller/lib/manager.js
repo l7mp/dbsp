@@ -32,6 +32,13 @@ class DControllerManager {
     start() {
         kubernetes.runtime.start(this.runtimeConfig);
 
+        // The Kubernetes connector's expression operators (@selectorMatches,
+        // @rego, ...) are part of the pipeline language every hosted
+        // operator compiles against, so the full table is bound up front
+        // (init phase: before the first Operator pipeline is compiled).
+        // The operators are pure Go callbacks and need no cluster.
+        kubernetes.expression.register(...kubernetes.expression.list());
+
         // The manager decorates the Operator objects it watches: it maintains
         // their status but does not own them, so status goes through a
         // Patcher, which never creates. A status write racing an operator
