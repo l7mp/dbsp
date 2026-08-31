@@ -1,12 +1,14 @@
 package js
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/dop251/goja"
 
+	aggcompiler "github.com/l7mp/dbsp/engine/compiler/aggregation"
 	dbspsqlcompiler "github.com/l7mp/dbsp/engine/compiler/sql"
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
 )
@@ -84,7 +86,15 @@ func (v *VM) sqlCompile(call goja.FunctionCall) (goja.Value, error) {
 
 	compiled.OutputMap = outputMap
 	compiled.OutputLogicalMap = remapOutputLogicalMap(originalOutputMap, originalOutputLogicalMap, outputMap, binding.Name, binding.Logical)
-	h := &circuitHandle{c: compiled.Circuit, query: compiled, vm: v}
+	srcJSON, err := json.Marshal(query)
+	if err != nil {
+		return nil, fmt.Errorf("sql.compile: marshal query: %w", err)
+	}
+	h := &circuitHandle{
+		c: compiled.Circuit, query: compiled, vm: v,
+		srcKind: "sql", src: srcJSON,
+		bindOut: []aggcompiler.Binding{{Name: binding.Name, Logical: binding.Logical}},
+	}
 	if err := validateCircuit(h.c); err != nil {
 		return nil, fmt.Errorf("sql.compile: %w", err)
 	}

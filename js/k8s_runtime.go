@@ -191,27 +191,46 @@ func (v *VM) k8sRuntimeRegisterViews(call goja.FunctionCall) (goja.Value, error)
 		return nil, fmt.Errorf("kubernetes.runtime.registerViews: %w", err)
 	}
 
-	krt, err := v.ensureK8sRuntime()
-	if err != nil {
+	if err := v.registerViewGVKList(gvks); err != nil {
 		return nil, fmt.Errorf("kubernetes.runtime.registerViews: %w", err)
 	}
 
+	return goja.Undefined(), nil
+}
+
+// registerViewGVKList binds view GVKs into the runtime's discovery and
+// API server; every registration path funnels through it.
+func (v *VM) registerViewGVKList(gvks []schema.GroupVersionKind) error {
+	krt, err := v.ensureK8sRuntime()
+	if err != nil {
+		return err
+	}
 	for _, gvk := range gvks {
 		if !viewv1a1.IsViewGroup(gvk.Group) {
-			return nil, fmt.Errorf("%s is not a view group", gvk.Group)
+			return fmt.Errorf("%s is not a view group", gvk.Group)
 		}
 		if err := krt.GetDiscovery().RegisterViewGVK(gvk); err != nil {
-			return nil, fmt.Errorf("register discovery GVK %s: %w", gvk.String(), err)
+			return fmt.Errorf("register discovery GVK %s: %w", gvk.String(), err)
 		}
 	}
-
 	if api := krt.GetAPIServer(); api != nil {
 		if err := api.RegisterGVKs(gvks); err != nil {
-			return nil, fmt.Errorf("register API server GVKs: %w", err)
+			return fmt.Errorf("register API server GVKs: %w", err)
 		}
 	}
+	return nil
+}
 
-	return goja.Undefined(), nil
+// unregisterViewGVKList removes view GVKs from the runtime's API server.
+func (v *VM) unregisterViewGVKList(gvks []schema.GroupVersionKind) error {
+	krt, err := v.ensureK8sRuntime()
+	if err != nil {
+		return err
+	}
+	if api := krt.GetAPIServer(); api != nil {
+		api.UnregisterGVKs(gvks)
+	}
+	return nil
 }
 
 func (v *VM) k8sRuntimeUnregisterViews(call goja.FunctionCall) (goja.Value, error) {

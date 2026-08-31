@@ -9,6 +9,7 @@ import (
 
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
+	aggcompiler "github.com/l7mp/dbsp/engine/compiler/aggregation"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
@@ -22,6 +23,49 @@ type circuitHandle struct {
 	obsFn   goja.Callable
 	applied []transform.TransformerType
 	seq     int // auto-id counter for hand-built nodes
+
+	// The handle's serialized form, printed by spec(): the program source
+	// (pipeline or sql), the topic bindings, and the transforms applied.
+	srcKind        string
+	src            json.RawMessage
+	bindIn         []aggcompiler.Binding
+	bindOut        []aggcompiler.Binding
+	specName       string
+	transformSpecs []transform.TransformSpec
+}
+
+// specValue returns the handle's serialized form: the source program, the
+// bindings, and the transform entries applied so far.
+func (h *circuitHandle) specValue() map[string]any {
+	doc := map[string]any{}
+	if h.srcKind != "" && len(h.src) > 0 {
+		var parsed any
+		if err := json.Unmarshal(h.src, &parsed); err == nil {
+			doc[h.srcKind] = parsed
+		}
+	}
+	bindings := func(bs []aggcompiler.Binding) []map[string]any {
+		out := make([]map[string]any, 0, len(bs))
+		for _, b := range bs {
+			out = append(out, map[string]any{"name": b.Name, "logical": b.Logical})
+		}
+		return out
+	}
+	if len(h.bindIn) > 0 {
+		doc["inputs"] = bindings(h.bindIn)
+	}
+	if len(h.bindOut) > 0 {
+		doc["outputs"] = bindings(h.bindOut)
+	}
+	if h.specName != "" {
+		doc["name"] = h.specName
+	}
+	if len(h.transformSpecs) > 0 {
+		doc["transforms"] = specDocument(struct {
+			T []transform.TransformSpec `json:"t"`
+		}{h.transformSpecs})["t"]
+	}
+	return doc
 }
 
 // validateCircuit is the single well-formedness validator every circuit-
@@ -142,6 +186,7 @@ func (h *circuitHandle) doTransform(entry transform.TransformSpec) error {
 	}
 
 	h.applied = append(h.applied, spec.Type)
+	h.transformSpecs = append(h.transformSpecs, entry)
 	return nil
 }
 
@@ -187,6 +232,7 @@ func (h *circuitHandle) doTransformChain(raw []any) error {
 	for _, s := range ch.Specs() {
 		h.applied = append(h.applied, s.Type)
 	}
+	h.transformSpecs = append(h.transformSpecs, entries...)
 	return nil
 }
 
@@ -291,6 +337,10 @@ func (v *VM) observerPayload(node *circuit.Node, values map[string]zset.ZSet, sc
 
 func (h *circuitHandle) jsObject() *goja.Object {
 	obj := h.vm.rt.NewObject()
+
+	_ = obj.Set("spec", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		return h.vm.rt.ToValue(h.specValue()), nil
+	}))
 
 	_ = obj.Set("transform", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
 		if len(call.Arguments) != 1 {

@@ -782,6 +782,14 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 
+	operatorObj := v.rt.NewObject()
+	if err := operatorObj.Set("load", v.wrap(v.operatorLoad)); err != nil {
+		return err
+	}
+	if err := v.rt.Set("operator", operatorObj); err != nil {
+		return err
+	}
+
 	fmtObj := v.rt.NewObject()
 	if err := fmtObj.Set("jsonl", v.wrap(v.formatJSONL)); err != nil {
 		return err

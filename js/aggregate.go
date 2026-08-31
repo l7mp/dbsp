@@ -62,7 +62,11 @@ func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 		compiled.Circuit.SetName(compileName)
 	}
 
-	h := &circuitHandle{c: compiled.Circuit, query: compiled, vm: v}
+	h := &circuitHandle{
+		c: compiled.Circuit, query: compiled, vm: v,
+		srcKind: "pipeline", src: pipelineJSON,
+		bindIn: inputs, bindOut: outputs, specName: compileName,
+	}
 	if err := validateCircuit(h.c); err != nil {
 		return nil, fmt.Errorf("aggregate.compile: %w", err)
 	}

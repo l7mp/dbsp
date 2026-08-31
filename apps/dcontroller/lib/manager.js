@@ -130,10 +130,8 @@ class DControllerManager {
     // number of operators; runtime errors are rare.
     findOperatorByComponent(origin) {
         for (const [name, state] of this.operators) {
-            for (const ctrl of state.controllers) {
-                if (ctrl.components.has(origin)) {
-                    return { name, state };
-                }
+            if (state.components.has(origin)) {
+                return { name, state };
             }
         }
         return null;

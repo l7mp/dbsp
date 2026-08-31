@@ -272,6 +272,89 @@ publish("stamp-in", [[{obj: "x", status: "False", reason: "Init"}, 1]]);
 		}
 	})
 
+	It("loads a serialized operator end to end", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("load-collector", vm.runtime, "lds-verify")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		// A cluster-free operator: a misc Timer source drives a pipeline
+		// into an xds Listener target; the pre-started egress server is
+		// picked up by the loader through the operator's server name, and
+		// a delta-ADS client verifies the pushed resource.
+		script := `
+const srv = xds.server.start({ name: "optest", address: "127.0.0.1:0" });
+const handle = operator.load("optest", {
+  controllers: [{
+    name: "ticker",
+    sources: [{ apiGroup: "misc.connector.dcontroller.io", kind: "Timer",
+                parameters: { name: "t", period: "50ms" } }],
+    pipeline: [[
+      { "@inputs": ["Timer"] },
+      { "@project": { name: { "@concat": ["optest/", "$.name"] } } },
+      { "@output": "Listener" },
+    ]],
+    targets: [{ apiGroup: "xds.connector.dcontroller.io", kind: "Listener" }],
+    transforms: [{ name: "Incrementalizer" }],
+  }],
+});
+if (handle.spec().name !== "optest") { throw new Error("bad spec printer"); }
+xds.watch("lds-verify", { type: "lds", address: srv.address });
+`
+		Expect(runScript(vm, script)).To(Succeed())
+		Eventually(func() bool {
+			for _, ev := range collector.Snapshot() {
+				for _, e := range ev.Data.Entries() {
+					if name, err := e.Document.GetField("$.name"); err == nil && name == "optest/t" && e.Weight > 0 {
+						return true
+					}
+				}
+			}
+			return false
+		}, 5*time.Second, 20*time.Millisecond).Should(BeTrue())
+
+		// Unknown fields are rejected: the legacy type/options vocabulary
+		// names itself in the error.
+		Expect(runScript(vm, `operator.load("opbad", { controllers: [{name: "c", pipeline: [],
+			sources: [], targets: [], options: {}}] });`)).NotTo(Succeed())
+	})
+
+	It("prints the serialized form of bindings and circuits", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		collector, err := newCollectingConsumer("spec-collector", vm.runtime, "spec-out")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vm.runtime.Add(collector)).To(Succeed())
+
+		script := `
+const h = misc.tick("spec-tick", {kind: "Timer", name: "t", period: "1h"});
+const c = aggregate.compile([{"@project": {"$.": "$."}}],
+  { inputs: "spec-in", outputs: ["spec-circuit-out"], name: "spec-demo" });
+c.transform([{ name: "Incrementalizer" }]);
+publish("spec-out", [[{binding: h.spec(), circuit: c.spec()}, 1]]);
+`
+		Expect(runScript(vm, script)).To(Succeed())
+		Eventually(func() int { return len(collector.Snapshot()) }, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+		doc := collector.Snapshot()[0].Data.Entries()[0].Document
+		verb, err := doc.GetField("$.binding.verb")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verb).To(Equal("misc.tick"))
+		period, err := doc.GetField("$.binding.spec.period")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(period).To(Equal("1h"))
+		tname, err := doc.GetField("$.circuit.transforms[0].name")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tname).To(Equal("Incrementalizer"))
+		pin, err := doc.GetField("$.circuit.inputs[0].name")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pin).To(Equal("spec-in"))
+	})
+
 	It("emits and retracts misc trigger documents", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

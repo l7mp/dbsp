@@ -8,7 +8,6 @@ import (
 
 	"github.com/dop251/goja"
 	"k8s.io/apimachinery/pkg/api/meta"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -17,8 +16,6 @@ import (
 	k8sproducer "github.com/l7mp/dbsp/connectors/kubernetes/producer"
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
-	kpredicate "github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
-	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 // describeCall summarises the arguments of a goja call, for use in error
@@ -82,17 +79,6 @@ func newKubernetesClientset(cfg *rest.Config) (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(cfg)
 }
 
-type k8sWatchOptions struct {
-	GVK       string                `json:"gvk"`
-	Namespace string                `json:"namespace"`
-	Labels    map[string]string     `json:"labels"`
-	Predicate *kpredicate.Predicate `json:"predicate"`
-}
-
-type k8sConsumerOptions struct {
-	GVK string `json:"gvk"`
-}
-
 const k8sRuntimeComponentName = "kubernetes-runtime"
 
 type k8sRuntimeRunner struct {
@@ -135,9 +121,14 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 		return nil, fmt.Errorf("%s: empty topic", kind)
 	}
 
-	var opts k8sWatchOptions
-	if err := decodeOptionValue(call.Argument(1), &opts); err != nil {
+	// The options object is the connector's producer wire spec.
+	var spec k8sproducer.Spec
+	if err := decodeOptionValue(call.Argument(1), &spec); err != nil {
 		return nil, fmt.Errorf("%s options: %w", kind, err)
+	}
+	if listMode {
+		// kubernetes.list is the level mode of the watch verb.
+		spec.Level = true
 	}
 
 	var callback goja.Callable
@@ -157,14 +148,9 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
-	gvk, err := v.parseGVK(opts.GVK)
+	gvk, err := v.parseGVK(spec.GVK)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
-	}
-
-	var selector *v1.LabelSelector
-	if len(opts.Labels) > 0 {
-		selector = &v1.LabelSelector{MatchLabels: opts.Labels}
 	}
 
 	publishTopic := topic
@@ -178,64 +164,32 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 		callbackStop = v.registerProducerCallback(publishTopic, topic, internalKind+"-callback", callback)
 	}
 
-	producerKind := "watcher"
-	if listMode {
-		producerKind = "lister"
-	}
-
-	name := fmt.Sprintf("kubernetes-producer-%s-%s-%s", producerKind, topic, strings.ToLower(gvk.String()))
 	// Every connector gets its own client (own rate limiter, own connection
 	// pool): readers and writers must not contend on one token bucket.
 	producerClient, err := krt.NewCompositeClient()
 	if err != nil {
 		return nil, fmt.Errorf("%s: connector client: %w", kind, err)
 	}
-	baseCfg := k8sproducer.Config{
-		Client:        producerClient,
-		SourceGVK:     gvk,
-		Name:          name,
-		InputName:     publishTopic,
-		Namespace:     opts.Namespace,
-		LabelSelector: selector,
-		Predicate:     opts.Predicate,
-		Runtime:       v.runtime,
-		Logger:        v.logger,
+	runnable, err := k8sproducer.NewFromSpec(publishTopic, spec, k8sproducer.Deps{
+		Client:  producerClient,
+		GVK:     gvk,
+		Runtime: v.runtime,
+		Logger:  v.logger,
+	})
+	if err != nil {
+		if callbackStop != nil {
+			callbackStop()
+		}
+		return nil, fmt.Errorf("%s: %w", kind, err)
+	}
+	if err := v.runtime.Add(runnable); err != nil {
+		if callbackStop != nil {
+			callbackStop()
+		}
+		return nil, fmt.Errorf("%s: register producer: %w", kind, err)
 	}
 
-	var runnable dbspruntime.Runnable
-	if listMode {
-		p, err := k8sproducer.NewLister(baseCfg)
-		if err != nil {
-			if callbackStop != nil {
-				callbackStop()
-			}
-			return nil, fmt.Errorf("%s: %w", kind, err)
-		}
-		if err := v.runtime.Add(p); err != nil {
-			if callbackStop != nil {
-				callbackStop()
-			}
-			return nil, fmt.Errorf("%s: register lister: %w", kind, err)
-		}
-		runnable = p
-	} else {
-		p, err := k8sproducer.NewWatcher(baseCfg)
-		if err != nil {
-			if callbackStop != nil {
-				callbackStop()
-			}
-			return nil, fmt.Errorf("%s: %w", kind, err)
-		}
-		if err := v.runtime.Add(p); err != nil {
-			if callbackStop != nil {
-				callbackStop()
-			}
-			return nil, fmt.Errorf("%s: register watcher: %w", kind, err)
-		}
-		runnable = p
-	}
-
-	return v.runnableHandle(runnable, callbackStop), nil
+	return v.boundHandle(runnable, kind, topic, spec, callbackStop), nil
 }
 
 func (v *VM) k8sPatch(call goja.FunctionCall) (goja.Value, error) {
@@ -267,9 +221,18 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (go
 		return nil, fmt.Errorf("%s: empty topic", kind)
 	}
 
-	var opts k8sConsumerOptions
-	if err := decodeOptionValue(call.Argument(1), &opts); err != nil {
+	// The options object is the connector's consumer wire spec; the set
+	// verb is the level mode of update.
+	var spec k8sconsumer.Spec
+	if err := decodeOptionValue(call.Argument(1), &spec); err != nil {
 		return nil, fmt.Errorf("%s options: %w", kind, err)
+	}
+	verb := "update"
+	if consumerKind == "patcher" {
+		verb = "patch"
+	}
+	if consumerKind == "setter" {
+		spec.Level = true
 	}
 
 	krt, err := v.ensureK8sRuntime()
@@ -277,45 +240,31 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (go
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
-	gvk, err := v.parseGVK(opts.GVK)
+	gvk, err := v.parseGVK(spec.GVK)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
-	name := fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, topic, strings.ToLower(gvk.String()))
 	// Every connector gets its own client (own rate limiter, own connection
 	// pool): readers and writers must not contend on one token bucket.
 	consumerClient, err := krt.NewCompositeClient()
 	if err != nil {
 		return nil, fmt.Errorf("%s: connector client: %w", kind, err)
 	}
-	baseCfg := k8sconsumer.Config{
-		Client:     consumerClient,
-		Name:       name,
-		OutputName: topic,
-		TargetGVK:  gvk,
-		Runtime:    v.runtime,
-		Logger:     v.logger,
-	}
-
-	var consumer dbspruntime.Runnable
-	var newErr error
-	switch consumerKind {
-	case "patcher":
-		consumer, newErr = k8sconsumer.NewPatcher(baseCfg)
-	case "setter":
-		consumer, newErr = k8sconsumer.NewSetter(baseCfg)
-	default:
-		consumer, newErr = k8sconsumer.NewUpdater(baseCfg)
-	}
-	if newErr != nil {
-		return nil, fmt.Errorf("%s: %w", kind, newErr)
+	consumer, err := k8sconsumer.NewFromSpec(topic, verb, spec, k8sconsumer.Deps{
+		Client:  consumerClient,
+		GVK:     gvk,
+		Runtime: v.runtime,
+		Logger:  v.logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 	if err := v.runtime.Add(consumer); err != nil {
 		return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
 	}
 
-	return v.runnableHandle(consumer), nil
+	return v.boundHandle(consumer, kind, topic, spec), nil
 }
 
 func (v *VM) ensureK8sRuntime() (*k8sruntime.Runtime, error) {

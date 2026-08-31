@@ -6,38 +6,13 @@ import (
 	"github.com/dop251/goja"
 
 	xds "github.com/l7mp/dbsp/connectors/xds"
-	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
-type xdsServerOptions struct {
-	Name    string `json:"name"`
-	Address string `json:"address"`
-}
+type xdsServerOptions = xds.ServerSpec
 
-type xdsConsumerOptions struct {
-	Type   string `json:"type"`
-	Server string `json:"server"`
-}
+type xdsConsumerOptions = xds.ConsumerSpec
 
-type xdsProducerOptions struct {
-	Type         string         `json:"type"`
-	Address      string         `json:"address"`
-	Node         string         `json:"node"`
-	NodeCluster  string         `json:"nodeCluster"`
-	NodeMetadata map[string]any `json:"nodeMetadata"`
-	Resources    []string       `json:"resources"`
-	TLS          *xdsTLSOptions `json:"tls"`
-	// Level selects State-of-the-World ingest: every emitted event is the
-	// upstream's full resource set. The default is delta ingest.
-	Level bool `json:"level"`
-}
-
-type xdsTLSOptions struct {
-	Cert       string `json:"cert"`
-	Key        string `json:"key"`
-	CA         string `json:"ca"`
-	ServerName string `json:"serverName"`
-}
+type xdsProducerOptions = xds.ProducerSpec
 
 // newXDSNamespace builds the `xds` global: `xds.server.start({name?, address})`
 // creates a named egress server; `xds.update`/`xds.set` bind egress consumers to
@@ -105,12 +80,7 @@ func (v *VM) startXDSServer(opts xdsServerOptions) (*xds.Server, error) {
 		return nil, fmt.Errorf("xds server %q already started", opts.Name)
 	}
 
-	srv, err := xds.NewServer(xds.ServerConfig{
-		Name:    opts.Name,
-		Address: opts.Address,
-		Runtime: v.runtime,
-		Logger:  v.logger,
-	})
+	srv, err := xds.NewServerFromSpec(opts, xds.Deps{Runtime: v.runtime, Logger: v.logger})
 	if err != nil {
 		return nil, err
 	}
@@ -148,10 +118,8 @@ func (v *VM) xdsSet(call goja.FunctionCall) (goja.Value, error) {
 // xds.set(topic, {type, server}) (snapshot).
 func (v *VM) installXDSConsumer(call goja.FunctionCall, setter bool) (goja.Value, error) {
 	kind := "xds.update"
-	consumerKind := "updater"
 	if setter {
 		kind = "xds.set"
-		consumerKind = "setter"
 	}
 
 	if len(call.Arguments) < 2 {
@@ -172,32 +140,18 @@ func (v *VM) installXDSConsumer(call goja.FunctionCall, setter bool) (goja.Value
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 
-	cfg := xds.UpdaterConfig{
-		Name:       fmt.Sprintf("xds-consumer-%s-%s-%s", consumerKind, topic, opts.Type),
-		OutputName: topic,
-		Type:       opts.Type,
-		Logger:     v.logger,
-	}
-
-	var runnable dbspruntime.Runnable
-	if setter {
-		s, err := srv.Setter(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", kind, err)
-		}
-		runnable = s
-	} else {
-		u, err := srv.Updater(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", kind, err)
-		}
-		runnable = u
+	// The verb decides delta vs state-of-the-world egress; the spec's
+	// level flag carries the same choice on the wire.
+	opts.Level = setter
+	runnable, err := xds.NewConsumerFromSpec(srv, topic, opts, v.logger)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 	if err := v.runtime.Add(runnable); err != nil {
 		return nil, fmt.Errorf("%s: register consumer: %w", kind, err)
 	}
 
-	return v.runnableHandle(runnable), nil
+	return v.boundHandle(runnable, kind, topic, opts), nil
 }
 
 // xdsWatch implements xds.watch(topic, {type, address, node, level}): delta
@@ -222,54 +176,13 @@ func (v *VM) xdsWatch(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("%s: empty address", kind)
 	}
 
-	producerKind := "watcher"
-	if opts.Level {
-		producerKind = "lister"
-	}
-	name := fmt.Sprintf("xds-producer-%s-%s-%s", producerKind, topic, opts.Type)
-	if opts.Node != "" {
-		// Several clients may feed one topic (per-gateway scoped upstreams);
-		// the node id keeps the component names unique.
-		name = fmt.Sprintf("%s-%s", name, opts.Node)
-	}
-	cfg := xds.ProducerConfig{
-		Name:         name,
-		InputName:    topic,
-		Type:         opts.Type,
-		Address:      opts.Address,
-		Node:         opts.Node,
-		NodeCluster:  opts.NodeCluster,
-		NodeMetadata: opts.NodeMetadata,
-		Resources:    opts.Resources,
-		Runtime:      v.runtime,
-		Logger:       v.logger,
-	}
-	if opts.TLS != nil {
-		cfg.TLS = &xds.TLSConfig{
-			CertFile:   opts.TLS.Cert,
-			KeyFile:    opts.TLS.Key,
-			CAFile:     opts.TLS.CA,
-			ServerName: opts.TLS.ServerName,
-		}
-	}
-
-	var runnable dbspruntime.Runnable
-	if opts.Level {
-		l, err := xds.NewLister(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", kind, err)
-		}
-		runnable = l
-	} else {
-		w, err := xds.NewWatcher(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", kind, err)
-		}
-		runnable = w
+	runnable, err := xds.NewProducerFromSpec(topic, opts, xds.Deps{Runtime: v.runtime, Logger: v.logger})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
 	if err := v.runtime.Add(runnable); err != nil {
 		return nil, fmt.Errorf("%s: register producer: %w", kind, err)
 	}
 
-	return v.runnableHandle(runnable), nil
+	return v.boundHandle(runnable, kind, topic, opts), nil
 }
