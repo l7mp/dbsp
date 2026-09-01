@@ -13,6 +13,13 @@
 // Run from the repo root:  ./js/bin/dbsp apps/dgateway/index.js test
 
 const { describe, assert } = require("testing");
+const minimist = require("minimist");
+
+// The suite runs the pipeline in either execution mode: the default
+// incremental one, or --mode sotw, the jacketed snapshot execution. The
+// cases are identical: the two compilations are the same semantics.
+const argv = minimist(process.argv.slice(2));
+const SOTW = String(argv.mode || "") === "sotw";
 const { TOPICS, CONTROLLER_NAME, OPERATOR } = require("./lib/config.js");
 const { compilePipeline } = require("./lib/pipeline.js");
 const {
@@ -40,7 +47,7 @@ function setup() {
   // resources are published by the cases and the statuses read back from
   // the shared status topics.
   const server = xds.server.start({ name: OPERATOR, address: "127.0.0.1:0" });
-  use(compilePipeline({}).handle, (t) => !t.startsWith("verify."));
+  use(compilePipeline({ sotw: SOTW }).handle, (t) => !t.startsWith("verify."));
 
   // Watch our own xDS server back into verification topics.
   xds.watch("verify.lds", { type: "lds", address: server.address });

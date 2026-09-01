@@ -137,7 +137,7 @@ func NewFactory(env Env) runtime.ConnectorFactory {
 			if err != nil {
 				return nil, err
 			}
-			pspec := k8sproducer.Spec{GVK: gvkString(gvk), Level: s.Level}
+			pspec := k8sproducer.Spec{GVK: gvkString(gvk)}
 			if s.Namespace != nil {
 				pspec.Namespace = *s.Namespace
 			}
@@ -188,7 +188,7 @@ func NewFactory(env Env) runtime.ConnectorFactory {
 			if err != nil {
 				return nil, fmt.Errorf("connector client: %w", err)
 			}
-			return k8sconsumer.NewFromSpec(topic, verb, k8sconsumer.Spec{GVK: gvkString(gvk), Level: t.Level}, k8sconsumer.Deps{
+			return k8sconsumer.NewFromSpec(topic, verb, k8sconsumer.Spec{GVK: gvkString(gvk)}, k8sconsumer.Deps{
 				Client: client, GVK: gvk, Runtime: rt, Logger: rt.Logger(),
 			})
 		},

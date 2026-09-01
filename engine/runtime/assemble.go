@@ -162,6 +162,47 @@ func (rt *Runtime) Assemble(op *spec.RuntimeSpec, reg *ConnectorRegistry) error 
 	return nil
 }
 
+// jacketCircuit wraps a compiled snapshot program for the delta bus:
+// every input feeds through an integrator and every output through a
+// differentiator, turning Q into ∫ -> Q -> D.
+func jacketCircuit(c *circuit.Circuit) error {
+	for _, in := range c.Inputs() {
+		intID := in.ID + "-sotw-integrate"
+		if err := c.AddNode(circuit.Integrate(intID)); err != nil {
+			return err
+		}
+		for _, e := range append([]*circuit.Edge(nil), c.EdgesFrom(in.ID)...) {
+			if err := c.RemoveEdge(e.From, e.To, e.Port); err != nil {
+				return err
+			}
+			if err := c.AddEdge(circuit.NewEdge(intID, e.To, e.Port)); err != nil {
+				return err
+			}
+		}
+		if err := c.AddEdge(circuit.NewEdge(in.ID, intID, 0)); err != nil {
+			return err
+		}
+	}
+	for _, out := range c.Outputs() {
+		diffID := out.ID + "-sotw-differentiate"
+		if err := c.AddNode(circuit.Differentiate(diffID)); err != nil {
+			return err
+		}
+		for _, e := range append([]*circuit.Edge(nil), c.EdgesTo(out.ID)...) {
+			if err := c.RemoveEdge(e.From, e.To, e.Port); err != nil {
+				return err
+			}
+			if err := c.AddEdge(circuit.NewEdge(e.From, diffID, e.Port)); err != nil {
+				return err
+			}
+		}
+		if err := c.AddEdge(circuit.NewEdge(diffID, out.ID, 0)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // streamName is the stream a binding feeds or consumes: the explicit
 // `as`, defaulting to the resource kind.
 func streamName(as, kind string) string {
@@ -206,6 +247,29 @@ func (rt *Runtime) assembleCircuit(c *spec.CircuitSpec, inputs, outputs []string
 	compiled.Circuit.SetName(c.Name)
 	if err := validateCircuit(compiled.Circuit); err != nil {
 		return err
+	}
+
+	// A chain without the Incrementalizer asks for snapshot execution:
+	// the program runs non-incrementally on the delta bus as ∫ -> Q -> D.
+	// The input integrators hold the full current state (a silent input's
+	// integral simply stands, so multi-input steps are always complete),
+	// and the output differentiation emits the change of the recomputed
+	// result, deletions included. With the Incrementalizer the program
+	// compiles to Q^Δ instead; the two are the same semantics by the DBSP
+	// equation Q^Δ = D ∘ Q ∘ ∫.
+	incremental := false
+	for _, t := range c.Transforms {
+		if t.Name == "Incrementalizer" {
+			incremental = true
+		}
+	}
+	if !incremental {
+		if err := jacketCircuit(compiled.Circuit); err != nil {
+			return err
+		}
+		if err := validateCircuit(compiled.Circuit); err != nil {
+			return err
+		}
 	}
 
 	transformed := compiled.Circuit

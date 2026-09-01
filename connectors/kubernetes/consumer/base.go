@@ -52,12 +52,6 @@ type Config struct {
 	// Defaults to the connector's table converter.
 	Converter kobject.Converter
 
-	// Level switches the consumer to level ingest: each event carries the
-	// full desired state, converted to the delta against the last
-	// accepted level and written through the same accumulate-and-retry
-	// core.
-	Level bool
-
 	// Runtime is the engine runtime used to create a subscriber.
 	Runtime *dbspruntime.Runtime
 
@@ -78,17 +72,13 @@ type baseConsumer struct {
 	converter  kobject.Converter
 	log        logr.Logger
 	owns       bool
-	level      bool
 
 	// writeM serializes plant writes with the retry timer. pending holds
 	// the deltas whose writes have not reached the plant yet: unreachable
 	// failures stay in and are retried with backoff, everything else
-	// leaves the set the moment the plant answers. lastLevel is the level
-	// consumer's write bookkeeping: the last desired state this consumer
-	// was asked to hold, never anything read from the plant.
+	// leaves the set the moment the plant answers.
 	writeM     sync.Mutex
 	pending    zset.ZSet
-	lastLevel  zset.ZSet
 	retryCtx   context.Context
 	retryArmed bool
 	backoff    wait.Backoff
@@ -146,9 +136,7 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 		targetGVK:    cfg.TargetGVK,
 		converter:    converter,
 		log:          log,
-		level:        cfg.Level,
 		pending:      zset.New(),
-		lastLevel:    zset.New(),
 		retryCtx:     context.Background(),
 		backoff:      retryBackoff,
 	}
@@ -181,26 +169,11 @@ func (c *baseConsumer) keyOf(doc datamodel.Document) (string, error) {
 }
 
 // consume folds the event into the pending set and flushes it: the shared
-// Consume implementation behind the Patcher and the Updater. A delta
-// event folds in as is. A level event carries the full desired state and
-// folds in as its delta against the last accepted level, so pending is
-// always the latest desired state minus what the plant already took and
-// the write core below is the same either way; successive level deltas
-// telescope, and an object absent from a new level retracts fully, which
-// the ownership edges turn into a delete (Updater) or a field clear
-// (Patcher). The last level is lost on restart: the next level then
-// replays wholesale, and the empty-diff elision turns the unchanged bulk
-// into no-ops.
+// Consume implementation behind the Patcher and the Updater.
 func (c *baseConsumer) consume(ctx context.Context, out dbspruntime.Event) error {
 	c.writeM.Lock()
 	defer c.writeM.Unlock()
-	if c.level {
-		delta := out.Data.Subtract(c.lastLevel)
-		c.lastLevel = out.Data.ShallowCopy()
-		c.pending = c.pending.Add(delta)
-	} else {
-		c.pending = c.pending.Add(out.Data)
-	}
+	c.pending = c.pending.Add(out.Data)
 	return c.flushLocked(ctx)
 }
 

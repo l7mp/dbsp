@@ -12,6 +12,12 @@
 // connector). Connector-specific residue rides in the schemaless
 // labelSelector/predicate/parameters fields and is interpreted by the
 // connector that binds it.
+//
+// Every stream carries deltas: connectors translate state-speaking
+// remotes at their border, and a circuit that wants full states
+// integrates them itself (a chain without the Incrementalizer runs as
+// the snapshot program ∫ -> Q -> D). The runtime treats every topic as
+// a delta stream; ship integrals across a topic only knowing that.
 package spec
 
 import (
@@ -128,12 +134,6 @@ type Source struct {
 	//
 	// +optional
 	Type SourceType `json:"type,omitempty"`
-	// Level switches a Watcher source from delta ingest to level ingest:
-	// every event carries the full snapshot instead of the increment.
-	// Ignored on sources with no level mode.
-	//
-	// +optional
-	Level bool `json:"level,omitempty"`
 	// Namespace, if given, restricts the source to events from that
 	// namespace.
 	//
@@ -195,13 +195,6 @@ type Target struct {
 	//
 	// +optional
 	Type TargetType `json:"type,omitempty"`
-	// Level switches the target to level ingest: every event carries the
-	// full desired state, and the consumer writes the delta against the
-	// last level it accepted through its ordinary write path. Ignored on
-	// targets with no level mode.
-	//
-	// +optional
-	Level bool `json:"level,omitempty"`
 	// Parameters carries target-specific parameters, interpreted by the
 	// binding connector: xds targets take the egress server address.
 	//

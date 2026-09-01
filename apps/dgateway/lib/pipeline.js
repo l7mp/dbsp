@@ -105,14 +105,15 @@ const STATUS_PAIRS = [
 function buildOperatorSpec(options = {}) {
   const k8sBindings = options.bindings === "kubernetes";
 
-  const k8sTransforms = [{ name: "Incrementalizer" }];
-  if (options.sotw) {
-    // State-of-the-world mode needs full-snapshot ingest and
-    // state-of-the-world writes end to end, which the connector stack
-    // does not provide: the mode is rejected rather than approximated
-    // with deltas.
-    throw new Error("pipeline: sotw mode is not available; the state-of-the-world stack is not wired");
-  }
+  // State-of-the-world mode runs the same programs with empty transform
+  // chains: the engine compiles them to the jacketed snapshot execution
+  // (integrators on the inputs, the program recomputing over the full
+  // state, differentiation on the outputs), so the bus still carries
+  // deltas and the connectors are the same plain ones. The loop
+  // transforms are edge-world constructions and stay off in sotw mode.
+  const sotw = Boolean(options.sotw);
+  const incTransforms = sotw ? [] : [{ name: "Incrementalizer" }];
+  const k8sTransforms = sotw ? [] : [{ name: "Incrementalizer" }];
   if (options.reconcile) {
     // Close the loop on everything we can observe: the status outputs
     // emit the outstanding correction U = ∫(δD - δY_U) - re-emitted every
@@ -148,7 +149,7 @@ function buildOperatorSpec(options = {}) {
         inputs: Object.keys(TOPICS.inputs).map((k) => TOPICS.inputs[k]),
         outputs: [...VIEWS, ...OBSERVED],
         pipeline: programs.input,
-        transforms: [{ name: "Incrementalizer" }],
+        transforms: incTransforms,
       },
       {
         name: "k8s",
@@ -162,7 +163,7 @@ function buildOperatorSpec(options = {}) {
         inputs: VIEWS,
         outputs: XDS_STREAMS,
         pipeline: programs.outputXds,
-        transforms: [{ name: "Incrementalizer" }],
+        transforms: incTransforms,
       },
     ],
     targets: [

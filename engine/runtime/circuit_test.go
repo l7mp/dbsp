@@ -40,7 +40,7 @@ var _ = Describe("Circuit", func() {
 		Expect(outs[0].Data.Equal(delta)).To(BeTrue())
 	})
 
-	It("folds the queued backlog into a single step", func() {
+	It("steps a same-topic backlog one event at a time, in order", func() {
 		q := mustCompileCircuitQuery()
 		rt := runtime.NewRuntime("", logr.Discard())
 		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
@@ -51,8 +51,9 @@ var _ = Describe("Circuit", func() {
 		defer consumer.Unsubscribe("output")
 
 		// Queue a backlog before the circuit starts: the circuit
-		// pre-subscribes at construction, so all events land in its channel
-		// and the first step must fold them into one delta.
+		// pre-subscribes at construction, so all events land in its
+		// channel. A repeated input closes the batch, so every event
+		// steps on its own, in publish order.
 		pub := rt.NewPublisher()
 		const k = 10
 		for i := 0; i < k; i++ {
@@ -66,17 +67,22 @@ var _ = Describe("Circuit", func() {
 		errCh := make(chan error, 1)
 		go func() { errCh <- rt.Start(ctx) }()
 
-		var out runtime.Event
-		Eventually(consumer.GetChannel(), time.Second).Should(Receive(&out))
-		Expect(out.Name).To(Equal("output"))
-		Expect(out.Data.Size()).To(Equal(k))
+		for i := 0; i < k; i++ {
+			var out runtime.Event
+			Eventually(consumer.GetChannel(), time.Second).Should(Receive(&out))
+			Expect(out.Name).To(Equal("output"))
+			Expect(out.Data.Size()).To(Equal(1))
+			name, err := out.Data.Entries()[0].Document.GetField("$.metadata.name")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(name).To(Equal(fmt.Sprintf("pod-%d", i)))
+		}
 		Consistently(consumer.GetChannel(), 200*time.Millisecond).ShouldNot(Receive())
 
 		cancel()
 		Eventually(errCh, time.Second).Should(Receive(BeNil()))
 	})
 
-	It("cancels opposite weights within a folded step and suppresses the empty output", func() {
+	It("suppresses the empty output of a zero-net step", func() {
 		q := mustCompileCircuitQuery()
 		rt := runtime.NewRuntime("", logr.Discard())
 		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
@@ -86,13 +92,14 @@ var _ = Describe("Circuit", func() {
 		consumer.Subscribe("output")
 		defer consumer.Unsubscribe("output")
 
+		// Opposite weights cancel inside one event: the step runs on an
+		// empty delta and its empty output is suppressed.
 		pub := rt.NewPublisher()
 		doc := unstructured.New(map[string]any{"metadata": map[string]any{"name": "pod-a"}})
-		add, del := zset.New(), zset.New()
-		add.Insert(doc, 1)
-		del.Insert(doc, -1)
-		Expect(pub.Publish(runtime.Event{Name: "Pod", Data: add})).To(Succeed())
-		Expect(pub.Publish(runtime.Event{Name: "Pod", Data: del})).To(Succeed())
+		net := zset.New()
+		net.Insert(doc, 1)
+		net.Insert(doc, -1)
+		Expect(pub.Publish(runtime.Event{Name: "Pod", Data: net})).To(Succeed())
 
 		Expect(rt.Add(c)).To(Succeed())
 		ctx, cancel := context.WithCancel(context.Background())

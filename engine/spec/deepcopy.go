@@ -47,7 +47,6 @@ func (in *Source) DeepCopyInto(out *Source) {
 	in.Resource.DeepCopyInto(&out.Resource)
 	out.As = in.As
 	out.Type = in.Type
-	out.Level = in.Level
 	out.Namespace = copyString(in.Namespace)
 	out.LabelSelector = copyRaw(in.LabelSelector)
 	out.Predicate = copyRaw(in.Predicate)
@@ -69,7 +68,6 @@ func (in *Target) DeepCopyInto(out *Target) {
 	in.Resource.DeepCopyInto(&out.Resource)
 	out.As = in.As
 	out.Type = in.Type
-	out.Level = in.Level
 	out.Parameters = copyRaw(in.Parameters)
 }
 

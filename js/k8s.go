@@ -91,10 +91,9 @@ func (r *k8sRuntimeRunner) Start(ctx context.Context) error {
 	return r.rt.Start(ctx)
 }
 
-// k8sWatch implements kubernetes.watch(topic, opts[, callback]); level
-// ingest is the {level: true} option. The optional callback has producer
-// semantics: its return value is published to topic; returning nothing
-// publishes an empty Z-set.
+// k8sWatch implements kubernetes.watch(topic, opts[, callback]). The
+// optional callback has producer semantics: its return value is
+// published to topic; returning nothing publishes an empty Z-set.
 func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
 	kind := "kubernetes.watch"
 
@@ -182,8 +181,7 @@ func (v *VM) k8sUpdate(call goja.FunctionCall) (goja.Value, error) {
 }
 
 // installK8sConsumer implements kubernetes.patch(topic, {gvk}) and
-// kubernetes.update(topic, {gvk}); level ingest is the {level: true}
-// option.
+// kubernetes.update(topic, {gvk}).
 func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (goja.Value, error) {
 	kind := "kubernetes." + map[string]string{"updater": "update", "patcher": "patch"}[consumerKind]
 

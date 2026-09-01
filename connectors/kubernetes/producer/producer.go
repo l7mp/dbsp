@@ -47,28 +47,14 @@ type Watcher struct {
 	*baseProducer
 }
 
-// Lister watches a source and emits full list snapshots on each watch event.
-type Lister struct {
-	*baseProducer
-}
-
 var _ dbspruntime.Producer = (*Watcher)(nil)
-var _ dbspruntime.Producer = (*Lister)(nil)
 
 // Name returns the watcher's unique component name.
 func (w *Watcher) Name() string { return w.BaseProducer.Name() }
 
-// Name returns the lister's unique component name.
-func (l *Lister) Name() string { return l.BaseProducer.Name() }
-
 // String implements fmt.Stringer.
 func (w *Watcher) String() string {
 	return fmt.Sprintf("producer<k8s-watcher>{name=%q, topic=%q}", w.Name(), w.inputName)
-}
-
-// String implements fmt.Stringer.
-func (l *Lister) String() string {
-	return fmt.Sprintf("producer<k8s-lister>{name=%q, topic=%q}", l.Name(), l.inputName)
 }
 
 // MarshalJSON provides a stable machine-readable representation.
@@ -86,21 +72,6 @@ func (w *Watcher) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// MarshalJSON provides a stable machine-readable representation.
-func (l *Lister) MarshalJSON() ([]byte, error) {
-	if l == nil {
-		return json.Marshal(map[string]any{"component": "producer", "type": "kubernetes", "nil": true})
-	}
-
-	return json.Marshal(map[string]any{
-		"component": "producer",
-		"type":      "kubernetes",
-		"mode":      "lister",
-		"name":      l.Name(),
-		"topic":     l.inputName,
-	})
-}
-
 // NewWatcher creates a Kubernetes producer. Name uniqueness is enforced when
 // the watcher is passed to Runtime.Add.
 func NewWatcher(cfg Config) (*Watcher, error) {
@@ -112,32 +83,12 @@ func NewWatcher(cfg Config) (*Watcher, error) {
 	return &Watcher{baseProducer: b}, nil
 }
 
-// NewLister creates a Kubernetes state-of-the-world producer. Name uniqueness
-// is enforced when the lister is passed to Runtime.Add.
-func NewLister(cfg Config) (*Lister, error) {
-	b, err := newBase(cfg, "kubernetes-producer")
-	if err != nil {
-		return nil, err
-	}
-
-	return &Lister{baseProducer: b}, nil
-}
-
 func (p *Watcher) Publish(event dbspruntime.Event) error {
-	return p.BaseProducer.Publish(event)
-}
-
-func (p *Lister) Publish(event dbspruntime.Event) error {
 	return p.BaseProducer.Publish(event)
 }
 
 // Start starts the watch loop.
 func (p *Watcher) Start(ctx context.Context) error {
-	return p.baseProducer.start(ctx, p.handleEvent)
-}
-
-// Start starts the watch loop for list-triggered snapshots.
-func (p *Lister) Start(ctx context.Context) error {
 	return p.baseProducer.start(ctx, p.handleEvent)
 }
 
@@ -161,30 +112,6 @@ func (p *Watcher) handleEvent(ctx context.Context, evt watch.Event) error {
 
 	delta := watchEventToDelta(evt.Type, obj)
 	zs, err := p.convertDeltaToZSet(delta)
-	if err != nil {
-		return err
-	}
-
-	if zs.IsZero() {
-		return nil
-	}
-
-	var docs []string
-	if p.log.V(2).Enabled() {
-		docs = k8sDocsSummary(zs)
-	}
-	dbspruntime.LogFlowEvent(p.log, "producer.emit", "producer", p.String(), "output", p.inputName, "", zs, docs, "watch_event", string(evt.Type))
-
-	return p.Publish(dbspruntime.Event{Name: p.inputName, Data: zs})
-}
-
-func (p *Lister) handleEvent(ctx context.Context, evt watch.Event) error {
-	obj, ok := evt.Object.(*unstructured.Unstructured)
-	if !ok || obj == nil {
-		return nil
-	}
-
-	zs, err := p.listSnapshot(ctx)
 	if err != nil {
 		return err
 	}

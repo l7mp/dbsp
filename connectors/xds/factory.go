@@ -105,7 +105,6 @@ func NewFactory(env Env) runtime.ConnectorFactory {
 				}
 			}
 			ps.Type = typ
-			ps.Level = s.Level
 			return NewProducerFromSpec(topic, ps, Deps{Runtime: rt, Logger: rt.Logger()})
 		},
 		NewTarget: func(rt *runtime.Runtime, t *spec.Target, topic string) (runtime.Runnable, error) {
@@ -120,7 +119,18 @@ func NewFactory(env Env) runtime.ConnectorFactory {
 			if err != nil {
 				return nil, err
 			}
-			return NewConsumerFromSpec(srv, rt, topic, ConsumerSpec{Type: typ, Server: name, Level: t.Level}, rt.Logger())
+			// The wire mode against the remote (state-of-the-world
+			// SetResources vs incremental UpdateResources) is connector
+			// residue and rides the parameters.
+			var tp struct {
+				Level bool `json:"level"`
+			}
+			if t.Parameters != nil {
+				if err := json.Unmarshal(*t.Parameters, &tp); err != nil {
+					return nil, fmt.Errorf("parameters: %w", err)
+				}
+			}
+			return NewConsumerFromSpec(srv, rt, topic, ConsumerSpec{Type: typ, Server: name, Level: tp.Level}, rt.Logger())
 		},
 	}
 }

@@ -21,7 +21,7 @@ const runtimeJSON = `{
     {"apiGroup": "gateway.networking.k8s.io", "kind": "Gateway"},
     {"apiGroup": "misc.connector.dcontroller.io", "kind": "Timer",
      "type": "Tick", "parameters": {"period": "5m", "name": "resync"}},
-    {"apiGroup": "", "version": "v1", "kind": "Secret", "level": true,
+    {"apiGroup": "", "version": "v1", "kind": "Secret",
      "labelSelector": {"matchLabels": {"managed": "true"}}},
     {"kind": "GatewayStatusObserved"}
   ],

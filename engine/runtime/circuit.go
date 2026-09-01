@@ -11,7 +11,6 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/l7mp/dbsp/engine/compiler"
-	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/executor"
 	"github.com/l7mp/dbsp/engine/zset"
 )
@@ -140,11 +139,11 @@ const maxStepEntries = 128
 // runtime error channel and the circuit continues processing subsequent events.
 // Start only returns a non-nil error on context cancellation-related issues.
 //
-// Each step folds the entire queued backlog into one execution: deltas for
-// the same input topic add up as Z-sets (opposite weights cancel) and
-// distinct inputs step together. Incremental circuits are correct for any
-// per-step input delta, and ∫∘C^Δ = C∘∫ preserves the cumulative output
-// (but only cumulative output!).
+// Each step folds the queued backlog across distinct inputs into one
+// execution; a repeated input closes the batch, so events of one stream
+// always step one by one, in order. Distinct-input batching is correct
+// for any stream shape; adding up same-stream events would be correct
+// only for deltas, and the runtime does not know what a stream carries.
 func (c *Circuit) Start(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, c.Subscriber.UnsubscribeAll)
 	defer stop()
@@ -153,10 +152,17 @@ func (c *Circuit) Start(ctx context.Context) error {
 		defer closer.Close()
 	}
 
+	var carry *Event
 	for {
-		in, ok := c.Subscriber.Next()
-		if !ok {
-			return nil
+		var in Event
+		if carry != nil {
+			in, carry = *carry, nil
+		} else {
+			var ok bool
+			in, ok = c.Subscriber.Next()
+			if !ok {
+				return nil
+			}
 		}
 
 		inputs := map[string]zset.ZSet{}
@@ -165,6 +171,12 @@ func (c *Circuit) Start(ctx context.Context) error {
 			ev, ok := c.Subscriber.Next()
 			if !ok {
 				return nil
+			}
+			if logical, known := c.topicToInput[ev.Name]; known {
+				if _, dup := inputs[logical]; dup {
+					carry = &ev
+					break
+				}
 			}
 			total = c.foldInput(inputs, ev, total)
 		}
@@ -195,24 +207,17 @@ func (c *Circuit) Start(ctx context.Context) error {
 	}
 }
 
-// foldInput folds one received event into the per-input step deltas and
+// foldInput places one received event into the per-input step map and
 // returns the updated entry total. Events for unknown topics are skipped.
-// The first event per input is shallow-cloned before folding: event payloads
-// are shared with every other subscriber of the topic and must never be
-// mutated.
+// The caller guarantees at most one event per input and step; the payload
+// is shallow-cloned because events are shared with every other subscriber
+// of the topic and must never be mutated.
 func (c *Circuit) foldInput(inputs map[string]zset.ZSet, in Event, total int) int {
 	logical, ok := c.topicToInput[in.Name]
 	if !ok {
 		return total
 	}
-	if acc, ok := inputs[logical]; ok {
-		in.Data.Iter(func(doc datamodel.Document, w zset.Weight) bool {
-			acc.Insert(doc, w)
-			return true
-		})
-	} else {
-		inputs[logical] = in.Data.ShallowCopy()
-	}
+	inputs[logical] = in.Data.ShallowCopy()
 	return total + in.Data.Size()
 }
 

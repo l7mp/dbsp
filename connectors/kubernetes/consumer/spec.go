@@ -12,14 +12,9 @@ import (
 )
 
 // Spec is the serialized configuration of the write-side consumers, the
-// one wire form every frontend funnels through. Level switches the
-// consumer to level ingest: each event carries the full desired state,
-// converted to the delta against the last accepted level and written
-// through the same accumulate-and-retry core; a patcher still never
-// creates or deletes an object.
+// one wire form every frontend funnels through.
 type Spec struct {
-	GVK   string `json:"gvk"`
-	Level bool   `json:"level,omitempty"`
+	GVK string `json:"gvk"`
 }
 
 // Deps carries the non-serializable dependencies of a consumer: the
@@ -33,8 +28,7 @@ type Deps struct {
 }
 
 // NewFromSpec builds the consumer subscribed to topic for the given verb
-// ("update" or "patch"): a Patcher or an Updater, on level ingest when
-// spec.Level is set.
+// ("update" or "patch"): a Patcher or an Updater.
 func NewFromSpec(topic, verb string, spec Spec, deps Deps) (dbspruntime.Runnable, error) {
 	consumerKind := verb + "r"
 	if verb == "patch" {
@@ -45,7 +39,6 @@ func NewFromSpec(topic, verb string, spec Spec, deps Deps) (dbspruntime.Runnable
 		Name:       fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, topic, strings.ToLower(deps.GVK.String())),
 		OutputName: topic,
 		TargetGVK:  deps.GVK,
-		Level:      spec.Level,
 		Runtime:    deps.Runtime,
 		Logger:     deps.Logger,
 	}

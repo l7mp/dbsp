@@ -15,18 +15,15 @@ import (
 
 // Spec is the serialized configuration of the ingest producers, the one
 // wire form every frontend funnels through (the JavaScript
-// kubernetes.watch/list options object and a serialized controller's
-// source fields deserialize into it alike). Labels is the matchLabels
-// shorthand; LabelSelector carries the full selector, and the two merge.
+// kubernetes.watch options object and a serialized source deserialize
+// into it alike). Labels is the matchLabels shorthand; LabelSelector
+// carries the full selector, and the two merge.
 type Spec struct {
 	GVK           string                `json:"gvk"`
 	Namespace     string                `json:"namespace,omitempty"`
 	Labels        map[string]string     `json:"labels,omitempty"`
 	LabelSelector *v1.LabelSelector     `json:"labelSelector,omitempty"`
 	Predicate     *kpredicate.Predicate `json:"predicate,omitempty"`
-	// Level switches from delta ingest to level ingest: every event
-	// carries the full snapshot instead of the increment.
-	Level bool `json:"level,omitempty"`
 }
 
 // Selector folds the matchLabels shorthand into the full selector.
@@ -63,9 +60,6 @@ type Deps struct {
 // or a Lister with level: true.
 func NewFromSpec(topic string, spec Spec, deps Deps) (dbspruntime.Runnable, error) {
 	producerKind := "watcher"
-	if spec.Level {
-		producerKind = "lister"
-	}
 	cfg := Config{
 		Client:        deps.Client,
 		SourceGVK:     deps.GVK,
@@ -76,9 +70,6 @@ func NewFromSpec(topic string, spec Spec, deps Deps) (dbspruntime.Runnable, erro
 		Predicate:     spec.Predicate,
 		Runtime:       deps.Runtime,
 		Logger:        deps.Logger,
-	}
-	if spec.Level {
-		return NewLister(cfg)
 	}
 	return NewWatcher(cfg)
 }

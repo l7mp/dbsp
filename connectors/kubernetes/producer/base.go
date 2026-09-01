@@ -21,7 +21,6 @@ import (
 	kpredicate "github.com/l7mp/dbsp/connectors/kubernetes/runtime/predicate"
 	"github.com/l7mp/dbsp/connectors/kubernetes/runtime/store"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
-	"github.com/l7mp/dbsp/engine/zset"
 )
 
 type baseProducer struct {
@@ -247,24 +246,6 @@ func (p *baseProducer) allowObject(obj *unstructured.Unstructured) bool {
 	}
 
 	return true
-}
-
-func (p *baseProducer) listSnapshot(ctx context.Context) (zset.ZSet, error) {
-	list := p.newListObject()
-	if err := p.client.List(ctx, list, p.listOpts...); err != nil {
-		return zset.New(), fmt.Errorf("producer: list failed: %w", err)
-	}
-
-	zs := zset.New()
-	for i := range list.Items {
-		obj := list.Items[i].DeepCopy()
-		if !p.allowObject(obj) {
-			continue
-		}
-		zs.Insert(p.converter.ToDocument(obj), 1)
-	}
-
-	return zs, nil
 }
 
 func (p *baseProducer) newListObject() *unstructured.UnstructuredList {
