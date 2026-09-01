@@ -8,8 +8,6 @@ reports violations minutes after the fact, Δ-policy's violation set is a live i
 a violating object is reported the moment its watch event arrives, and the report retracts the
 moment the violation clears. The code lives in `apps/dpolicy/`.
 
-> The application lands together with the next merge round; this overview describes its shape so
-> the documentation set is complete ahead of it.
 
 ## What it does
 
@@ -26,7 +24,9 @@ moment the violation clears. The code lives in `apps/dpolicy/`.
 ## Modes
 
 Like Δ-gateway, the control loop is selectable with `--mode`: `reconciler` (the closed loop,
-default), `open`, and `smith` (dead-time compensated). The pipelines are identical in every mode.
+default), `open`, and `smith` (dead-time compensated), and `sotw` (the jacketed snapshot
+execution, the same programs with empty transform chains). The pipelines are identical in every
+mode.
 
 ## Running
 

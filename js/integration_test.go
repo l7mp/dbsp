@@ -288,12 +288,18 @@ publish("stamp-in", [[{obj: "x", status: "False", reason: "Init"}, 1]]);
 		script := `
 const srv = xds.server.start({ name: "optest", address: "127.0.0.1:0" });
 const handle = runtime.create("optest", {
-  sources: [{ apiGroup: "misc.connector.dcontroller.io", kind: "Timer",
-              parameters: { name: "t", period: "50ms" } }],
+  sources: [
+    { apiGroup: "misc.connector.dcontroller.io", kind: "Timer", as: "T",
+      parameters: { name: "t", period: "50ms" } },
+    // A second producer on the same stream: sources sharing an "as"
+    // union into one input.
+    { apiGroup: "misc.connector.dcontroller.io", kind: "Timer", as: "T", type: "Init",
+      parameters: { name: "boot" } },
+  ],
   circuits: [{
     name: "ticker",
     pipeline: [[
-      { "@inputs": ["Timer"] },
+      { "@inputs": ["T"] },
       { "@project": { name: { "@concat": ["optest/", "$.name"] } } },
       { "@output": "Listener" },
     ]],
@@ -306,16 +312,20 @@ if (handle.spec().name !== "optest") { throw new Error("bad spec printer"); }
 xds.watch("lds-verify", { type: "lds", address: srv.address });
 `
 		Expect(runScript(vm, script)).To(Succeed())
-		Eventually(func() bool {
-			for _, ev := range collector.Snapshot() {
-				for _, e := range ev.Data.Entries() {
-					if name, err := e.Document.GetField("$.name"); err == nil && name == "optest/t" && e.Weight > 0 {
-						return true
+		seen := func(want string) func() bool {
+			return func() bool {
+				for _, ev := range collector.Snapshot() {
+					for _, e := range ev.Data.Entries() {
+						if name, err := e.Document.GetField("$.name"); err == nil && name == want && e.Weight > 0 {
+							return true
+						}
 					}
 				}
+				return false
 			}
-			return false
-		}, 5*time.Second, 20*time.Millisecond).Should(BeTrue())
+		}
+		Eventually(seen("optest/t"), 5*time.Second, 20*time.Millisecond).Should(BeTrue())
+		Eventually(seen("optest/boot"), 5*time.Second, 20*time.Millisecond).Should(BeTrue())
 
 		// Unknown fields are rejected: the legacy type/options vocabulary
 		// names itself in the error.
