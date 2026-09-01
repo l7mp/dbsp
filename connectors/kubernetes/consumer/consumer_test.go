@@ -903,18 +903,14 @@ func keyObject(gvk schema.GroupVersionKind, namespace, name string) *unstructure
 	return obj
 }
 
-var _ = Describe("Kubernetes setter", func() {
+var _ = Describe("Kubernetes level consumers", func() {
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
 
-	cm := func(name string, labels map[string]any, data map[string]any) map[string]any {
-		meta := map[string]any{"name": name, "namespace": "default"}
-		if labels != nil {
-			meta["labels"] = labels
-		}
+	cm := func(name string, data map[string]any) map[string]any {
 		return map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
-			"metadata":   meta,
+			"metadata":   map[string]any{"name": name, "namespace": "default"},
 			"data":       data,
 		}
 	}
@@ -934,125 +930,88 @@ var _ = Describe("Kubernetes setter", func() {
 		return obj
 	}
 
-	It("reconciles the managed scope to the level", func() {
+	It("writes the delta between successive levels: create, update, delete", func() {
 		ctx := context.Background()
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).
-			WithObjects(
-				seed(cm("stale", nil, map[string]any{"a": "old"})),
-				seed(cm("extra", nil, map[string]any{"b": "1"})),
-			).Build()
+			WithObjects(seed(cm("extra", map[string]any{"b": "1"}))).Build()
 
-		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
+		up, err := NewUpdater(Config{Name: "test-level-updater", Client: c, OutputName: "out", TargetGVK: gvk, Level: true, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(st.Consume(ctx, level("out",
-			cm("stale", nil, map[string]any{"a": "new"}),
-			cm("fresh", nil, map[string]any{"c": "1"}),
+		// The first level asserts everything it holds; objects the level
+		// never mentioned (extra) are not the consumer's business.
+		Expect(up.Consume(ctx, level("out",
+			cm("kept", map[string]any{"a": "1"}),
+			cm("gone", map[string]any{"c": "1"}),
 		))).To(Succeed())
 
-		obj := keyObject(gvk, "default", "stale")
+		obj := keyObject(gvk, "default", "kept")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		obj = keyObject(gvk, "default", "gone")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+
+		// The next level updates one object and drops the other: the
+		// vanished object retracts fully and the updater deletes it.
+		Expect(up.Consume(ctx, level("out",
+			cm("kept", map[string]any{"a": "2"}),
+		))).To(Succeed())
+
+		obj = keyObject(gvk, "default", "kept")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
 		got, _, err := unstructured.NestedString(obj.Object, "data", "a")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(Equal("new"))
+		Expect(got).To(Equal("2"))
 
-		obj = keyObject(gvk, "default", "fresh")
-		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		obj = keyObject(gvk, "default", "gone")
+		Expect(apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue())
 
 		obj = keyObject(gvk, "default", "extra")
-		err = c.Get(ctx, client.ObjectKeyFromObject(obj), obj)
-		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "extra object must be deleted")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed(), "unmentioned objects stay alone")
 	})
 
-	It("skips the write when the content already matches", func() {
+	It("writes nothing for an identical level", func() {
 		ctx := context.Background()
 		scheme := kruntime.NewScheme()
-		c := fake.NewClientBuilder().WithScheme(scheme).
-			WithObjects(seed(cm("same", nil, map[string]any{"a": "1"}))).Build()
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
+		up, err := NewUpdater(Config{Name: "test-level-updater", Client: c, OutputName: "out", TargetGVK: gvk, Level: true, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+
+		Expect(up.Consume(ctx, level("out", cm("same", map[string]any{"a": "1"})))).To(Succeed())
 
 		obj := keyObject(gvk, "default", "same")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
 		before := obj.GetResourceVersion()
 
-		Expect(st.Consume(ctx, level("out", cm("same", nil, map[string]any{"a": "1"})))).To(Succeed())
+		Expect(up.Consume(ctx, level("out", cm("same", map[string]any{"a": "1"})))).To(Succeed())
 
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
-		Expect(obj.GetResourceVersion()).To(Equal(before), "identical content must not be rewritten")
+		Expect(obj.GetResourceVersion()).To(Equal(before), "an identical level telescopes to an empty delta")
 	})
 
-	It("owns the entire target kind", func() {
+	It("level patching never deletes the decorated object", func() {
 		ctx := context.Background()
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).
-			WithObjects(
-				seed(cm("one", map[string]any{"app": "x"}, map[string]any{"a": "1"})),
-				seed(cm("other", nil, map[string]any{"b": "1"})),
-			).Build()
+			WithObjects(seed(cm("host", map[string]any{"a": "1"}))).Build()
 
-		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
+		pt, err := NewPatcher(Config{Name: "test-level-patcher", Client: c, OutputName: "out", TargetGVK: gvk, Level: true, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
-		// An empty level empties the whole kind: the Setter owns it.
-		Expect(st.Consume(ctx, dbspruntime.Event{Name: "out", Data: zset.New()})).To(Succeed())
+		Expect(pt.Consume(ctx, level("out", cm("host", map[string]any{"a": "1", "x": "on"})))).To(Succeed())
 
-		obj := keyObject(gvk, "default", "one")
-		Expect(apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue())
-		obj = keyObject(gvk, "default", "other")
-		Expect(apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue())
-	})
-
-	It("compares wholesale: a status difference triggers the write", func() {
-		ctx := context.Background()
-		dgvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
-
-		seedObj := &unstructured.Unstructured{}
-		seedObj.SetUnstructuredContent(map[string]any{
-			"apiVersion": "apps/v1",
-			"kind":       "Deployment",
-			"metadata":   map[string]any{"name": "app", "namespace": "default"},
-			"spec":       map[string]any{"replicas": int64(1)},
-			"status":     map[string]any{"readyReplicas": int64(0)},
-		})
-
-		scheme := kruntime.NewScheme()
-		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seedObj).WithObjects(seedObj).Build()
-
-		st, err := NewSetter(Config{Name: "test-setter-status", Client: c, OutputName: "out", TargetGVK: dgvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
-		Expect(err).NotTo(HaveOccurred())
-
-		// Same spec, different status: wholesale comparison must write it.
-		z := zset.New()
-		z.Insert(dbspunstructured.New(map[string]any{
-			"apiVersion": "apps/v1",
-			"kind":       "Deployment",
-			"metadata":   map[string]any{"name": "app", "namespace": "default"},
-			"spec":       map[string]any{"replicas": int64(1)},
-			"status":     map[string]any{"readyReplicas": int64(1)},
-		}), 1)
-		Expect(st.Consume(ctx, dbspruntime.Event{Name: "out", Data: z})).To(Succeed())
-
-		obj := keyObject(dgvk, "default", "app")
+		obj := keyObject(gvk, "default", "host")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
-		ready, _, err := unstructured.NestedInt64(obj.Object, "status", "readyReplicas")
+		got, _, err := unstructured.NestedString(obj.Object, "data", "x")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ready).To(Equal(int64(1)))
-	})
+		Expect(got).To(Equal("on"))
 
-	It("rejects retractions in level events", func() {
-		ctx := context.Background()
-		scheme := kruntime.NewScheme()
-		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+		// The host vanishes from the level: the patcher clears its
+		// fields but the object survives.
+		Expect(pt.Consume(ctx, level("out"))).To(Succeed())
 
-		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
-		Expect(err).NotTo(HaveOccurred())
-
-		z := zset.New()
-		z.Insert(dbspunstructured.New(cm("neg", nil, nil)), -1)
-		err = st.Consume(ctx, dbspruntime.Event{Name: "out", Data: z})
-		Expect(err).To(MatchError(ContainSubstring("no retractions")))
+		obj = keyObject(gvk, "default", "host")
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed(), "a patcher never deletes")
 	})
 })

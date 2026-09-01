@@ -35,9 +35,9 @@ func (c *Patcher) Start(ctx context.Context) error {
 	return c.start(ctx, c)
 }
 
-// Consume applies output Z-set deltas with patcher behavior.
+// Consume applies output events with patcher behavior.
 func (c *Patcher) Consume(ctx context.Context, out dbspruntime.Event) error {
-	return c.consumeDeltas(ctx, out)
+	return c.consume(ctx, out)
 }
 
 // String implements fmt.Stringer.

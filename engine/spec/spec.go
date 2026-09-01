@@ -195,9 +195,9 @@ type Target struct {
 	//
 	// +optional
 	Type TargetType `json:"type,omitempty"`
-	// Level switches an Updater target from delta writes to
-	// state-of-the-world ownership: the controller writes the full
-	// desired set of the kind and owns every object of it. Ignored on
+	// Level switches the target to level ingest: every event carries the
+	// full desired state, and the consumer writes the delta against the
+	// last level it accepted through its ordinary write path. Ignored on
 	// targets with no level mode.
 	//
 	// +optional

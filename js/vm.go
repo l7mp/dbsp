@@ -690,9 +690,6 @@ func (v *VM) injectGlobals() error {
 	if err := kubeObj.Set("watch", v.wrap(v.k8sWatch)); err != nil {
 		return err
 	}
-	if err := kubeObj.Set("list", v.wrap(v.k8sList)); err != nil {
-		return err
-	}
 	if err := kubeObj.Set("log", v.wrap(v.k8sLog)); err != nil {
 		return err
 	}
@@ -700,9 +697,6 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 	if err := kubeObj.Set("update", v.wrap(v.k8sUpdate)); err != nil {
-		return err
-	}
-	if err := kubeObj.Set("set", v.wrap(v.k8sSet)); err != nil {
 		return err
 	}
 	kubeRuntimeObj, err := v.newK8sRuntimeNamespace()

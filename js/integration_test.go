@@ -941,21 +941,6 @@ kubernetes.watch("services", {
 		Expect(err.Error()).To(ContainSubstring("kubernetes.watch callback must be a function"))
 	})
 
-	It("validates kubernetes.list callback type before startup", func() {
-		vm, err := NewVM(logr.Discard())
-		Expect(err).NotTo(HaveOccurred())
-		defer vm.Close()
-
-		err = runScript(vm, `
-kubernetes.list("services", {
-  gvk: "v1/Service",
-  namespace: "default",
-}, 42);
-`)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("kubernetes.list callback must be a function"))
-	})
-
 	It("invokes runtime.onError callback for async runtime errors", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())

@@ -34,9 +34,9 @@ func (c *Updater) Start(ctx context.Context) error {
 	return c.start(ctx, c)
 }
 
-// Consume applies output Z-set deltas with updater behavior.
+// Consume applies output events with updater behavior.
 func (c *Updater) Consume(ctx context.Context, out dbspruntime.Event) error {
-	return c.consumeDeltas(ctx, out)
+	return c.consume(ctx, out)
 }
 
 // String implements fmt.Stringer.

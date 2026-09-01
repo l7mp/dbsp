@@ -91,23 +91,12 @@ func (r *k8sRuntimeRunner) Start(ctx context.Context) error {
 	return r.rt.Start(ctx)
 }
 
+// k8sWatch implements kubernetes.watch(topic, opts[, callback]); level
+// ingest is the {level: true} option. The optional callback has producer
+// semantics: its return value is published to topic; returning nothing
+// publishes an empty Z-set.
 func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
-	return v.installK8sWatchProducer(call, false)
-}
-
-func (v *VM) k8sList(call goja.FunctionCall) (goja.Value, error) {
-	return v.installK8sWatchProducer(call, true)
-}
-
-// installK8sWatchProducer implements kubernetes.watch(topic, opts[, callback]) and
-// kubernetes.list(topic, opts[, callback]).  The optional callback has producer
-// semantics: its return value is published to topic; returning nothing publishes
-// an empty Z-set.
-func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goja.Value, error) {
 	kind := "kubernetes.watch"
-	if listMode {
-		kind = "kubernetes.list"
-	}
 
 	if len(call.Arguments) < 2 {
 		return nil, fmt.Errorf("%s(topic, {gvk, namespace, labels, predicate}[, callback]): expected (string topic, object opts), got %s", kind, describeCall(call))
@@ -125,10 +114,6 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 	var spec k8sproducer.Spec
 	if err := decodeOptionValue(call.Argument(1), &spec); err != nil {
 		return nil, fmt.Errorf("%s options: %w", kind, err)
-	}
-	if listMode {
-		// kubernetes.list is the level mode of the watch verb.
-		spec.Level = true
 	}
 
 	var callback goja.Callable
@@ -156,12 +141,8 @@ func (v *VM) installK8sWatchProducer(call goja.FunctionCall, listMode bool) (goj
 	publishTopic := topic
 	var callbackStop func()
 	if callback != nil {
-		internalKind := "kubernetes-watch"
-		if listMode {
-			internalKind = "kubernetes-list"
-		}
-		publishTopic = v.nextInternalTopic(internalKind, topic)
-		callbackStop = v.registerProducerCallback(publishTopic, topic, internalKind+"-callback", callback)
+		publishTopic = v.nextInternalTopic("kubernetes-watch", topic)
+		callbackStop = v.registerProducerCallback(publishTopic, topic, "kubernetes-watch-callback", callback)
 	}
 
 	// Every connector gets its own client (own rate limiter, own connection
@@ -200,14 +181,11 @@ func (v *VM) k8sUpdate(call goja.FunctionCall) (goja.Value, error) {
 	return v.installK8sConsumer(call, "updater")
 }
 
-func (v *VM) k8sSet(call goja.FunctionCall) (goja.Value, error) {
-	return v.installK8sConsumer(call, "setter")
-}
-
-// installK8sConsumer implements kubernetes.patch(topic, {gvk}),
-// kubernetes.update(topic, {gvk}), and kubernetes.set(topic, {gvk}).
+// installK8sConsumer implements kubernetes.patch(topic, {gvk}) and
+// kubernetes.update(topic, {gvk}); level ingest is the {level: true}
+// option.
 func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (goja.Value, error) {
-	kind := "kubernetes." + map[string]string{"updater": "update", "patcher": "patch", "setter": "set"}[consumerKind]
+	kind := "kubernetes." + map[string]string{"updater": "update", "patcher": "patch"}[consumerKind]
 
 	if len(call.Arguments) < 2 {
 		return nil, fmt.Errorf("%s(topic, {gvk}): expected (string topic, object opts), got %s", kind, describeCall(call))
@@ -221,8 +199,7 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (go
 		return nil, fmt.Errorf("%s: empty topic", kind)
 	}
 
-	// The options object is the connector's consumer wire spec; the set
-	// verb is the level mode of update.
+	// The options object is the connector's consumer wire spec.
 	var spec k8sconsumer.Spec
 	if err := decodeOptionValue(call.Argument(1), &spec); err != nil {
 		return nil, fmt.Errorf("%s options: %w", kind, err)
@@ -230,9 +207,6 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (go
 	verb := "update"
 	if consumerKind == "patcher" {
 		verb = "patch"
-	}
-	if consumerKind == "setter" {
-		spec.Level = true
 	}
 
 	krt, err := v.ensureK8sRuntime()
@@ -272,7 +246,7 @@ func (v *VM) ensureK8sRuntime() (*k8sruntime.Runtime, error) {
 	defer v.k8sMu.Unlock()
 
 	if v.k8sRuntime == nil {
-		return nil, fmt.Errorf("kubernetes runtime is not started: call kubernetes.runtime.start() before using kubernetes.watch/list/patch/update/log")
+		return nil, fmt.Errorf("kubernetes runtime is not started: call kubernetes.runtime.start() before using kubernetes.watch/patch/update/log")
 	}
 
 	return v.k8sRuntime, nil
