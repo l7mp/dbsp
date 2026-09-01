@@ -1,9 +1,9 @@
 # Tutorial: Service Health Monitor
 
-This example shows how to chain two declarative controllers through a local view. The result is a
-small operator that annotates each `Service` with a ready-pod count such as `2/2`. The first
-controller watches labeled pods and builds a `HealthView`. The second controller joins that view
-with native `Service` objects and patches the result back onto the service.
+This example shows how to chain two circuits through an internal stream. The result is a small
+operator that annotates each `Service` with a ready-pod count such as `2/2`. The first circuit
+watches labeled pods and reduces them onto the internal `HealthView` stream. The second circuit
+joins that stream with native `Service` objects and patches the result back onto the service.
 
 The example files live in `apps/dcontroller/examples/service-health-monitor/`.
 
@@ -54,14 +54,13 @@ KUBECONFIG=/tmp/dcontroller.config kubectl api-resources
 See [Kubernetes connector: The Extension API Server](/doc/connectors-kubernetes-API-server.md) for the
 full access workflow.
 
-Then read the generated `HealthView` objects:
+When the intermediate state is materialized as a view (a `HealthView` target on the first circuit
+plus a `HealthView` source on the second, instead of the internal stream), the generated objects
+are readable the same way:
 
 ```bash
 KUBECONFIG=/tmp/dcontroller.config kubectl get healthview.svc-health-operator.view.dcontroller.io -o yaml
 ```
-
-This is the main reason the example is useful: it shows how a complex controller can be split into
-two simpler ones with a visible intermediate state.
 
 ## Trigger a health change
 
@@ -82,9 +81,10 @@ When pods recover or restart, the annotation moves back toward the full ready co
 
 ## What this example shows
 
-This example demonstrates the use of local views in the current repository. The first controller
-reduces pod state into a simple intermediate object, and the second controller consumes that
-reduced form instead of joining services directly with raw pod status.
+The first circuit reduces pod state into a simple intermediate shape, and the second consumes
+that reduced form instead of joining services directly with raw pod status. In this example the
+intermediate `HealthView` is an internal stream, invisible outside the operator; turn it into a
+view source/target pair when the intermediate state should be inspectable with kubectl.
 
 ## Cleanup
 

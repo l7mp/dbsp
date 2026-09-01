@@ -225,22 +225,13 @@ Transforming validates the result but does not install it, so a `.commit()` must
 
 Supported transformer names are:
 
-- `"Incrementalizer"`
-- `"Rewriter"`
-- `"Reconciler"`
-- `"Regularizer"`
+- `"Incrementalizer"` compiles the snapshot circuit into its incremental form.
+- `"Reconciler"` takes `{ pairs: [["observedInput", "output"], ...] }`.
+- `"SmithPredictor"` takes the Reconciler's `pairs` plus the dead-time window `k` (at least 2).
+- `"Distincter"` makes every output set-valued.
 
-Optional transformer options:
-
-- `"Rewriter"`: `{ rules: "Pre" | "Post" | "Default" }`
-- `"Reconciler"`: `{ pairs: [["inputID", "outputID"], ...] }`
-
-`"Regularizer"` rewrites each output as `sum -> group_by(identity) -> lexmin`
-to ensure deterministic one-row-per-key output deltas.
-
-`"InputIntegrators"` inserts `Integrate` directly at the designated inputs. This is useful when a
-snapshot circuit is fed by delta-style sources (for example watch streams) and should reconstruct
-per-input state before applying snapshot operators.
+There is no default chain: an absent list means none, and the circuit runs exactly as built. See
+the [transforms guide](/doc/concepts-transforms.md) for the semantics and the canonical order.
 
 `"Reconciler"` adds circuitry to handle self-referential input/output pairs. Pairs can be either
 explicit raw node IDs (`input_services`, `output_desired_services`) or plain topic names
@@ -379,19 +370,6 @@ kubernetes.watch("annotated-pods", { gvk: "v1/Pod" }, (entries) => {
 This works for native Kubernetes resources and, when the runtime can discover them, Δ-controller
 view resources as well.
 
-### `kubernetes.list(topic, { gvk, namespace, labels }[, callback])`
-
-Starts a Kubernetes state-of-the-world source.
-
-Like `kubernetes.watch`, but on each watch event it publishes the full filtered list of objects as
-one output batch instead of the incremental delta. Useful for naive snapshot reconciliation loops.
-
-Callback semantics are the same as for `kubernetes.watch`.
-
-```js
-kubernetes.list("services-sotw", { gvk: "v1/Service", namespace: "default" });
-```
-
 ### `kubernetes.log(topic, { name, namespace, container }[, callback])`
 
 Starts a Kubernetes pod log stream. Each log line is published to `topic` as a document
@@ -439,7 +417,49 @@ Use this when the pipeline emits the complete desired object rather than a patch
 | Context | What `fn` receives | Return value |
 |---|---|---|
 | `subscribe(topic, fn)` | `[[doc, weight], ...]` | **Ignored** — fn is a sink; call `publish(...)` to forward |
-| `kubernetes.watch/list/log` callback | `[[doc, weight], ...]` | **Published** to the declared topic; `undefined`/`null` → empty Z-set |
+| `kubernetes.watch/log` callback | `[[doc, weight], ...]` | **Published** to the declared topic; `undefined`/`null` → empty Z-set |
+
+### `runtime.create(name[, spec])`
+
+`runtime.create` constructs a private, named DBSP runtime and returns its handle. Every runtime is
+fully isolated: its own pub/sub, its own component manager, its own error channel. With a `spec`
+(the serialized runtime format of `engine/spec`: `{ sources, circuits, targets }`) the runtime is
+assembled from it; without one it starts empty. The runtime is idle until `handle.start()`: every
+subscription is taken at construction, so once started no emission can be missed.
+
+An operator is exactly such a runtime, and this is the one loader behind every frontend: a spec
+frozen from a script and an Operator CRD applied through dcontroller run through the same code.
+
+```js
+const op = runtime.create("hello", {
+  sources: [{ apiGroup: "", kind: "Service" }],
+  circuits: [{
+    name: "annotate",
+    pipeline: [
+      { "@project": { metadata: {
+          name: "$.metadata.name", namespace: "$.metadata.namespace",
+          annotations: { "example.io/seen": "true" } } } },
+    ],
+    transforms: [{ name: "Incrementalizer" }],
+  }],
+  targets: [{ apiGroup: "", kind: "Service", type: "Patcher", as: "ServiceAnnotation" }],
+});
+op.start();
+```
+
+The handle carries the runtime-scoped form of every runtime verb: `start`, `close`, `publish`,
+`subscribe` (and `subscribe.once`), `observe`, `onError`, `components`, `spec`, the
+`sql`/`aggregate`/`circuit` compile family (handles installing into that runtime on commit), and
+`connectors.register`/`connectors.list` over the runtime's own connector registry. The naked
+globals are the same verbs bound to the default runtime the VM creates at startup, so ad-hoc
+scripting needs no handle at all.
+
+In a spec, streams couple the three sets by name: a source or target attaches to the stream its
+`as` names (defaulting to the resource kind), and a circuit lists its `inputs` and `outputs`
+(defaulting to the single source or target stream). A stream produced and consumed only by
+circuits is an internal wire with no binding at all. An empty `transforms` list compiles the
+circuit to the jacketed snapshot execution ∫ -> Q -> D; see the
+[transforms guide](/doc/concepts-transforms.md).
 
 ### `runtime.onError(fn)`
 

@@ -42,13 +42,6 @@ git clone https://github.com/l7mp/dbsp.git
 cd dbsp
 ```
 
-This repository uses a Go workspace (`go.work`) with several modules, including:
-
-- `engine/` for the core DBSP library,
-- `js/` for the `dbsp` CLI and script runner,
-- `connectors/*` for runtime integrations, and
-- `dcontroller/` for controller-oriented applications.
-
 From the repository root, run:
 
 ```bash

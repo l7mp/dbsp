@@ -1,38 +1,29 @@
-# Tutorial: EndpointSlice Hybrid Consumer
+# Tutorial: EndpointSlice Controller
 
-This example is different from the others. It uses declarative Δ-controller pipelines to do the
-difficult Kubernetes-side data preparation, but instead of writing the final result back to the API
-server it consumes the resulting view deltas in Go. That makes it a good example of how
-Δ-controller fits into the broader DBSP runtime. Kubernetes watches are only the inputs. The output
-can just as well feed another consumer that programs some external system or another in-process
-component.
+This example shows two circuits chained through an internal stream, ending in a materialized
+view. The `service-controller` circuit watches annotated `Service` objects, filters the ones
+opted into endpoint processing, and expands service ports onto the internal `ServiceView` stream.
+The `endpointslice-controller` circuit joins that stream with native `EndpointSlice` objects,
+keeps only ready endpoints, and reshapes them into `EndpointView` objects written to a view
+target, one per endpoint address (the flat variant) or one per service port with the address list
+gathered (the gathered variant).
 
-The example files live in `apps/dcontroller/examples/endpointslice-controller/`.
+The example files live in `apps/dcontroller/examples/endpointslice-controller/`: the deployable
+operator manifest (`endpointslice-operator.yaml`, the flat variant), the two bare runtime specs
+(`endpointslice-controller-spec.yaml` and `-gather-spec.yaml`), and the self-contained test
+scripts.
 
-## What the example does
-
-The example has two declarative controllers. The `service-controller` watches annotated `Service`
-objects, filters the ones opted into endpoint processing, and expands service ports into a local
-`ServiceView`. The `endpointslice-controller` joins `ServiceView` with native `EndpointSlice`
-objects, keeps only ready endpoints, reshapes them into a compact `EndpointView`, and publishes the
-resulting deltas.
-
-The Go example binary then subscribes to those `EndpointView` deltas and logs add, update, and
-delete events.
-
-## Run the example
-
-From the workspace root:
+## Apply the operator
 
 ```bash
-go run ./apps/dcontroller/examples/endpointslice-controller
+kubectl apply -f apps/dcontroller/examples/endpointslice-controller/endpointslice-operator.yaml
 ```
 
-In the current implementation, the default mode groups addresses by service port, so one view
-object contains a list of addresses. To get one object per endpoint address, disable pooling:
+Because `EndpointView` is a view target, the generated objects are visible through the embedded
+API server (see the service-health tutorial for the kubeconfig workflow):
 
 ```bash
-go run ./apps/dcontroller/examples/endpointslice-controller --disable-endpoint-pooling
+KUBECONFIG=/tmp/dcontroller.config kubectl get endpointview.ep-operator.view.dcontroller.io -A
 ```
 
 ## Create test resources
@@ -82,9 +73,10 @@ kubectl delete service testsvc
 
 ## What this example shows
 
-This example demonstrates the hybrid style supported by DBSP. The declarative controllers still do
-the joins, filtering, unwinding, and grouping, but the final consumer is Go code running on the
-same runtime rather than a Kubernetes target resource.
+Two circuits meet on an internal stream that is bound to nothing, and only the final result is
+materialized as a view. The `ServiceView` stream never touches the API server: it is a wire
+between circuits inside the operator's private runtime. Compare the flat and gathered specs to
+see the same computation shaped by `@unwind` alone versus `@unwind` plus `@groupBy`.
 
 ## Cleanup
 

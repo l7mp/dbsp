@@ -24,7 +24,7 @@ make -C dcontroller docker-build
 ## Local runtime model
 
 Kubernetes connector startup is explicit. Scripts must call
-`kubernetes.runtime.start()` before `kubernetes.watch/list/patch/update/log`.
+`kubernetes.runtime.start()` before `kubernetes.watch/patch/update/log`.
 
 ```js
 // minimal startup: native Kubernetes only, no embedded API server

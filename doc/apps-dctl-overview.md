@@ -7,10 +7,11 @@ can also write Kubernetes controllers via DBSP's JavaScript runtime. Δ-controll
 controllers as a custom Kubernetes resource and manages the lifecycle, which makes it possible to
 dynamically inject new controllers by a simple `kubectl apply`.
 
-The main unit of deployment is an `Operator` custom resource. An operator contains one or more
-controllers. Each controller watches one or more sources, runs a declarative pipeline, and writes
-the result to one or more targets. Sources and targets can be regular Kubernetes resources, or
-they can be local views that exist only inside Δ-controller.
+The main unit of deployment is an `Operator` custom resource: a frozen DBSP runtime. Its spec is
+the engine's serialized runtime format verbatim, three sets coupled by named streams: sources
+feeding streams, circuits processing them, and targets consuming them. Sources and targets can be
+regular Kubernetes resources or local views that exist only inside Δ-controller, and streams
+between circuits are internal wires. Each operator runs as its own private DBSP runtime.
 
 ```mermaid
 flowchart LR
@@ -24,14 +25,14 @@ those flows with other producers and consumers from the workspace. In practice t
 pipeline may start from Kubernetes objects, pass through views, and end in native Kubernetes
 resources, or it may feed another runtime consumer implemented in Go.
 
-The main benefit is correctness by construction. A declarative controller describes the snapshot
-shape of the computation, and Δ-controller compiles it into an *incremental* form that processes
-changes. This avoids much of the usual operator boilerplate around watch management, object joins,
-caching, and diff handling. In addition, Δ-controller can optionally apply a *regularizer* pass and
-a *reconciler* pass after incrementalization. Reconciler cancels external noise (for example, an
-adversary rewriting the target object in the API server), while regularizer keeps outputs
-deterministic with one representative per primary key. Both transformation passes can be disabled
-on a per-controller basis using `spec.controllers[].options`.
+The main benefit is correctness by construction. A declarative circuit describes the snapshot
+shape of the computation, and its transform chain says how it runs: with the `Incrementalizer` it
+compiles into the incremental form that processes changes, and an empty chain means snapshot
+execution over the full state. This avoids much of the usual operator boilerplate around watch
+management, object joins, caching, and diff handling. The `Reconciler` transform additionally
+closes a desired-state control loop that cancels external noise (an adversary rewriting the
+target object heals), and the `Distincter` keeps outputs set-valued. Transforms are stated
+explicitly per circuit; there are no defaults.
 
 There are also deliberate tradeoffs. Δ-controller operates on unstructured objects, so there is no
 compile-time schema safety. Views are in-memory only, so they disappear on restart and get rebuilt

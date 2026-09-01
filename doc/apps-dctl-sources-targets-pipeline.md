@@ -1,51 +1,52 @@
-# Sources, Targets, and Pipelines
+# Sources, Circuits, and Targets
 
-At runtime, a Δ-controller controller is a small dataflow graph. It receives deltas from its
-sources, applies a declarative pipeline, and emits objects to its targets.
+An `Operator` custom resource is a frozen DBSP runtime: its spec is the engine's serialized
+runtime format verbatim, and Δ-controller assembles one private runtime per operator from it. The
+spec mirrors what a runtime is, three sets coupled by streams:
 
-## Operators and views
-
-An `Operator` custom resource is a container for one or more controllers. Controllers in the same
-operator can communicate through local views. A view is an in-memory, unstructured object type
-owned by that operator. It behaves like a Kubernetes resource from the pipeline's point of view,
-but it is not stored in the main API server.
-
-The view API group is derived from the operator name:
-
-```text
-<operator-name>.view.dcontroller.io/v1alpha1
+```yaml
+spec:
+  sources:   # bindings feeding streams
+  circuits:  # programs over streams
+  targets:   # bindings consuming streams
 ```
 
-Every view object must still have valid `metadata.name` and `metadata.namespace`, because those
-fields are used as the object key inside the runtime and by the embedded API server.
+## Streams
 
-## Sources
+Streams couple the sets by name. A source feeds the stream its `as` names, defaulting to the
+resource kind; a target consumes likewise; a circuit lists its input and output streams. Every
+stream is one topic named plainly by the stream, and every stream carries deltas.
 
-A source defines where a controller reads from. A source always has a `kind`, and may also specify
-`apiGroup`, `version`, filters, and a source type.
-
-For native Kubernetes resources, use the real API group. For core resources such as `Pod` or
-`Service`, use `apiGroup: ""`.
+A stream produced and consumed only by circuits is an internal wire with no binding at all:
+that is how circuits chain. A kind that is both read and written in one runtime must be
+disambiguated with `as` on one side (a stream fed by a source and consumed by a target would
+short-circuit the pair around every circuit, and assembly refuses the collision):
 
 ```yaml
 sources:
   - apiGroup: ""
     kind: Service
-  - apiGroup: discovery.k8s.io
-    kind: EndpointSlice
+targets:
+  - apiGroup: ""
+    kind: Service
+    type: Patcher
+    as: ServiceAnnotation   # the output stream, distinct from the watched "Service"
 ```
 
-For local views, omit `apiGroup` entirely:
+## Views
 
-```yaml
-sources:
-  - kind: HealthView
-```
+A view is an in-memory, unstructured object type owned by the operator, behaving like a Kubernetes
+resource but stored only in the manager's memory. The view API group is derived from the operator
+name, `<operator-name>.view.dcontroller.io/v1alpha1`, and view objects need valid `metadata.name`
+and `metadata.namespace`. Omitting `apiGroup` on a binding means the operator's own view group,
+while `apiGroup: ""` means the core Kubernetes group; views are inspectable through the embedded
+API server. Use a view target/source pair when the intermediate state should be visible to
+kubectl or to other operators; use an internal stream when it should not.
 
-This distinction is important in the current implementation: omitted `apiGroup` means local view,
-while `apiGroup: ""` means the core Kubernetes API group.
+## Sources
 
-Watcher sources may also be restricted with `namespace`, `labelSelector`, or `predicate`.
+A source always has a `kind`, and may specify `apiGroup`, `version`, `as`, filters, and a
+connector-specific type. Kubernetes sources are Watchers, the delta ingest:
 
 ```yaml
 sources:
@@ -55,66 +56,62 @@ sources:
     labelSelector:
       matchLabels:
         app: web
+    predicate: GenerationChanged   # optional event filter
 ```
 
-For state-of-the-world reconciliation, use a `Lister` source. A lister still subscribes to watch
-events, but each trigger emits the full filtered list as the input batch.
+The misc connector provides synthetic trigger sources under its own group, kind `Timer`: `Tick`
+emits a trigger document every `parameters.period` (retracting the previous one), `Init` emits a
+single trigger at startup.
 
 ```yaml
 sources:
-  - apiGroup: ""
-    kind: Service
-    type: Lister
-    namespace: default
-```
-
-Δ-controller also supports two synthetic source types.
-
-`OneShot` emits one empty trigger object when the controller starts. `Periodic` emits trigger
-objects on a timer.
-
-```yaml
-sources:
-  - kind: Tick
-    type: Periodic
+  - apiGroup: misc.connector.dcontroller.io
+    kind: Timer
+    type: Tick
+    as: Resync
     parameters:
+      name: resync
       period: 30s
 ```
 
 ## Targets
 
-A target defines where pipeline output is written. In the current API a controller has `targets`,
-not `target`, even if there is only one output.
+A target binds an output stream to a written resource. There are two modes, and neither ever reads
+the cluster: writes accumulate and retry until the apiserver accepts them.
+
+`Updater` (the default) owns the objects it writes: a bare assertion creates the object, a bare
+retraction deletes it. It is the natural target for views and for whole generated objects.
+`Patcher` decorates somebody else's objects with an RFC 7386 merge patch: only the emitted fields
+are touched, and a patcher never creates or deletes. It is the safe choice for annotations and
+status fields on native resources.
+
+## Circuits
+
+A circuit is a program over the runtime's streams, with its transform chain:
 
 ```yaml
-targets:
-  - apiGroup: ""
-    kind: Service
-    type: Patcher
+circuits:
+  - name: pod-health
+    inputs: [Pod]           # default: the single source stream
+    outputs: [HealthView]   # default: the single target stream
+    pipeline:
+      - "@project": { ... }
+    transforms:
+      - name: Reconciler
+      - name: Distincter
+      - name: Incrementalizer
 ```
 
-As with sources, omit `apiGroup` when the target is a local view:
+The program is exactly one of `pipeline` (an aggregation pipeline), `sql`, or `graph` (a
+hand-built circuit). `inputs`/`outputs` may be omitted only when the runtime has a single source
+or target stream to default to.
 
-```yaml
-targets:
-  - kind: HealthView
-```
+Transforms convert the circuit. The transform chain states what the circuit is; the engine applies it
+in canonical order (see the [transforms guide](/doc/concepts-transforms.md)). An empty chain means
+snapshot execution: the engine compiles the program as ∫ -> Q -> D, recomputing over the full
+state while the streams stay deltas.
 
-There are two target modes.
-
-`Updater` is the default. It is appropriate when the pipeline produces the whole desired object,
-especially for local views and simple resources. `Patcher` merges the pipeline output onto an
-existing object and is the safer choice for modifying complex native resources such as `Deployment`
-or `Service`.
-
-## Pipelines
-
-Pipelines are the declarative part of the controller: it is basically an "aggregation" pipeline
-that processes Kubernetes objects produce by the Source(s) and feeding the results into the
-Target(s). It is also possible to run raw circuits instead of a pipeline; use the `circuit:
-<cirruit>` form to do that.
-
-With a single source, a pipeline is usually a short sequence of transformation stages:
+With a single source, a pipeline is a short stage sequence:
 
 ```yaml
 pipeline:
@@ -128,7 +125,8 @@ pipeline:
         enabled: true
 ```
 
-With multiple sources, the pipeline starts with `@join`, then reshapes the joined object.
+With multiple input streams, the pipeline starts with `@join` and refers to each stream by its
+name:
 
 ```yaml
 pipeline:
@@ -142,25 +140,7 @@ pipeline:
         namespace: "$.Service.metadata.namespace"
 ```
 
-The full expression language is documented in the generic reference guides. On the Δ-controller
-side, the important point is simply that the pipeline describes the snapshot transformation while
-the runtime executes it incrementally.
-
-## Controller options
-
-Controllers can tune transform passes with `options`.
-
-By default, Δ-controller applies the regularizer pass first, then incrementalizes, then applies the
-reconciler pass. This is the recommended mode for most controllers. The incrementalization pass can
-be disabled using `options.enableSnapshot: true` to keep snapshot execution. In snapshot mode,
-the distincter is still applied unless disabled explicitly. Reconciler can be disabled with
-`options.disableReconciler: true`, and the distincter can be disabled with
-`options.disableDistincter: true`. Setting both `enableSnapshot: true` and
-`disableReconciler: false` is an error.
-
-## Operators
-
-The current operator shape is:
+## A complete operator
 
 ```yaml
 apiVersion: dcontroller.io/v1alpha1
@@ -168,11 +148,11 @@ kind: Operator
 metadata:
   name: example-operator
 spec:
-  controllers:
+  sources:
+    - apiGroup: ""
+      kind: Service
+  circuits:
     - name: annotate-service
-      sources:
-        - apiGroup: ""
-          kind: Service
       pipeline:
         - "@project":
             metadata:
@@ -180,11 +160,17 @@ spec:
               namespace: "$.metadata.namespace"
               annotations:
                 "example.io/managed": "true"
-      targets:
-        - apiGroup: ""
-          kind: Service
-          type: Patcher
+      transforms:
+        - name: Reconciler
+        - name: Distincter
+        - name: Incrementalizer
+  targets:
+    - apiGroup: ""
+      kind: Service
+      type: Patcher
+      as: ServiceAnnotation
 ```
 
-When the operator is running, inspect `status.conditions` and `status.lastErrors` on the top-level
-`Operator` object to see whether the configuration was accepted and started successfully.
+When the operator is running, inspect `status.conditions` and `status.lastErrors` on the
+`Operator` object to see whether the configuration was accepted and started successfully; runtime
+errors of an operator are routed per operator into its status.

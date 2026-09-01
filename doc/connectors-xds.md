@@ -48,11 +48,13 @@ reports the port actually bound, which is what tests and benchmarks use. Passing
 naming it in the consumer options binds them explicitly, which is only needed when a script runs
 more than one server.
 
-The two egress consumers mirror the Kubernetes ones. **Updater** (`xds.update`) is the delta sink:
-it applies the incoming Z-set as a change, adding and removing individual resources. **Setter**
-(`xds.set`) is the snapshot sink: each event carries the complete set of resources of that type, and
-anything absent from it is deleted. As on the Kubernetes side, the delta consumer is the one that
-pairs with an incremental pipeline.
+**Updater** (`xds.update`) is the delta sink and the normal choice: it applies the incoming Z-set
+as a change, adding and removing individual resources over the natively incremental
+`UpdateResources` wire call. **Setter** (`xds.set`) selects the state-of-the-world wire mode of
+the same remote (`SetResources`, deletion by omission): each event carries the complete set of
+resources of that type. The wire mode is border business between the connector and its remote;
+either way the bus carries whatever the pipeline emits, and an incremental pipeline pairs with the
+Updater.
 
 ## Ingest: the client
 
@@ -62,9 +64,9 @@ The ingest producers connect to an upstream management server and turn what it s
 xds.watch("upstream.cds", { type: "cds", address: "127.0.0.1:18000", node: "my-envoy" });
 ```
 
-**Watcher** (`xds.watch`) speaks the delta protocol and emits changes, retracting the previous
-version of a resource as it publishes the new one. **Lister** (`xds.list`) speaks the
-state-of-the-world protocol and emits full snapshots.
+**Watcher** (`xds.watch`) speaks the delta ADS protocol and emits changes, retracting the previous
+version of a resource as it publishes the new one; with `{ level: true }` it selects the
+state-of-the-world wire mode and emits full snapshots per event instead.
 
 A management server decides what to serve based on who is asking, so the identity options matter:
 `node` and `nodeCluster` carry the workload identity that scopes the configuration, and
@@ -99,7 +101,11 @@ while it was away, so the topic keeps describing what the upstream actually serv
 
 ## Which one to use
 
-| Role | Delta | Snapshot |
+| Role | Delta wire | State-of-the-world wire |
 |---|---|---|
 | Egress, serve Envoys | `xds.update` | `xds.set` |
-| Ingest, consume an upstream | `xds.watch` | `xds.list` |
+| Ingest, consume an upstream | `xds.watch` | `xds.watch` with `{ level: true }` |
+
+In the serialized runtime format the xds bindings ride the `parameters` field for the same
+choices: the target's `parameters.address` (or `parameters.server`) selects the egress server and
+`parameters.level` the wire mode.

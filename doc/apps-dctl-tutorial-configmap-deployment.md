@@ -78,10 +78,11 @@ what the deployment depends on.
 
 ## What this example shows
 
-The important part is the operator shape, not the custom resource itself. The controller uses three
-sources, starts with `@join`, and writes to a `Patcher` target on the deployment. This is a good
-pattern whenever a declarative relation between objects should result in a small patch on an
-existing native resource.
+The important part is the operator shape, not the custom resource itself. The circuit reads three
+source streams, starts with `@join`, and writes to a `Patcher` target on the deployment (named
+apart with `as`, since `Deployment` is also watched). This is a good pattern whenever a
+declarative relation between objects should result in a small patch on an existing native
+resource.
 
 ## Cleanup
 

@@ -22,11 +22,15 @@ applications in this repository.
   - Δ-controller: A NoCode/LowCode incremental Kubernetes controller framework
     - [Overview](/doc/apps-dctl-overview.md)
     - [Getting Started](/doc/apps-dctl-getting-started.md)
-    - [Sources, Targets, and Pipelines](/doc/apps-dctl-sources-targets-pipeline.md)
+    - [Sources, Circuits, and Targets](/doc/apps-dctl-sources-targets-pipeline.md)
     - Tutorials
       - [ConfigMap to Deployment](/doc/apps-dctl-tutorial-configmap-deployment.md)
       - [Service Health Monitor](/doc/apps-dctl-tutorial-service-health.md)
       - [EndpointSlice Hybrid Consumer](/doc/apps-dctl-tutorial-endpointslice.md)
+  - Δ-gateway: A declarative Gateway API controller for Envoy
+    - [Overview](/doc/apps-dgw-overview.md)
+  - Δ-policy: A continuous Gatekeeper-audit controller
+    - [Overview](/doc/apps-dpol-overview.md)
 
 ## License
 

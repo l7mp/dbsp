@@ -88,11 +88,7 @@ graph LR
 Watch Pods in the default namespace and publish to `pods` topic:
 
 ```js
-producer.kubernetes.watch({
-    gvk: "v1/Pod",
-    namespace: "default",
-    topic: "pods",
-});
+kubernetes.watch("pods", { gvk: "v1/Pod", namespace: "default" });
 ```
 
 For local unit tests without Kubernetes, publish directly to the topic:
@@ -103,9 +99,9 @@ publish("pods", [[{ metadata: { name: "pod-a", namespace: "default" } }, 1]]);
 
 You can watch any Kubernetes resource type, filter by namespace or labels, and publish to any
 topic. Multiple watches can publish to the same topic or to different topics that feed different
-circuits. A Kubernetes Lister producer is also available as the "snapshot pair" of the Watcher: on
-every watch event it emits a full snapshot of the corresponding GVK. This can be used to drive
-snapshot circuits.
+circuits. Every stream carries deltas: a connector whose remote speaks full state translates at
+its own border, and a snapshot circuit reconstructs full state with its own input integrators, so
+nothing between the connectors ever needs to know what kind of computation runs.
 
 ## Consumers
 
@@ -120,10 +116,10 @@ subscribe("result", (entries) => {
 });
 ```
 
-The Kubernetes connector library provides three consumer types. A Patcher consumer takes the output
+The Kubernetes connector library provides two consumer types. A Patcher consumer takes the output
 Z-set, computes a merge patch, and applies it to the target resource via the API. An Updater
-consumer replaces the entire target resource with the output. Finally, a Setter applies an entire
-resource snapshot. 
+consumer owns the objects it writes: it creates them on assertion, patches them on update, and
+deletes them on full retraction.
 
 ## Processors
 
@@ -194,8 +190,11 @@ runtime.onError((e) => {
 });
 ```
 
-Components start in the order they are added. The recommended script pattern is to register
-consumers and processors before first publish and then emit input events, but any order is
-accepted: late-binding topic subscribers receive an entire initial snapshot when attaching to the
-topic. Components can also be removed or canceled dynamically. This is used by, for instance, the
-Kubernetes operator controller when operators are added, modified, or deleted at runtime.
+The pub/sub is pure fan-out transport with no state: an event published to a topic with no
+subscribers is gone, and a late subscriber sees only what is published after it registers. Setup
+order is therefore a contract: subscribe before producing. Ad-hoc scripts commit circuits and
+register subscribers before publishing; a runtime assembled from a serialized spec
+(`runtime.create`) enforces the phasing structurally, since every subscription is taken at
+construction and nothing produces before `handle.start()`. Components can also be removed or
+canceled dynamically; dcontroller uses this when operators are added, modified, or deleted at
+runtime, each operator being its own private runtime.
