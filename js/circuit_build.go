@@ -10,6 +10,7 @@ import (
 	"github.com/l7mp/dbsp/engine/circuit"
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/operator"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 // circuitCreate implements the circuit.create(name) global: it returns a fresh,
@@ -18,7 +19,7 @@ import (
 // circuit into the runtime, as it does for a compiled one. A half-built
 // circuit is not well-formed, so committing (or validating) mid-build is an
 // error rather than a way to check progress.
-func (v *VM) circuitCreate(call goja.FunctionCall) (goja.Value, error) {
+func (v *VM) circuitCreate(rt *dbspruntime.Runtime, call goja.FunctionCall) (goja.Value, error) {
 	name := "circuit"
 	if len(call.Arguments) > 0 && !goja.IsUndefined(call.Argument(0)) && !goja.IsNull(call.Argument(0)) {
 		if n := strings.TrimSpace(call.Argument(0).String()); n != "" {
@@ -33,7 +34,7 @@ func (v *VM) circuitCreate(call goja.FunctionCall) (goja.Value, error) {
 		InputLogicalMap:  map[string]string{},
 		OutputLogicalMap: map[string]string{},
 	}
-	h := &circuitHandle{c: c, query: q, vm: v}
+	h := &circuitHandle{c: c, query: q, vm: v, rt: rt}
 	return h.jsObject(), nil
 }
 

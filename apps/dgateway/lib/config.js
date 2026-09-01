@@ -23,18 +23,17 @@ const RESOURCES = {
   namespace: { apiGroup: "", version: "v1", kind: "Namespace" },
 };
 
-// The plain-topic binding group: streams of this group are the operator's
-// shared retained topics, bound by the runtime's pub/sub itself.
-const TOPIC_GROUP = "topic.connector.dcontroller.io";
 const XDS_GROUP = "xds.connector.dcontroller.io";
 
-// The loader names an operator's shared topics "<operator>/topic/<stream>".
-const topicOf = (stream) => `${OPERATOR}/topic/${stream}`;
+// Streams are topics, named plainly: the operator runs in its own
+// private runtime, so no prefixing exists. A stream is a plain name in
+// TOPICS below; sources and targets attach to streams by `as`.
+const topicOf = (stream) => stream;
 
-// Topic layout of the shared streams, for introspection and the test
-// harness. "inputs" carry the watched resources in topic-driven (test)
-// mode, "views" the curated views, "observed" the observed statuses the
-// Reconciler pairs with the "status" outputs.
+// Stream layout, for introspection and the test harness. "inputs" carry
+// the watched resources (driven by the harness in test mode), "views"
+// the curated views, "observed" the observed statuses the Reconciler
+// pairs with the "status" outputs.
 const TOPICS = {
   inputs: {
     gatewayClass: topicOf("GatewayClass"),
@@ -69,7 +68,6 @@ module.exports = {
   GATEWAY_API_GROUP,
   OPERATOR,
   RESOURCES,
-  TOPIC_GROUP,
   XDS_GROUP,
   TOPICS,
 };

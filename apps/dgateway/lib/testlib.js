@@ -5,6 +5,38 @@
 
 const { sleep } = require("testing");
 
+// The operator runtime handle the topic helpers route through: the
+// operator's streams live inside its private runtime, everything else
+// on the default runtime. Bind with use(handle, isOwned), where isOwned
+// says which topics belong to the operator.
+let boundHandle = null;
+let ownedPredicate = null;
+
+function use(handle, isOwned) {
+  boundHandle = handle;
+  ownedPredicate = isOwned || (() => true);
+}
+
+function owned(topic) {
+  return Boolean(boundHandle) && ownedPredicate(topic);
+}
+
+function pub(topic, entries) {
+  if (owned(topic)) {
+    boundHandle.publish(topic, entries);
+  } else {
+    publish(topic, entries);
+  }
+}
+
+function sub(topic, cb) {
+  if (owned(topic)) {
+    boundHandle.subscribe(topic, cb);
+  } else {
+    subscribe(topic, cb);
+  }
+}
+
 function sortObject(value) {
   if (Array.isArray(value)) {
     return value.map(sortObject);
@@ -27,7 +59,7 @@ function normalize(value) {
 // exposes the documents with positive weight.
 function collector(topic) {
   const state = new Map();
-  subscribe(topic, (entries) => {
+  sub(topic, (entries) => {
     for (const [doc, weight] of entries) {
       const key = normalize(doc);
       const cur = state.get(key) || { doc, weight: 0 };
@@ -110,21 +142,22 @@ function byName(list) {
 }
 
 function upsert(topic, doc) {
-  publish(topic, [[doc, 1]]);
+  pub(topic, [[doc, 1]]);
 }
 
 function retract(topic, doc) {
-  publish(topic, [[doc, -1]]);
+  pub(topic, [[doc, -1]]);
 }
 
 function replace(topic, oldDoc, newDoc) {
-  publish(topic, [
+  pub(topic, [
     [oldDoc, -1],
     [newDoc, 1],
   ]);
 }
 
 module.exports = {
+  use,
   collector,
   normalize,
   expectEqual,

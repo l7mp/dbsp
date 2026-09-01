@@ -19,6 +19,7 @@ type circuitHandle struct {
 	c       *circuit.Circuit
 	query   *compiler.Query
 	vm      *VM
+	rt      *dbspruntime.Runtime
 	proc    *dbspruntime.Circuit
 	obsFn   goja.Callable
 	applied []transform.TransformerType
@@ -123,16 +124,16 @@ func (h *circuitHandle) commit() error {
 	query := *h.query
 	query.Circuit = h.c
 
-	proc, err := dbspruntime.NewCircuit(h.c.Name(), h.vm.runtime, &query, h.vm.logger)
+	proc, err := dbspruntime.NewCircuit(h.c.Name(), h.rt, &query, h.vm.logger)
 	if err != nil {
 		return fmt.Errorf("runtime circuit: %w", err)
 	}
 
 	if h.proc != nil {
-		h.vm.runtime.Stop(h.proc)
+		h.rt.Stop(h.proc)
 	}
 
-	if err := h.vm.runtime.Add(proc); err != nil {
+	if err := h.rt.Add(proc); err != nil {
 		return fmt.Errorf("runtime add circuit: %w", err)
 	}
 
@@ -248,7 +249,7 @@ func (h *circuitHandle) close() error {
 			return err
 		}
 	}
-	h.vm.runtime.Stop(h.proc)
+	h.rt.Stop(h.proc)
 	h.proc = nil
 	return nil
 }
@@ -269,7 +270,7 @@ func (h *circuitHandle) installObserver() error {
 	}
 
 	if h.obsFn == nil {
-		if !h.vm.runtime.SetCircuitObserver(h.proc.Name(), nil) {
+		if !h.rt.SetCircuitObserver(h.proc.Name(), nil) {
 			return fmt.Errorf("circuit.observe: runtime circuit %q not found", h.proc.Name())
 		}
 		return nil
@@ -279,7 +280,7 @@ func (h *circuitHandle) installObserver() error {
 	done := false
 	markDone := cancelContextFunc(func() error {
 		done = true
-		if !h.vm.runtime.SetCircuitObserver(h.proc.Name(), nil) {
+		if !h.rt.SetCircuitObserver(h.proc.Name(), nil) {
 			return fmt.Errorf("circuit.observe: runtime circuit %q not found", h.proc.Name())
 		}
 		return nil
@@ -304,7 +305,7 @@ func (h *circuitHandle) installObserver() error {
 		})
 	}
 
-	if !h.vm.runtime.SetCircuitObserver(h.proc.Name(), obs) {
+	if !h.rt.SetCircuitObserver(h.proc.Name(), obs) {
 		return fmt.Errorf("circuit.observe: runtime circuit %q not found", h.proc.Name())
 	}
 

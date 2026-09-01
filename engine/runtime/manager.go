@@ -3,9 +3,15 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
 	"sync"
+	"time"
 )
+
+// stopWaitBound caps how long Stop waits for a cancelled component's
+// goroutine to return.
+const stopWaitBound = 2 * time.Second
 
 // Runnable has a context-managed lifecycle.
 type Runnable interface {
@@ -23,6 +29,7 @@ type Manager interface {
 type managed struct {
 	r      Runnable
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 type manager struct {
@@ -63,7 +70,13 @@ func (m *manager) Add(r Runnable) error {
 	return nil
 }
 
-// Stop cancels all managed instances that match r.
+// Stop cancels all managed instances that match r and waits, up to a
+// bound, for their goroutines to return. The wait is what makes a
+// stop-then-replace sequence race-free: a stopped component's teardown
+// (closing its publisher and its subscriptions) has
+// happened by the time Stop returns, so a successor added right after
+// never observes the predecessor's leftovers. A component that ignores
+// cancellation is abandoned after the bound with a log line.
 func (m *manager) Stop(r Runnable) {
 	m.mu.Lock()
 	var toStop []*managed
@@ -84,6 +97,16 @@ func (m *manager) Stop(r Runnable) {
 	for _, item := range toStop {
 		if item.cancel != nil {
 			item.cancel()
+		}
+	}
+	for _, item := range toStop {
+		if item.done == nil {
+			continue
+		}
+		select {
+		case <-item.done:
+		case <-time.After(stopWaitBound):
+			log.Printf("runtime: component %q did not stop within %s, abandoning", item.r.Name(), stopWaitBound)
 		}
 	}
 }
@@ -126,9 +149,11 @@ func (m *manager) startOneLocked(item *managed) {
 	}
 	child, cancel := context.WithCancel(m.ctx)
 	item.cancel = cancel
+	item.done = make(chan struct{})
 	m.wg.Add(1)
-	go func(r Runnable) {
+	go func(r Runnable, done chan struct{}) {
 		defer m.wg.Done()
+		defer close(done)
 		if err := r.Start(child); err != nil {
 			m.errMu.Lock()
 			if m.err == nil {
@@ -136,5 +161,5 @@ func (m *manager) startOneLocked(item *managed) {
 			}
 			m.errMu.Unlock()
 		}
-	}(item.r)
+	}(item.r, item.done)
 }

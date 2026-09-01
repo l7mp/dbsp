@@ -122,6 +122,9 @@ func newBase(cfg Config, producerType string) (*baseProducer, error) {
 // from the current state with a loud component error, since deltas in the
 // gap are lost until an upstream resync.
 func (p *baseProducer) start(ctx context.Context, onEvent func(context.Context, watch.Event) error) error {
+	// Fence the publisher on teardown so a straggling watch cannot write
+	// into a successor's state.
+	defer p.ClosePublisher()
 	first := true
 	lastRV := ""
 	backoff := wait.Backoff{Duration: time.Second, Factor: 2, Cap: 30 * time.Second, Steps: math.MaxInt32}

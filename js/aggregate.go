@@ -8,9 +8,10 @@ import (
 	"github.com/dop251/goja"
 
 	aggcompiler "github.com/l7mp/dbsp/engine/compiler/aggregation"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
-func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
+func (v *VM) aggregateCompile(rt *dbspruntime.Runtime, call goja.FunctionCall) (goja.Value, error) {
 	if len(call.Arguments) < 1 {
 		return nil, fmt.Errorf("aggregate.compile(pipeline, { inputs, outputs }) requires pipeline")
 	}
@@ -63,7 +64,8 @@ func (v *VM) aggregateCompile(call goja.FunctionCall) (goja.Value, error) {
 	}
 
 	h := &circuitHandle{
-		c: compiled.Circuit, query: compiled, vm: v,
+		rt: rt,
+		c:  compiled.Circuit, query: compiled, vm: v,
 		srcKind: "pipeline", src: pipelineJSON,
 		bindIn: inputs, bindOut: outputs, specName: compileName,
 	}

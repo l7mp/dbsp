@@ -13,8 +13,9 @@ import (
 
 // registerCallbackConsumer subscribes to topic and calls jsFn with each batch.
 // jsFn is a sink: its return value is discarded.
-func (v *VM) registerCallbackConsumer(topic string, jsFn goja.Callable) {
-	sub := v.runtime.NewSubscriber()
+func (inst *runtimeInstance) registerCallbackConsumer(topic string, jsFn goja.Callable) {
+	v := inst.vm
+	sub := inst.rt.NewSubscriber()
 	sub.Subscribe(topic)
 	done := make(chan struct{})
 	var stopOnce sync.Once

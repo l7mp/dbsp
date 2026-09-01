@@ -22,13 +22,13 @@ const manager = new DControllerManager({
 });
 manager.start();
 
-// Updater consumers — write test fixtures into K8s.
+// Updater consumers - write test fixtures into K8s.
 const writeOperator = kubernetes.update("write-operator", { gvk: OPERATOR_GVK });
 const writeCM       = kubernetes.update("write-cm",       { gvk: CM_GVK });
 const writeDeploy   = kubernetes.update("write-deploy",   { gvk: DEPLOY_GVK });
 const writeCD       = kubernetes.update("write-cd",       { gvk: CD_GVK });
 
-// Watcher producers — deliver K8s change events onto named topics.
+// Watcher producers - deliver K8s change events onto named topics.
 kubernetes.watch("watch-deploy", { gvk: DEPLOY_GVK, namespace: TESTNS });
 kubernetes.watch("watch-op",     { gvk: OPERATOR_GVK });
 
@@ -77,7 +77,7 @@ function waitForOp(check, timeoutMs) {
 
 // --- State tracking for Deployments ----------------------------------------
 //
-// latestDepState[name] — latest seen Deployment state: { ann }.  A name that is
+// latestDepState[name] - latest seen Deployment state: { ann }.  A name that is
 // a key of the map has been seen at least once, which is what tells "annotation
 // absent" apart from "deployment not observed yet".
 //
@@ -244,13 +244,14 @@ const OPERATOR_SPEC = {
     kind: "Operator",
     metadata: { name: "configdep-operator" },
     spec: {
-        controllers: [{
+        sources: [
+            { apiGroup: "",               kind: "ConfigMap"       },
+            { apiGroup: "apps",           kind: "Deployment"      },
+            { apiGroup: "dcontroller.io", kind: "ConfigDeployment" },
+        ],
+        circuits: [{
             name: "configmap-controller",
-            sources: [
-                { apiGroup: "",               kind: "ConfigMap"       },
-                { apiGroup: "apps",           kind: "Deployment"      },
-                { apiGroup: "dcontroller.io", kind: "ConfigDeployment" },
-            ],
+            inputs: ["ConfigMap", "Deployment", "ConfigDeployment"],
             pipeline: [
                 {
                     "@join": {
@@ -282,8 +283,9 @@ const OPERATOR_SPEC = {
                     },
                 },
             ],
-            targets: [{ apiGroup: "apps", kind: "Deployment", type: "Patcher" }],
+            transforms: [{ name: "Reconciler" }, { name: "Distincter" }, { name: "Incrementalizer" }],
         }],
+        targets: [{ apiGroup: "apps", kind: "Deployment", type: "Patcher", as: "DeploymentPatch" }],
     },
 };
 

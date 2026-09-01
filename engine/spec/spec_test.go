@@ -13,28 +13,31 @@ func TestSpec(t *testing.T) {
 	RunSpecs(t, "Spec Suite")
 }
 
-// A dgateway-flavored operator: k8s sources, view targets, a status
-// controller with a Reconciler, an xds-group target.
-const operatorJSON = `{
-  "controllers": [
+// A dgateway-flavored runtime: k8s, misc and view sources, an internal
+// view stream between the circuits, a Patcher target named apart from
+// its watched kind, an xds-group target.
+const runtimeJSON = `{
+  "sources": [
+    {"apiGroup": "gateway.networking.k8s.io", "kind": "Gateway"},
+    {"apiGroup": "misc.connector.dcontroller.io", "kind": "Timer",
+     "type": "Tick", "parameters": {"period": "5m", "name": "resync"}},
+    {"apiGroup": "", "version": "v1", "kind": "Secret", "level": true,
+     "labelSelector": {"matchLabels": {"managed": "true"}}},
+    {"kind": "GatewayStatusObserved"}
+  ],
+  "circuits": [
     {
       "name": "input",
-      "sources": [
-        {"apiGroup": "gateway.networking.k8s.io", "kind": "Gateway"},
-        {"apiGroup": "misc.connector.dcontroller.io", "kind": "Timer",
-         "type": "Tick", "parameters": {"period": "5m", "name": "resync"}},
-        {"apiGroup": "", "version": "v1", "kind": "Secret", "level": true,
-         "labelSelector": {"matchLabels": {"managed": "true"}}}
-      ],
+      "inputs": ["Gateway", "Timer", "Secret"],
+      "outputs": ["GatewayView"],
       "pipeline": [[{"@inputs": ["Gateway"]}, {"@project": {"$.": "$."}}, {"@output": "GatewayView"}]],
-      "targets": [{"kind": "GatewayView"}],
       "transforms": [{"name": "Incrementalizer"}]
     },
     {
       "name": "status",
-      "sources": [{"kind": "GatewayView"}, {"kind": "GatewayStatusObserved"}],
+      "inputs": ["GatewayView", "GatewayStatusObserved"],
+      "outputs": ["GatewayStatus"],
       "pipeline": [[{"@inputs": ["GatewayView"]}, {"@project": {"$.": "$."}}, {"@output": "GatewayStatus"}]],
-      "targets": [{"apiGroup": "gateway.networking.k8s.io", "kind": "Gateway", "type": "Patcher"}],
       "transforms": [
         {"name": "Incrementalizer"},
         {"name": "Reconciler", "pairs": [["GatewayStatusObserved", "GatewayStatus"]]}
@@ -42,56 +45,64 @@ const operatorJSON = `{
     },
     {
       "name": "xds",
-      "sources": [{"kind": "GatewayView"}],
-      "pipeline": [[{"@inputs": ["GatewayView"]}, {"@project": {"$.": "$."}}, {"@output": "XdsListeners"}]],
-      "targets": [{"apiGroup": "xds.connector.dcontroller.io", "kind": "Listener",
-                   "parameters": {"address": ":18000"}}]
+      "inputs": ["GatewayView"],
+      "outputs": ["XdsListeners"],
+      "pipeline": [[{"@inputs": ["GatewayView"]}, {"@project": {"$.": "$."}}, {"@output": "XdsListeners"}]]
     }
+  ],
+  "targets": [
+    {"apiGroup": "gateway.networking.k8s.io", "kind": "Gateway", "type": "Patcher", "as": "GatewayStatus"},
+    {"apiGroup": "xds.connector.dcontroller.io", "kind": "Listener", "as": "XdsListeners",
+     "parameters": {"address": ":18000"}}
   ]
 }`
 
-var _ = Describe("OperatorSpec", func() {
+var _ = Describe("RuntimeSpec", func() {
 	It("round-trips through JSON", func() {
-		var op OperatorSpec
-		Expect(json.Unmarshal([]byte(operatorJSON), &op)).To(Succeed())
+		var op RuntimeSpec
+		Expect(json.Unmarshal([]byte(runtimeJSON), &op)).To(Succeed())
 		Expect(op.Validate()).To(Succeed())
 
 		b, err := json.Marshal(op)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(b)).To(MatchJSON(operatorJSON))
+		Expect(string(b)).To(MatchJSON(runtimeJSON))
 
-		var again OperatorSpec
+		var again RuntimeSpec
 		Expect(json.Unmarshal(b, &again)).To(Succeed())
 		b2, err := json.Marshal(again)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(b2)).To(MatchJSON(operatorJSON))
+		Expect(string(b2)).To(MatchJSON(runtimeJSON))
 	})
 
 	It("deep-copies without aliasing", func() {
-		var op OperatorSpec
-		Expect(json.Unmarshal([]byte(operatorJSON), &op)).To(Succeed())
+		var op RuntimeSpec
+		Expect(json.Unmarshal([]byte(runtimeJSON), &op)).To(Succeed())
 		cp := op.DeepCopy()
-		(*cp.Controllers[0].Pipeline)[0] = 'X'
-		cp.Controllers[0].Sources[0].Kind = "Changed"
-		cp.Controllers[1].Transforms[1].Pairs[0][0] = "changed"
-		Expect(string(*op.Controllers[0].Pipeline)).To(HavePrefix("["))
-		Expect(op.Controllers[0].Sources[0].Kind).To(Equal("Gateway"))
-		Expect(op.Controllers[1].Transforms[1].Pairs[0][0]).To(Equal("GatewayStatusObserved"))
+		(*cp.Circuits[0].Pipeline)[0] = 'X'
+		cp.Sources[0].Kind = "Changed"
+		cp.Circuits[0].Inputs[0] = "changed"
+		cp.Circuits[1].Transforms[1].Pairs[0][0] = "changed"
+		cp.Targets[0].As = "changed"
+		Expect(string(*op.Circuits[0].Pipeline)).To(HavePrefix("["))
+		Expect(op.Sources[0].Kind).To(Equal("Gateway"))
+		Expect(op.Circuits[0].Inputs[0]).To(Equal("Gateway"))
+		Expect(op.Circuits[1].Transforms[1].Pairs[0][0]).To(Equal("GatewayStatusObserved"))
+		Expect(op.Targets[0].As).To(Equal("GatewayStatus"))
 	})
 
 	It("validates the structural invariants", func() {
 		bad := func(src, msg string) {
 			GinkgoHelper()
-			var op OperatorSpec
+			var op RuntimeSpec
 			Expect(json.Unmarshal([]byte(src), &op)).To(Succeed())
 			Expect(op.Validate()).To(MatchError(ContainSubstring(msg)))
 		}
-		bad(`{"controllers": []}`, "at least one controller")
-		bad(`{"controllers": [{"sources": [], "targets": []}]}`, "name is required")
-		bad(`{"controllers": [{"name": "c", "sources": [], "targets": []}]}`, "exactly one of pipeline, sql, or circuit")
-		bad(`{"controllers": [{"name": "c", "pipeline": [], "sql": [], "sources": [], "targets": []}]}`, "exactly one of pipeline, sql, or circuit")
-		bad(`{"controllers": [{"name": "c", "pipeline": [], "sources": [{}], "targets": []}]}`, "kind is required")
-		bad(`{"controllers": [{"name": "c", "pipeline": [], "sources": [], "targets": [],
-		     "transforms": [{"name": "NoSuch"}]}]}`, "unknown transformer")
+		bad(`{"circuits": []}`, "at least one circuit")
+		bad(`{"circuits": [{}]}`, "name is required")
+		bad(`{"circuits": [{"name": "c"}]}`, "exactly one of pipeline, sql, or graph")
+		bad(`{"circuits": [{"name": "c", "pipeline": [], "sql": []}]}`, "exactly one of pipeline, sql, or graph")
+		bad(`{"circuits": [{"name": "c", "pipeline": []}, {"name": "c", "graph": []}]}`, "duplicate name")
+		bad(`{"circuits": [{"name": "c", "pipeline": []}], "sources": [{}]}`, "kind is required")
+		bad(`{"circuits": [{"name": "c", "pipeline": []}], "targets": [{}]}`, "kind is required")
 	})
 })

@@ -3,15 +3,19 @@ kind: Operator
 metadata:
   name: ep-operator
 spec:
-  controllers:
+  sources:
+    - apiGroup: ""
+      kind: Service
+    - apiGroup: "discovery.k8s.io"
+      kind: EndpointSlice
+  circuits:
     # service controller:
     # - filter services that have an endpointslice controller annotation
     # - convert into simpler shape
-    # - demux on spec.ports and
+    # - demux on spec.ports
     - name: service-controller
-      sources:
-        - apiGroup: ""
-          kind: Service
+      inputs: [Service]
+      outputs: [ServiceView]
       pipeline:
         - "@select":
             "@exists": '$["metadata"]["annotations"]["dcontroller.io/endpointslice-controller-enabled"]'
@@ -32,20 +36,20 @@ spec:
                 "@concat": [$.spec.serviceName, "-", $.spec.ports.protocol, "-", $.spec.ports.port]
               namespace: $.metadata.namespace
             spec: $.spec
-      targets:
-        - kind: ServiceView
-    # endpointslice controller:
+      transforms:
+        - name: Reconciler
+        - name: Distincter
+        - name: Incrementalizer
+
+    # endpointslice controller (ServiceView is an internal stream):
     # - join services with the corresponding endpoint slices
-    # - create a unique service-id used for grouping
     # - demux on "$.endpoints"
     # - filter ready addresses
     # - demux on $.endpoints.addresses
     # - convert into simpler shape
     - name: endpointslice-controller
-      sources:
-        - kind: ServiceView
-        - apiGroup: "discovery.k8s.io"
-          kind: EndpointSlice
+      inputs: [ServiceView, EndpointSlice]
+      outputs: [EndpointView]
       pipeline:
         - "@join":
             "@and":
@@ -89,5 +93,9 @@ spec:
                     - "-"
                     - { "@hash": $.spec }
                 namespace: $.metadata.namespace
-      targets:
-        - kind: EndpointView
+      transforms:
+        - name: Reconciler
+        - name: Distincter
+        - name: Incrementalizer
+  targets:
+    - kind: EndpointView

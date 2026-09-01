@@ -108,7 +108,7 @@ func NewProducerFromSpec(topic string, spec ProducerSpec, deps Deps) (dbspruntim
 
 // NewConsumerFromSpec builds the egress consumer subscribed to topic on
 // the given server: an Updater, or a Setter with level: true.
-func NewConsumerFromSpec(srv *Server, topic string, spec ConsumerSpec, logger logr.Logger) (dbspruntime.Runnable, error) {
+func NewConsumerFromSpec(srv *Server, rt *dbspruntime.Runtime, topic string, spec ConsumerSpec, logger logr.Logger) (dbspruntime.Runnable, error) {
 	consumerKind := "updater"
 	if spec.Level {
 		consumerKind = "setter"
@@ -118,6 +118,7 @@ func NewConsumerFromSpec(srv *Server, topic string, spec ConsumerSpec, logger lo
 		OutputName: topic,
 		Type:       spec.Type,
 		Logger:     logger,
+		Runtime:    rt,
 	}
 	if spec.Level {
 		return srv.Setter(cfg)

@@ -11,6 +11,7 @@ import (
 type Runtime struct {
 	*PubSub
 	Manager
+	name  string
 	errCh chan<- Error
 	log   logr.Logger
 
@@ -33,6 +34,28 @@ func NewRuntime(log logr.Logger) *Runtime {
 		runnables: map[string]Runnable{},
 		observers: map[string]observerSetter{},
 	}
+}
+
+// SetName names the runtime. The name prefixes the runtime's shared
+// topics and component names when the runtime is assembled from a
+// serialized spec; set it once, before components are added.
+func (rt *Runtime) SetName(name string) { rt.name = name }
+
+// Name returns the runtime's name.
+func (rt *Runtime) Name() string { return rt.name }
+
+// Logger returns the runtime's logger.
+func (rt *Runtime) Logger() logr.Logger { return rt.log }
+
+// Components lists the names of the currently registered runnables.
+func (rt *Runtime) Components() []string {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	out := make([]string, 0, len(rt.runnables))
+	for name := range rt.runnables {
+		out = append(out, name)
+	}
+	return out
 }
 
 // Add registers r with the manager and starts it if the runtime is already

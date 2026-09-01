@@ -23,6 +23,11 @@ type consumerConfig struct {
 	// the registry at construction.
 	Type   string
 	Logger logr.Logger
+	// Runtime is the runtime whose topic the consumer reads (and where
+	// its errors are reported); it defaults to the server's own runtime.
+	// A host-owned server serving a loaded runtime's consumers needs the
+	// override: the topic lives in the loaded runtime.
+	Runtime *dbspruntime.Runtime
 }
 
 // UpdaterConfig configures an Updater.
@@ -59,10 +64,14 @@ func (s *Server) newConsumerBase(cfg consumerConfig, componentType string) (*con
 	}
 	log = log.WithName(componentType).WithValues("type", cfg.Type, "topic", cfg.OutputName)
 
+	rt := cfg.Runtime
+	if rt == nil {
+		rt = s.rt
+	}
 	base, err := dbspruntime.NewBaseConsumer(dbspruntime.BaseConsumerConfig{
 		Name:          cfg.Name,
-		Subscriber:    s.rt.NewSubscriber(),
-		ErrorReporter: s.rt,
+		Subscriber:    rt.NewSubscriber(),
+		ErrorReporter: rt,
 		Logger:        log,
 		Topics:        []string{cfg.OutputName},
 	})

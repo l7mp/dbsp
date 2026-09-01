@@ -127,6 +127,7 @@ func (p *LogProducer) MarshalJSON() ([]byte, error) {
 // Start streams pod logs and publishes one event per line. It reconnects with
 // exponential backoff on stream errors. Returns nil when ctx is cancelled.
 func (p *LogProducer) Start(ctx context.Context) error {
+	defer p.ClosePublisher()
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
 

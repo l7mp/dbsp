@@ -48,6 +48,7 @@ func NewWatcher(cfg WatcherConfig) (*Watcher, error) {
 // only what actually changed. A failure before any response ever arrived
 // fails fast instead: that is a misconfiguration, not an outage.
 func (w *Watcher) Start(ctx context.Context) error {
+	defer w.ClosePublisher()
 	everReceived := false
 	// Manual doubling backoff: this module carries no Kubernetes
 	// dependencies, so apimachinery's wait.Backoff stays out.

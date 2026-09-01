@@ -168,6 +168,15 @@ func (p *BaseProducer) SetPublisher(pub Publisher) {
 	p.Publisher = pub
 }
 
+// ClosePublisher closes the producer's publisher, when the underlying
+// publisher supports it: the publisher is fenced, so a straggler cannot
+// write into a successor's stream.
+func (p *BaseProducer) ClosePublisher() {
+	if closer, ok := p.Publisher.(PublisherCloser); ok {
+		closer.Close()
+	}
+}
+
 // String implements fmt.Stringer.
 func (p *BaseProducer) String() string {
 	return fmt.Sprintf("producer<runtime>{name=%q, topics=%v}", p.Name(), p.topics)

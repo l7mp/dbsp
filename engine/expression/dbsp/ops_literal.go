@@ -189,7 +189,6 @@ func (e *literalExpr) MarshalJSON() ([]byte, error) {
 
 func (e *literalExpr) UnmarshalJSON(b []byte) error { return unmarshalInto(b, e) }
 
-
 func init() {
 	MustRegister("@nil", func(args any) (Expression, error) {
 		if err := utils.ValidateNullaryArgs(args, "@nil"); err != nil {

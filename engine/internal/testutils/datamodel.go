@@ -209,4 +209,3 @@ func (r *MutableRecord) UnmarshalJSON(data []byte) error {
 	}
 	return json.Unmarshal(data, &r.FieldMap)
 }
-

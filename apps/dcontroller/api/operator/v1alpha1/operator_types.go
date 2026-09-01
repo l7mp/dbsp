@@ -17,15 +17,16 @@ func init() {
 	)
 }
 
-// Operator is an abstraction of a basic unit of automation, a set of related controllers working
-// on a single shared view of resources.
+// Operator is an abstraction of a basic unit of automation: a frozen
+// DBSP runtime, a set of sources feeding streams, circuits processing
+// them, and targets consuming them, sharing a single view space.
 //
 // +genclient:nonNamespaced
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:categories=dcontroller,scope=Cluster,shortName=operators
 // +kubebuilder:subresource:status
 // +kubebuilder:storageversion
-// // +kubebuilder:printcolumn:name="ControllerNum",type=integer,JSONPath=`length(.spec.controllers)`
+// // +kubebuilder:printcolumn:name="CircuitNum",type=integer,JSONPath=`length(.spec.circuits)`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type Operator struct {
@@ -39,13 +40,24 @@ type Operator struct {
 	Status OperatorStatus `json:"status,omitempty"`
 }
 
-// OperatorSpec defines the desired state of an operator.
+// OperatorSpec defines the desired state of an operator: the serialized
+// runtime it loads as.
 type OperatorSpec struct {
-	// Controllers is a list of controllers that collectively implement the operator.
+	// Sources are the bindings feeding the runtime's streams.
+	//
+	// +optional
+	Sources []Source `json:"sources,omitempty"`
+
+	// Circuits are the runtime's circuits.
 	//
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=255
-	Controllers []Controller `json:"controllers"`
+	Circuits []CircuitSpec `json:"circuits"`
+
+	// Targets are the bindings consuming the runtime's streams.
+	//
+	// +optional
+	Targets []Target `json:"targets,omitempty"`
 }
 
 // +kubebuilder:object:root=true

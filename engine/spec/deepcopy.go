@@ -84,19 +84,13 @@ func (in *Target) DeepCopy() *Target {
 }
 
 // DeepCopyInto copies the receiver into out.
-func (in *Controller) DeepCopyInto(out *Controller) {
+func (in *CircuitSpec) DeepCopyInto(out *CircuitSpec) {
 	out.Name = in.Name
-	out.Sources = nil
-	for i := range in.Sources {
-		out.Sources = append(out.Sources, *in.Sources[i].DeepCopy())
-	}
+	out.Inputs = append([]string(nil), in.Inputs...)
+	out.Outputs = append([]string(nil), in.Outputs...)
 	out.Pipeline = copyRaw(in.Pipeline)
 	out.SQL = copyRaw(in.SQL)
-	out.Circuit = copyRaw(in.Circuit)
-	out.Targets = nil
-	for i := range in.Targets {
-		out.Targets = append(out.Targets, *in.Targets[i].DeepCopy())
-	}
+	out.Graph = copyRaw(in.Graph)
 	out.Transforms = nil
 	for _, t := range in.Transforms {
 		cp := transform.TransformSpec{Name: t.Name, K: t.K}
@@ -111,29 +105,37 @@ func (in *Controller) DeepCopyInto(out *Controller) {
 }
 
 // DeepCopy returns a deep copy.
-func (in *Controller) DeepCopy() *Controller {
+func (in *CircuitSpec) DeepCopy() *CircuitSpec {
 	if in == nil {
 		return nil
 	}
-	out := new(Controller)
+	out := new(CircuitSpec)
 	in.DeepCopyInto(out)
 	return out
 }
 
 // DeepCopyInto copies the receiver into out.
-func (in *OperatorSpec) DeepCopyInto(out *OperatorSpec) {
-	out.Controllers = nil
-	for i := range in.Controllers {
-		out.Controllers = append(out.Controllers, *in.Controllers[i].DeepCopy())
+func (in *RuntimeSpec) DeepCopyInto(out *RuntimeSpec) {
+	out.Sources = nil
+	for i := range in.Sources {
+		out.Sources = append(out.Sources, *in.Sources[i].DeepCopy())
+	}
+	out.Circuits = nil
+	for i := range in.Circuits {
+		out.Circuits = append(out.Circuits, *in.Circuits[i].DeepCopy())
+	}
+	out.Targets = nil
+	for i := range in.Targets {
+		out.Targets = append(out.Targets, *in.Targets[i].DeepCopy())
 	}
 }
 
 // DeepCopy returns a deep copy.
-func (in *OperatorSpec) DeepCopy() *OperatorSpec {
+func (in *RuntimeSpec) DeepCopy() *RuntimeSpec {
 	if in == nil {
 		return nil
 	}
-	out := new(OperatorSpec)
+	out := new(RuntimeSpec)
 	in.DeepCopyInto(out)
 	return out
 }

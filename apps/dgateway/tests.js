@@ -16,6 +16,7 @@ const { describe, assert } = require("testing");
 const { TOPICS, CONTROLLER_NAME, OPERATOR } = require("./lib/config.js");
 const { compilePipeline } = require("./lib/pipeline.js");
 const {
+  use,
   collector,
   expectEqual,
   expectCondition,
@@ -39,7 +40,7 @@ function setup() {
   // resources are published by the cases and the statuses read back from
   // the shared status topics.
   const server = xds.server.start({ name: OPERATOR, address: "127.0.0.1:0" });
-  compilePipeline({});
+  use(compilePipeline({}).handle, (t) => !t.startsWith("verify."));
 
   // Watch our own xDS server back into verification topics.
   xds.watch("verify.lds", { type: "lds", address: server.address });

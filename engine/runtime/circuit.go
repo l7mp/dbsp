@@ -149,6 +149,10 @@ func (c *Circuit) Start(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, c.Subscriber.UnsubscribeAll)
 	defer stop()
 
+	if closer, ok := c.Publisher.(PublisherCloser); ok {
+		defer closer.Close()
+	}
+
 	for {
 		in, ok := c.Subscriber.Next()
 		if !ok {

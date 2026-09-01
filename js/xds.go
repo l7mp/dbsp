@@ -143,7 +143,7 @@ func (v *VM) installXDSConsumer(call goja.FunctionCall, setter bool) (goja.Value
 	// The verb decides delta vs state-of-the-world egress; the spec's
 	// level flag carries the same choice on the wire.
 	opts.Level = setter
-	runnable, err := xds.NewConsumerFromSpec(srv, topic, opts, v.logger)
+	runnable, err := xds.NewConsumerFromSpec(srv, v.runtime, topic, opts, v.logger)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}

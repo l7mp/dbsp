@@ -46,14 +46,13 @@ type VM struct {
 	cancelVM context.CancelFunc
 
 	runtimeDone      chan error
-	runtimeErrCh     chan dbspruntime.Error
+	defaultInst      *runtimeInstance
 	closeOnce        sync.Once
 	userExitCh       chan struct{}
 	exitCode         atomic.Int64
 	internalTopicSeq atomic.Uint64
 
 	errMu              sync.RWMutex
-	runtimeErrHandler  goja.Callable
 	firstRuntimeErrOut error
 
 	ctxMu    sync.RWMutex
@@ -66,6 +65,16 @@ type VM struct {
 
 	xdsMu      sync.Mutex
 	xdsServers map[string]*xds.Server
+
+	// The runtimes created through runtime.create, by name; the default
+	// runtime is not among them and every runtime is private.
+	instMu    sync.Mutex
+	instances map[string]*runtimeInstance
+
+	// factories are the built-in connector factories, closed over this
+	// VM's environment; every created runtime gets its own connector
+	// registry populated from them.
+	factories []dbspruntime.ConnectorFactory
 
 	// compileStarted flips when the first circuit is compiled and never
 	// resets: expression-operator registration is init-phase only (a
@@ -123,21 +132,26 @@ func NewVMWithOptions(opts Options) (*VM, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	v := &VM{
-		loop:         eventloop.NewEventLoop(),
-		runtime:      dbspruntime.NewRuntime(logger),
-		db:           relation.NewDatabase("dbsp"),
-		logger:       logger,
-		opts:         opts,
-		ctx:          ctx,
-		cancelVM:     cancel,
-		runtimeDone:  make(chan error, 1),
-		runtimeErrCh: make(chan dbspruntime.Error, dbspruntime.EventBufferSize),
-		userExitCh:   make(chan struct{}),
+		loop:        eventloop.NewEventLoop(),
+		runtime:     dbspruntime.NewRuntime(logger),
+		db:          relation.NewDatabase("dbsp"),
+		logger:      logger,
+		opts:        opts,
+		ctx:         ctx,
+		cancelVM:    cancel,
+		runtimeDone: make(chan error, 1),
+		userExitCh:  make(chan struct{}),
+		instances:   map[string]*runtimeInstance{},
 		process: processState{
 			argv: []string{"dbsp"},
 		},
 	}
-	v.runtime.SetErrorChannel(v.runtimeErrCh)
+	v.defaultInst = newAmbientInstance(v, v.runtime)
+	v.runtime.SetErrorChannel(v.defaultInst.errCh)
+	if err := v.registerConnectorFactories(); err != nil {
+		cancel()
+		return nil, err
+	}
 	v.logger.V(1).Info("vm created")
 
 	v.loop.Start()
@@ -162,7 +176,7 @@ func NewVMWithOptions(opts Options) (*VM, error) {
 		close(v.runtimeDone)
 	}()
 
-	go v.forwardRuntimeErrors()
+	go v.defaultInst.forwardErrors()
 
 	return v, nil
 }
@@ -500,44 +514,6 @@ func (v *VM) waitRuntimeStop(timeout time.Duration) error {
 	}
 }
 
-func (v *VM) forwardRuntimeErrors() {
-	for {
-		select {
-		case <-v.ctx.Done():
-			return
-		case rtErr := <-v.runtimeErrCh:
-			h := v.runtimeErrorHandler()
-			if h == nil {
-				v.emitDefaultRuntimeError(rtErr)
-				continue
-			}
-
-			rtErrCopy := rtErr
-			v.schedule(func() {
-				payload := map[string]any{
-					"origin":  rtErrCopy.Origin,
-					"message": rtErrCopy.Err.Error(),
-				}
-				if _, err := h(goja.Undefined(), v.rt.ToValue(payload)); err != nil {
-					v.recordRuntimeError(fmt.Errorf("runtime.onError callback failed: %w", err))
-				}
-			})
-		}
-	}
-}
-
-func (v *VM) runtimeErrorHandler() goja.Callable {
-	v.errMu.RLock()
-	defer v.errMu.RUnlock()
-	return v.runtimeErrHandler
-}
-
-func (v *VM) setRuntimeErrorHandler(handler goja.Callable) {
-	v.errMu.Lock()
-	v.runtimeErrHandler = handler
-	v.errMu.Unlock()
-}
-
 func (v *VM) recordRuntimeError(err error) {
 	v.errMu.Lock()
 	if v.firstRuntimeErrOut == nil {
@@ -685,27 +661,14 @@ func (v *VM) injectGlobals() error {
 	gojaurl.Enable(v.rt)
 	installTextEncodingGlobals(v.rt)
 
-	sqlObj := v.rt.NewObject()
-	if err := sqlObj.Set("table", v.wrap(v.sqlTable)); err != nil {
-		return err
-	}
-	if err := sqlObj.Set("compile", v.wrap(v.sqlCompile)); err != nil {
+	sqlObj, aggObj, circuitObj, err := v.defaultInst.makeCompileObjects()
+	if err != nil {
 		return err
 	}
 	if err := v.rt.Set("sql", sqlObj); err != nil {
 		return err
 	}
-
-	aggObj := v.rt.NewObject()
-	if err := aggObj.Set("compile", v.wrap(v.aggregateCompile)); err != nil {
-		return err
-	}
 	if err := v.rt.Set("aggregate", aggObj); err != nil {
-		return err
-	}
-
-	circuitObj := v.rt.NewObject()
-	if err := circuitObj.Set("create", v.wrap(v.circuitCreate)); err != nil {
 		return err
 	}
 	if err := v.rt.Set("circuit", circuitObj); err != nil {
@@ -782,14 +745,6 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 
-	operatorObj := v.rt.NewObject()
-	if err := operatorObj.Set("load", v.wrap(v.operatorLoad)); err != nil {
-		return err
-	}
-	if err := v.rt.Set("operator", operatorObj); err != nil {
-		return err
-	}
-
 	fmtObj := v.rt.NewObject()
 	if err := fmtObj.Set("jsonl", v.wrap(v.formatJSONL)); err != nil {
 		return err
@@ -810,14 +765,14 @@ func (v *VM) injectGlobals() error {
 		return err
 	}
 
-	if err := v.rt.Set("publish", v.wrap(v.publish)); err != nil {
+	if err := v.rt.Set("publish", v.wrap(v.defaultInst.publish)); err != nil {
 		return err
 	}
-	if err := v.rt.Set("subscribe", v.wrap(v.subscribeDispatch)); err != nil {
+	if err := v.rt.Set("subscribe", v.wrap(v.defaultInst.subscribe)); err != nil {
 		return err
 	}
 	subObj := v.rt.Get("subscribe").ToObject(v.rt)
-	if err := subObj.Set("once", v.wrap(v.subscribeOnce)); err != nil {
+	if err := subObj.Set("once", v.wrap(v.defaultInst.subscribeOnce)); err != nil {
 		return err
 	}
 	if err := v.rt.Set("cancel", v.wrap(v.cancel)); err != nil {
@@ -849,19 +804,19 @@ func (v *VM) injectGlobals() error {
 	if err := runtimeObj.Set("circuit", circuitObj); err != nil {
 		return err
 	}
-	if err := runtimeObj.Set("publish", v.wrap(v.publish)); err != nil {
+	if err := runtimeObj.Set("create", v.wrap(v.runtimeCreate)); err != nil {
+		return err
+	}
+	if err := runtimeObj.Set("publish", v.wrap(v.defaultInst.publish)); err != nil {
 		return err
 	}
 	if err := runtimeObj.Set("subscribe", v.rt.Get("subscribe")); err != nil {
 		return err
 	}
-	if err := runtimeObj.Set("resetTopic", v.wrap(v.runtimeResetTopic)); err != nil {
+	if err := runtimeObj.Set("onError", v.wrap(v.defaultInst.onError)); err != nil {
 		return err
 	}
-	if err := runtimeObj.Set("onError", v.wrap(v.runtimeOnError)); err != nil {
-		return err
-	}
-	if err := runtimeObj.Set("observe", v.wrap(v.runtimeObserve)); err != nil {
+	if err := runtimeObj.Set("observe", v.wrap(v.defaultInst.observe)); err != nil {
 		return err
 	}
 	if err := runtimeObj.Set("cancel", v.wrap(v.cancel)); err != nil {
@@ -870,7 +825,7 @@ func (v *VM) injectGlobals() error {
 	if err := runtimeObj.Set("toJSON", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
 		return v.rt.ToValue(map[string]any{
 			"kind": "runtime",
-			"apis": []string{"sql", "aggregate", "publish", "subscribe", "observe", "onError", "cancel"},
+			"apis": []string{"sql", "aggregate", "create", "publish", "subscribe", "observe", "onError", "cancel"},
 		}), nil
 	})); err != nil {
 		return err

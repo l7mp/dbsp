@@ -4,10 +4,14 @@ kind: Operator
 metadata:
   name: svc-health-operator
 spec:
-  controllers:
+  sources:
+    - kind: PodView
+    - apiGroup: ""
+      kind: Service
+  circuits:
     - name: pod-health-monitor
-      sources:
-        - kind: PodView
+      inputs: [PodView]
+      outputs: [HealthView]
       pipeline:
         - "@project":
             metadata:
@@ -22,15 +26,16 @@ spec:
         - "@project":
             metadata: "$.key"
             pods: "$.values"
-      targets:
-        - kind: HealthView
-          type: Updater
+      transforms:
+        - name: Reconciler
+        - name: Distincter
+        - name: Incrementalizer
 
+    # HealthView is an internal stream: produced by the first circuit,
+    # consumed by the second, bound to nothing.
     - name: svc-health-monitor
-      sources:
-        - kind: HealthView
-        - apiGroup: ""
-          kind: Service
+      inputs: [HealthView, Service]
+      outputs: [ServiceHealth]
       pipeline:
         - "@join":
             "@and":
@@ -51,7 +56,12 @@ spec:
                       - "/"
                       - "@string":
                           "@len": "$.HealthView.pods"
-      targets:
-        - apiGroup: ""
-          kind: Service
-          type: Patcher
+      transforms:
+        - name: Reconciler
+        - name: Distincter
+        - name: Incrementalizer
+  targets:
+    - apiGroup: ""
+      kind: Service
+      type: Patcher
+      as: ServiceHealth

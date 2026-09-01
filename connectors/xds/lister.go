@@ -36,6 +36,7 @@ func NewLister(cfg ListerConfig) (*Lister, error) {
 // Start dials the upstream, opens a SotW ADS stream for the configured type, and
 // republishes each snapshot until ctx is cancelled.
 func (l *Lister) Start(ctx context.Context) error {
+	defer l.ClosePublisher()
 	conn, err := l.dial()
 	if err != nil {
 		return err

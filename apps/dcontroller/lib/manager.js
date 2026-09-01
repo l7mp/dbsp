@@ -105,6 +105,9 @@ class DControllerManager {
             return;
         }
 
+        state.handle.onError((payload) => {
+            this.onOperatorError(name, payload);
+        });
         this.operators.set(name, state);
         this.publishStatus(name, buildReadyStatus(state.generation, state.errors));
     }
@@ -125,40 +128,36 @@ class DControllerManager {
         }
     }
 
-    // findOperatorByComponent locates the operator that owns a given runtime
-    // component name (the origin reported in runtime errors). Linear in the
-    // number of operators; runtime errors are rare.
-    findOperatorByComponent(origin) {
-        for (const [name, state] of this.operators) {
-            if (state.components.has(origin)) {
-                return { name, state };
-            }
-        }
-        return null;
-    }
-
+    // onRuntimeError handles errors of the manager's own runtime (the
+    // default one: the Operator watcher and status patcher); operator
+    // runtime errors arrive per operator through the handle's onError.
     onRuntimeError(payload) {
         const { origin, message } = payload;
-        const owner = this.findOperatorByComponent(origin);
-        if (!owner) {
-            this.log.error({
-                event_type: "runtime_error_unmanaged_component",
-                origin,
-                message,
-            }, "runtime error from unmanaged component");
+        this.log.error({
+            event_type: "runtime_error_unmanaged_component",
+            origin,
+            message,
+        }, "runtime error from unmanaged component");
+    }
+
+    // onOperatorError records one operator runtime error and degrades the
+    // operator's status.
+    onOperatorError(name, payload) {
+        const state = this.operators.get(name);
+        if (!state) {
             return;
         }
-
-        owner.state.errors.push(`[${origin}] ${message}`);
+        const { origin, message } = payload;
+        state.errors.push(`[${origin}] ${message}`);
 
         this.log.error({
             event_type: "operator_runtime_error",
-            topic: owner.name,
+            topic: name,
             origin,
             message,
         }, "operator runtime error");
 
-        this.publishStatus(owner.name, buildReadyStatus(owner.state.generation, owner.state.errors));
+        this.publishStatus(name, buildReadyStatus(state.generation, state.errors));
     }
 
     publishFailedStatus(operatorDoc, err) {

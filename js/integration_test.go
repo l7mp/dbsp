@@ -287,20 +287,21 @@ publish("stamp-in", [[{obj: "x", status: "False", reason: "Init"}, 1]]);
 		// a delta-ADS client verifies the pushed resource.
 		script := `
 const srv = xds.server.start({ name: "optest", address: "127.0.0.1:0" });
-const handle = operator.load("optest", {
-  controllers: [{
+const handle = runtime.create("optest", {
+  sources: [{ apiGroup: "misc.connector.dcontroller.io", kind: "Timer",
+              parameters: { name: "t", period: "50ms" } }],
+  circuits: [{
     name: "ticker",
-    sources: [{ apiGroup: "misc.connector.dcontroller.io", kind: "Timer",
-                parameters: { name: "t", period: "50ms" } }],
     pipeline: [[
       { "@inputs": ["Timer"] },
       { "@project": { name: { "@concat": ["optest/", "$.name"] } } },
       { "@output": "Listener" },
     ]],
-    targets: [{ apiGroup: "xds.connector.dcontroller.io", kind: "Listener" }],
     transforms: [{ name: "Incrementalizer" }],
   }],
+  targets: [{ apiGroup: "xds.connector.dcontroller.io", kind: "Listener" }],
 });
+handle.start();
 if (handle.spec().name !== "optest") { throw new Error("bad spec printer"); }
 xds.watch("lds-verify", { type: "lds", address: srv.address });
 `
@@ -318,8 +319,8 @@ xds.watch("lds-verify", { type: "lds", address: srv.address });
 
 		// Unknown fields are rejected: the legacy type/options vocabulary
 		// names itself in the error.
-		Expect(runScript(vm, `operator.load("opbad", { controllers: [{name: "c", pipeline: [],
-			sources: [], targets: [], options: {}}] });`)).NotTo(Succeed())
+		Expect(runScript(vm, `runtime.create("opbad", { circuits: [{name: "c", pipeline: [],
+			options: {}}] });`)).NotTo(Succeed())
 	})
 
 	It("prints the serialized form of bindings and circuits", func() {
@@ -1413,9 +1414,9 @@ publish("agg-auto-in", [[{id: 110}, 1]]);
 		Expect(runScript(vm, script)).To(Succeed())
 		Consistently(collector.Snapshot, 300*time.Millisecond, 50*time.Millisecond).Should(BeEmpty())
 
-		// Committing installs the circuit, which picks up the topic's
-		// retained state: the earlier input is replayed, not lost.
-		Expect(runScript(vm, `c.commit();`)).To(Succeed())
+		// Committing installs the circuit. The pre-commit input is gone
+		// for good (nothing is retained); a fresh publish flows.
+		Expect(runScript(vm, `c.commit(); publish("agg-auto-in", [[{id: 110}, 1]]);`)).To(Succeed())
 
 		var first dbspruntime.Event
 		Eventually(func() bool {
@@ -1682,9 +1683,9 @@ publish("sql_auto_t", [[{id: 87}, 1]]);
 		Expect(runScript(vm, script)).To(Succeed())
 		Consistently(collector.Snapshot, 300*time.Millisecond, 50*time.Millisecond).Should(BeEmpty())
 
-		// Committing installs the circuit, which picks up the table's
-		// retained state: the earlier row is replayed, not lost.
-		Expect(runScript(vm, `c.commit();`)).To(Succeed())
+		// Committing installs the circuit. The pre-commit row is gone
+		// for good (nothing is retained); a fresh publish flows.
+		Expect(runScript(vm, `c.commit(); publish("sql_auto_t", [[{id: 87}, 1]]);`)).To(Succeed())
 
 		var first dbspruntime.Event
 		Eventually(func() bool {

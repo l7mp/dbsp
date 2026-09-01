@@ -11,6 +11,7 @@ import (
 	aggcompiler "github.com/l7mp/dbsp/engine/compiler/aggregation"
 	dbspsqlcompiler "github.com/l7mp/dbsp/engine/compiler/sql"
 	"github.com/l7mp/dbsp/engine/datamodel/relation"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
 func (v *VM) sqlTable(call goja.FunctionCall) (goja.Value, error) {
@@ -40,7 +41,7 @@ func (v *VM) sqlTable(call goja.FunctionCall) (goja.Value, error) {
 	return goja.Undefined(), nil
 }
 
-func (v *VM) sqlCompile(call goja.FunctionCall) (goja.Value, error) {
+func (v *VM) sqlCompile(rt *dbspruntime.Runtime, call goja.FunctionCall) (goja.Value, error) {
 	if len(call.Arguments) < 1 {
 		return nil, fmt.Errorf("sql.compile(query, { output }) requires query")
 	}
@@ -91,7 +92,8 @@ func (v *VM) sqlCompile(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("sql.compile: marshal query: %w", err)
 	}
 	h := &circuitHandle{
-		c: compiled.Circuit, query: compiled, vm: v,
+		rt: rt,
+		c:  compiled.Circuit, query: compiled, vm: v,
 		srcKind: "sql", src: srcJSON,
 		bindOut: []aggcompiler.Binding{{Name: binding.Name, Logical: binding.Logical}},
 	}

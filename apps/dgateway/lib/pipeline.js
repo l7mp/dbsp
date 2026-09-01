@@ -37,7 +37,6 @@ const {
   CONTROLLER_NAME,
   OPERATOR,
   RESOURCES,
-  TOPIC_GROUP,
   XDS_GROUP,
   TOPICS,
 } = require("./config.js");
@@ -83,8 +82,8 @@ function buildPrograms(options = {}) {
   };
 }
 
-// The operator's shared streams, bound as plain retained topics.
-const topic = (kind) => ({ apiGroup: TOPIC_GROUP, kind });
+// The operator's streams. Views and observed statuses are internal
+// wires: circuit outputs consumed by circuit inputs, no binding at all.
 const VIEWS = ["GatewayClassView", "GatewayView", "RouteView", "BackendView"];
 const OBSERVED = ["GatewayClassStatusObserved", "GatewayStatusObserved", "HTTPRouteStatusObserved"];
 // (observed stream, status stream) pairs: the closed loop's plant feedback.
@@ -94,19 +93,17 @@ const STATUS_PAIRS = [
   ["HTTPRouteStatusObserved", "HTTPRouteStatus"],
 ];
 
-// buildOperatorSpec assembles the serialized operator: three controllers
-// meeting on the shared view and observed streams. With bindings
+// buildOperatorSpec assembles the serialized runtime: three circuits
+// meeting on the internal view and observed streams. With bindings
 // "kubernetes" the sources watch the cluster and the statuses go through
 // Patchers (the deployable spec); with bindings "topics" (the default,
-// the self-contained test mode) the watched resources and the status
-// outputs are plain topics driven and read by the harness. The xDS
-// targets are real in both modes: the egress server must be started
-// under the operator's name before loading.
+// the self-contained test mode) there are no Kubernetes bindings at all:
+// the harness drives the input streams and reads the status streams
+// through the runtime handle. The xDS targets are real in both modes:
+// the egress server must be started under the operator's name before
+// loading.
 function buildOperatorSpec(options = {}) {
   const k8sBindings = options.bindings === "kubernetes";
-  const source = (resource) => (k8sBindings ? resource : topic(resource.kind));
-  const statusTarget = (resource, as) =>
-    k8sBindings ? { ...resource, type: "Patcher", as } : topic(as);
 
   const k8sTransforms = [{ name: "Incrementalizer" }];
   if (options.sotw) {
@@ -141,52 +138,60 @@ function buildOperatorSpec(options = {}) {
   }
 
   const programs = buildPrograms(options);
+  const STATUSES = ["GatewayClassStatus", "GatewayStatus", "HTTPRouteStatus"];
+  const XDS_STREAMS = ["XdsListeners", "XdsRouteConfigurations", "XdsClusters", "XdsEndpoints"];
   return {
-    controllers: [
+    sources: k8sBindings ? Object.values(RESOURCES) : [],
+    circuits: [
       {
         name: "input",
-        sources: Object.values(RESOURCES).map(source),
+        inputs: Object.keys(TOPICS.inputs).map((k) => TOPICS.inputs[k]),
+        outputs: [...VIEWS, ...OBSERVED],
         pipeline: programs.input,
-        targets: [...VIEWS, ...OBSERVED].map(topic),
         transforms: [{ name: "Incrementalizer" }],
       },
       {
         name: "k8s",
-        sources: [...VIEWS, ...OBSERVED].map(topic),
+        inputs: [...VIEWS, ...OBSERVED],
+        outputs: STATUSES,
         pipeline: programs.outputK8s,
-        targets: [
-          statusTarget(RESOURCES.gatewayClass, "GatewayClassStatus"),
-          statusTarget(RESOURCES.gateway, "GatewayStatus"),
-          statusTarget(RESOURCES.httpRoute, "HTTPRouteStatus"),
-        ],
         transforms: k8sTransforms,
       },
       {
         name: "xds",
-        sources: VIEWS.map(topic),
+        inputs: VIEWS,
+        outputs: XDS_STREAMS,
         pipeline: programs.outputXds,
-        targets: [
-          { apiGroup: XDS_GROUP, kind: "Listener", as: "XdsListeners" },
-          { apiGroup: XDS_GROUP, kind: "RouteConfiguration", as: "XdsRouteConfigurations" },
-          { apiGroup: XDS_GROUP, kind: "Cluster", as: "XdsClusters" },
-          { apiGroup: XDS_GROUP, kind: "ClusterLoadAssignment", as: "XdsEndpoints" },
-        ],
         transforms: [{ name: "Incrementalizer" }],
       },
+    ],
+    targets: [
+      ...(k8sBindings
+        ? [
+            { ...RESOURCES.gatewayClass, type: "Patcher", as: "GatewayClassStatus" },
+            { ...RESOURCES.gateway, type: "Patcher", as: "GatewayStatus" },
+            { ...RESOURCES.httpRoute, type: "Patcher", as: "HTTPRouteStatus" },
+          ]
+        : []),
+      { apiGroup: XDS_GROUP, kind: "Listener", as: "XdsListeners" },
+      { apiGroup: XDS_GROUP, kind: "RouteConfiguration", as: "XdsRouteConfigurations" },
+      { apiGroup: XDS_GROUP, kind: "Cluster", as: "XdsClusters" },
+      { apiGroup: XDS_GROUP, kind: "ClusterLoadAssignment", as: "XdsEndpoints" },
     ],
   };
 }
 
-// Pipeline is one loaded operator: the serialized spec fed through
-// operator.load. The circuits are named "<operator>.<controller>" and the
-// shared streams live on the "<operator>/topic/<stream>" retained topics
-// (this.topics), so the controller's internal state is introspectable
-// live with a plain subscribe().
+// Pipeline is one loaded operator: the serialized runtime fed through
+// runtime.create. The circuits are named plainly ("input", "k8s",
+// "xds") and every stream is a topic of the same name in the operator's
+// private runtime (this.topics), so the controller's internal state is
+// introspectable live with a handle.subscribe().
 class Pipeline {
   constructor(options = {}) {
     this.stem = options.name || OPERATOR;
     this.spec = buildOperatorSpec(options);
-    this.handle = operator.load(this.stem, this.spec);
+    this.handle = runtime.create(this.stem, this.spec);
+    this.handle.start();
     this.topics = TOPICS;
   }
 
@@ -196,7 +201,7 @@ class Pipeline {
     if (!["input", "k8s", "xds"].includes(layer)) {
       throw new Error(`pipeline.observe: unknown layer ${layer}; use input, k8s or xds`);
     }
-    runtime.observe(`${this.stem}.${layer}`, fn);
+    this.handle.observe(layer, fn);
   }
 
   close() {

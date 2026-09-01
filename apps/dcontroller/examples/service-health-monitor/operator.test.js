@@ -6,7 +6,7 @@ const { RuntimeConfig } = require("../../lib/config");
 const { createLogger } = require("log");
 
 const OPERATOR_GVK = "dcontroller.io/v1alpha1/Operator";
-// PodView is a view GVK — only available once the operator is ready.
+// PodView is a view GVK - only available once the operator is ready.
 const PODVIEW_GVK  = "svc-health-operator.view.dcontroller.io/v1alpha1/PodView";
 const SVC_GVK      = "v1/Service";
 const TESTNS       = "default";
@@ -68,7 +68,7 @@ function waitForOpStatus(opName, condStatus, reason, timeoutMs = 10000) {
 
 // --- Service annotation state tracking ------------------------------------
 
-// latestSvcState[name] — latest seen Service state: { ann }.  A name that is a
+// latestSvcState[name] - latest seen Service state: { ann }.  A name that is a
 // key of the map has been seen at least once, which is what tells "annotation
 // absent" apart from "service not observed yet".
 
@@ -210,11 +210,16 @@ const OPERATOR_SPEC = {
     kind: "Operator",
     metadata: { name: "svc-health-operator" },
     spec: {
-        controllers: [
+        // No apiGroup -> view GVK (svc-health-operator.view.dcontroller.io)
+        sources: [
+            { kind: "PodView" },
+            { apiGroup: "", kind: "Service" },
+        ],
+        circuits: [
             {
                 name: "pod-health-monitor",
-                // No apiGroup → view GVK (svc-health-operator.view.dcontroller.io)
-                sources: [{ kind: "PodView" }],
+                inputs: ["PodView"],
+                outputs: ["HealthView"],
                 pipeline: [
                     {
                         "@project": {
@@ -231,14 +236,13 @@ const OPERATOR_SPEC = {
                     { "@groupBy": ["$.metadata", "$.pods"] },
                     { "@project": { metadata: "$.key", pods: "$.values" } },
                 ],
-                targets: [{ kind: "HealthView", type: "Updater" }],
+                transforms: [{ name: "Reconciler" }, { name: "Distincter" }, { name: "Incrementalizer" }],
             },
+            // HealthView is an internal stream between the circuits.
             {
                 name: "svc-health-monitor",
-                sources: [
-                    { kind: "HealthView" },
-                    { apiGroup: "", kind: "Service" },
-                ],
+                inputs: ["HealthView", "Service"],
+                outputs: ["ServiceHealth"],
                 pipeline: [
                     {
                         "@join": {
@@ -266,9 +270,10 @@ const OPERATOR_SPEC = {
                         },
                     },
                 ],
-                targets: [{ apiGroup: "", kind: "Service", type: "Patcher" }],
+                transforms: [{ name: "Reconciler" }, { name: "Distincter" }, { name: "Incrementalizer" }],
             },
         ],
+        targets: [{ apiGroup: "", kind: "Service", type: "Patcher", as: "ServiceHealth" }],
     },
 };
 
@@ -282,7 +287,7 @@ describe("service-health-monitor", (it) => {
     it("operator becomes ready", async () => {
         injectOperator(OPERATOR_SPEC);
         await waitForOpStatus("svc-health-operator", "True", "Ready");
-        // Now the embedded API server knows about PodView — safe to register the updater.
+        // Now the embedded API server knows about PodView - safe to register the updater.
         writePodView = kubernetes.update("write-podview", { gvk: PODVIEW_GVK });
         await sleep(100);
     });

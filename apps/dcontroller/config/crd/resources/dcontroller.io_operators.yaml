@@ -29,10 +29,11 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          Operator is an abstraction of a basic unit of automation, a set of related controllers working
-          on a single shared view of resources.
+          Operator is an abstraction of a basic unit of automation: a frozen
+          DBSP runtime, a set of sources feeding streams, circuits processing
+          them, and targets consuming them, sharing a single view space.
 
-          // +kubebuilder:printcolumn:name="ControllerNum",type=integer,JSONPath=`length(.spec.controllers)`
+          // +kubebuilder:printcolumn:name="CircuitNum",type=integer,JSONPath=`length(.spec.circuits)`
         properties:
           apiVersion:
             description: |-
@@ -54,138 +55,51 @@ spec:
           spec:
             description: Spec defines the desired state of an operator.
             properties:
-              controllers:
-                description: Controllers is a list of controllers that collectively
-                  implement the operator.
+              circuits:
+                description: Circuits are the runtime's circuits.
                 items:
                   description: |-
-                    Controller is a translator that processes a set of source resources via
-                    a declarative pipeline into deltas on target resources. A controller is
-                    defined by a name, its sources, a processing program (exactly one of
-                    pipeline, sql, or circuit), its targets, and an optional transform list.
+                    CircuitSpec is one serialized circuit: a program over the runtime's
+                    streams, with the transform chain applied to it. The program is given
+                    in exactly one of the three languages: an aggregation pipeline, an SQL
+                    query, or a hand-built graph.
                   properties:
-                    circuit:
-                      description: Circuit is a hand-built dbsp circuit.
+                    graph:
+                      description: Graph is a hand-built dbsp circuit graph.
                       x-kubernetes-preserve-unknown-fields: true
+                    inputs:
+                      description: |-
+                        Inputs are the streams the circuit consumes. Omitted, it defaults
+                        to the runtime's single source stream; with several sources the
+                        list is required.
+                      items:
+                        type: string
+                      type: array
                     name:
-                      description: Name is the unique name of the controller.
+                      description: Name is the unique name of the circuit.
                       type: string
+                    outputs:
+                      description: |-
+                        Outputs are the streams the circuit produces. Omitted, it defaults
+                        to the runtime's single target stream; with several targets the
+                        list is required.
+                      items:
+                        type: string
+                      type: array
                     pipeline:
-                      description: Pipeline is an aggregation pipeline applied to
-                        the source deltas.
+                      description: Pipeline is an aggregation pipeline over the input
+                        streams.
                       x-kubernetes-preserve-unknown-fields: true
-                    sources:
-                      description: Sources are the resources the controller watches.
-                      items:
-                        description: Source is a source that feeds deltas into the
-                          controller.
-                        properties:
-                          apiGroup:
-                            description: Group is the API group. Default is "<operator>.view.dcontroller.io".
-                            type: string
-                          as:
-                            description: |-
-                              As is the pipeline-facing stream name (the @inputs name the
-                              pipeline references); it defaults to Kind and matters when several
-                              sources share a kind or the stream name and the resource kind
-                              differ.
-                            type: string
-                          kind:
-                            description: Kind is the type of the resource. Mandatory.
-                            type: string
-                          labelSelector:
-                            description: |-
-                              LabelSelector is an optional label selector filtering events on
-                              this source, interpreted by the binding connector (Kubernetes
-                              LabelSelector semantics: matchLabels plus matchExpressions).
-                            x-kubernetes-preserve-unknown-fields: true
-                          level:
-                            description: |-
-                              Level switches a Watcher source from delta ingest to level ingest:
-                              every event carries the full snapshot instead of the increment.
-                              Ignored on sources with no level mode.
-                            type: boolean
-                          namespace:
-                            description: |-
-                              Namespace, if given, restricts the source to events from that
-                              namespace.
-                            type: string
-                          parameters:
-                            description: |-
-                              Parameters carries source-specific parameters, interpreted by the
-                              binding connector: Periodic sources take {"period": "5m"}, xds
-                              sources the upstream server address.
-                            x-kubernetes-preserve-unknown-fields: true
-                          predicate:
-                            description: |-
-                              Predicate is an event-filtering predicate on this source,
-                              interpreted by the binding connector.
-                            x-kubernetes-preserve-unknown-fields: true
-                          type:
-                            description: |-
-                              Type names the binding connector's producer verb; the default is
-                              the connector's canonical one (Kubernetes and xds: Watcher, misc:
-                              Tick).
-                            type: string
-                          version:
-                            description: Version is the version of the resource.
-                            type: string
-                        required:
-                        - kind
-                        type: object
-                      type: array
                     sql:
-                      description: SQL is an SQL query applied to the source deltas.
+                      description: SQL is an SQL query over the input streams.
                       x-kubernetes-preserve-unknown-fields: true
-                    targets:
-                      description: Targets are the resource endpoints the results
-                        are written to.
-                      items:
-                        description: Target is the resource endpoint a controller
-                          writes.
-                        properties:
-                          apiGroup:
-                            description: Group is the API group. Default is "<operator>.view.dcontroller.io".
-                            type: string
-                          as:
-                            description: |-
-                              As is the pipeline-facing stream name (the @output name the
-                              pipeline emits); it defaults to Kind and matters when the stream
-                              name and the resource kind differ (a status fragment stream
-                              "GatewayStatus" written to kind Gateway, say).
-                            type: string
-                          kind:
-                            description: Kind is the type of the resource. Mandatory.
-                            type: string
-                          level:
-                            description: |-
-                              Level switches an Updater target from delta writes to
-                              state-of-the-world ownership: the controller writes the full
-                              desired set of the kind and owns every object of it. Ignored on
-                              targets with no level mode.
-                            type: boolean
-                          parameters:
-                            description: |-
-                              Parameters carries target-specific parameters, interpreted by the
-                              binding connector: xds targets take the egress server address.
-                            x-kubernetes-preserve-unknown-fields: true
-                          type:
-                            description: Type is the type of the target. Default is
-                              Updater.
-                            type: string
-                          version:
-                            description: Version is the version of the resource.
-                            type: string
-                        required:
-                        - kind
-                        type: object
-                      type: array
                     transforms:
                       description: |-
-                        Transforms is the list of circuit transforms applied to the compiled
-                        program, in canonical order (the engine orders the set; listing
-                        states what the controller is, not the order). An absent list means
-                        the default chain: Reconciler, Distincter, Incrementalizer.
+                        Transforms is the list of circuit transforms applied to the
+                        compiled program, in canonical order (the engine orders the set;
+                        listing states what the circuit is, not the order). There are no
+                        default transforms: an absent or empty list means none, and the
+                        circuit runs as the snapshot program it compiles to.
                       items:
                         description: "TransformSpec is the serialized form of one
                           transform entry, the shape\ncarried by circuit.transform()
@@ -222,14 +136,111 @@ spec:
                       type: array
                   required:
                   - name
-                  - sources
-                  - targets
                   type: object
                 maxItems: 255
                 minItems: 1
                 type: array
+              sources:
+                description: Sources are the bindings feeding the runtime's streams.
+                items:
+                  description: Source is a source that feeds deltas into the controller.
+                  properties:
+                    apiGroup:
+                      description: Group is the API group. Default is "<operator>.view.dcontroller.io".
+                      type: string
+                    as:
+                      description: |-
+                        As is the pipeline-facing stream name (the @inputs name the
+                        pipeline references); it defaults to Kind and matters when several
+                        sources share a kind or the stream name and the resource kind
+                        differ.
+                      type: string
+                    kind:
+                      description: Kind is the type of the resource. Mandatory.
+                      type: string
+                    labelSelector:
+                      description: |-
+                        LabelSelector is an optional label selector filtering events on
+                        this source, interpreted by the binding connector (Kubernetes
+                        LabelSelector semantics: matchLabels plus matchExpressions).
+                      x-kubernetes-preserve-unknown-fields: true
+                    level:
+                      description: |-
+                        Level switches a Watcher source from delta ingest to level ingest:
+                        every event carries the full snapshot instead of the increment.
+                        Ignored on sources with no level mode.
+                      type: boolean
+                    namespace:
+                      description: |-
+                        Namespace, if given, restricts the source to events from that
+                        namespace.
+                      type: string
+                    parameters:
+                      description: |-
+                        Parameters carries source-specific parameters, interpreted by the
+                        binding connector: Periodic sources take {"period": "5m"}, xds
+                        sources the upstream server address.
+                      x-kubernetes-preserve-unknown-fields: true
+                    predicate:
+                      description: |-
+                        Predicate is an event-filtering predicate on this source,
+                        interpreted by the binding connector.
+                      x-kubernetes-preserve-unknown-fields: true
+                    type:
+                      description: |-
+                        Type names the binding connector's producer verb; the default is
+                        the connector's canonical one (Kubernetes and xds: Watcher, misc:
+                        Tick).
+                      type: string
+                    version:
+                      description: Version is the version of the resource.
+                      type: string
+                  required:
+                  - kind
+                  type: object
+                type: array
+              targets:
+                description: Targets are the bindings consuming the runtime's streams.
+                items:
+                  description: Target is the resource endpoint a controller writes.
+                  properties:
+                    apiGroup:
+                      description: Group is the API group. Default is "<operator>.view.dcontroller.io".
+                      type: string
+                    as:
+                      description: |-
+                        As is the pipeline-facing stream name (the @output name the
+                        pipeline emits); it defaults to Kind and matters when the stream
+                        name and the resource kind differ (a status fragment stream
+                        "GatewayStatus" written to kind Gateway, say).
+                      type: string
+                    kind:
+                      description: Kind is the type of the resource. Mandatory.
+                      type: string
+                    level:
+                      description: |-
+                        Level switches an Updater target from delta writes to
+                        state-of-the-world ownership: the controller writes the full
+                        desired set of the kind and owns every object of it. Ignored on
+                        targets with no level mode.
+                      type: boolean
+                    parameters:
+                      description: |-
+                        Parameters carries target-specific parameters, interpreted by the
+                        binding connector: xds targets take the egress server address.
+                      x-kubernetes-preserve-unknown-fields: true
+                    type:
+                      description: Type is the type of the target. Default is Updater.
+                      type: string
+                    version:
+                      description: Version is the version of the resource.
+                      type: string
+                  required:
+                  - kind
+                  type: object
+                type: array
             required:
-            - controllers
+            - circuits
             type: object
           status:
             description: Status defines the current state of the operator.

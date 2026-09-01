@@ -11,7 +11,10 @@ import (
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
-func (v *VM) publish(call goja.FunctionCall) (goja.Value, error) {
+// publish implements the publish verb: bound naked for the default
+// runtime, a handle method for created ones.
+func (inst *runtimeInstance) publish(call goja.FunctionCall) (goja.Value, error) {
+	v := inst.vm
 	if len(call.Arguments) < 2 {
 		return nil, fmt.Errorf("publish(topic, entries) requires topic and entries")
 	}
@@ -26,40 +29,27 @@ func (v *VM) publish(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("publish: %w", err)
 	}
 
-	if err := v.runtime.NewPublisher().Publish(dbspruntime.Event{Name: topic, Data: entries}); err != nil {
+	if err := inst.rt.Publish(dbspruntime.Event{Name: topic, Data: entries}); err != nil {
 		return nil, fmt.Errorf("publish: %w", err)
 	}
 
 	return goja.Undefined(), nil
 }
 
-// runtimeResetTopic implements runtime.resetTopic(topic): it clears the
-// topic's retained integral, for lifecycle owners tearing down the topic's
-// producing circuit. Live subscribers are unaffected; only future replays
-// start empty.
-func (v *VM) runtimeResetTopic(call goja.FunctionCall) (goja.Value, error) {
+// onError installs the runtime's error handler.
+func (inst *runtimeInstance) onError(call goja.FunctionCall) (goja.Value, error) {
 	if len(call.Arguments) < 1 {
-		return nil, fmt.Errorf("runtime.resetTopic(topic) requires a topic")
-	}
-	topic := call.Argument(0).String()
-	if topic == "" {
-		return nil, fmt.Errorf("runtime.resetTopic: empty topic")
-	}
-	v.runtime.ResetTopic(topic)
-	return goja.Undefined(), nil
-}
-
-func (v *VM) runtimeOnError(call goja.FunctionCall) (goja.Value, error) {
-	if len(call.Arguments) < 1 {
-		return nil, fmt.Errorf("runtime.onError(fn) requires a callback")
+		return nil, fmt.Errorf("onError(fn) requires a callback")
 	}
 
 	h, ok := goja.AssertFunction(call.Argument(0))
 	if !ok {
-		return nil, fmt.Errorf("runtime.onError callback must be a function")
+		return nil, fmt.Errorf("onError callback must be a function")
 	}
 
-	v.setRuntimeErrorHandler(h)
+	inst.mu.Lock()
+	inst.errHandler = h
+	inst.mu.Unlock()
 	return goja.Undefined(), nil
 }
 
@@ -72,7 +62,10 @@ func (v *VM) cancel(call goja.FunctionCall) (goja.Value, error) {
 	return goja.Undefined(), nil
 }
 
-func (v *VM) runtimeObserve(call goja.FunctionCall) (goja.Value, error) {
+// observe attaches a circuit observer on this runtime.
+func (inst *runtimeInstance) observe(call goja.FunctionCall) (goja.Value, error) {
+	v := inst.vm
+	rt := inst.rt
 	if len(call.Arguments) < 2 {
 		return nil, fmt.Errorf("runtime.observe(circuitName, fn) requires circuit name and callback")
 	}
@@ -84,7 +77,7 @@ func (v *VM) runtimeObserve(call goja.FunctionCall) (goja.Value, error) {
 
 	arg := call.Argument(1)
 	if goja.IsUndefined(arg) || goja.IsNull(arg) {
-		if !v.runtime.SetCircuitObserver(name, nil) {
+		if !rt.SetCircuitObserver(name, nil) {
 			return nil, fmt.Errorf("runtime.observe: circuit %q not found", name)
 		}
 		return goja.Undefined(), nil
@@ -101,7 +94,7 @@ func (v *VM) runtimeObserve(call goja.FunctionCall) (goja.Value, error) {
 		doneMu.Lock()
 		done = true
 		doneMu.Unlock()
-		if !v.runtime.SetCircuitObserver(name, nil) {
+		if !rt.SetCircuitObserver(name, nil) {
 			return fmt.Errorf("runtime.observe: circuit %q not found", name)
 		}
 		return nil
@@ -130,7 +123,7 @@ func (v *VM) runtimeObserve(call goja.FunctionCall) (goja.Value, error) {
 		})
 	}
 
-	if !v.runtime.SetCircuitObserver(name, obs) {
+	if !rt.SetCircuitObserver(name, obs) {
 		return nil, fmt.Errorf("runtime.observe: circuit %q not found", name)
 	}
 

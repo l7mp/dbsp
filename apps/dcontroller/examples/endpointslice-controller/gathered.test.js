@@ -11,7 +11,6 @@ const ES_GVK       = "discovery.k8s.io/v1/EndpointSlice";
 const TESTNS       = "testnamespace";
 const CTRL_ANN     = "dcontroller.io/endpointslice-controller-enabled";
 const OP_NAME      = "ep-gather-op";
-const EP_TOPIC     = `${OP_NAME}.endpointslice-controller/EndpointView/output`;
 
 const config = new RuntimeConfig();
 const runtimeConfig = config.makeFromEnv();
@@ -26,6 +25,7 @@ const writeSvc      = kubernetes.update("write-svc",      { gvk: SVC_GVK });
 const writeES       = kubernetes.update("write-es",       { gvk: ES_GVK });
 
 kubernetes.watch("watch-op", { gvk: OPERATOR_GVK });
+kubernetes.watch("watch-ev", { gvk: `${OP_NAME}.view.dcontroller.io/v1alpha1/EndpointView` });
 
 // --- Operator-status checker -----------------------------------------------
 
@@ -88,7 +88,7 @@ function currentEndpointSpecs() {
     return [...endpointSpecCounts.values()].map(({ spec }) => spec);
 }
 
-subscribe(EP_TOPIC, (entries) => {
+subscribe("watch-ev", (entries) => {
     for (const [obj, w] of entries) {
         applyEndpointSpec(obj?.spec, w);
     }
@@ -184,10 +184,15 @@ const OPERATOR_SPEC = {
     kind: "Operator",
     metadata: { name: OP_NAME },
     spec: {
-        controllers: [
+        sources: [
+            { apiGroup: "", kind: "Service" },
+            { apiGroup: "discovery.k8s.io", kind: "EndpointSlice" },
+        ],
+        circuits: [
             {
                 name: "service-controller",
-                sources: [{ apiGroup: "", kind: "Service" }],
+                inputs: ["Service"],
+                outputs: ["ServiceView"],
                 pipeline: [
                     { "@select": { "@exists": `$["metadata"]["annotations"]["${CTRL_ANN}"]` } },
                     {
@@ -222,14 +227,13 @@ const OPERATOR_SPEC = {
                         },
                     },
                 ],
-                targets: [{ kind: "ServiceView" }],
+                transforms: [{ name: "Reconciler" }, { name: "Distincter" }, { name: "Incrementalizer" }],
             },
+            // ServiceView is an internal stream between the circuits.
             {
                 name: "endpointslice-controller",
-                sources: [
-                    { kind: "ServiceView" },
-                    { apiGroup: "discovery.k8s.io", kind: "EndpointSlice" },
-                ],
+                inputs: ["ServiceView", "EndpointSlice"],
+                outputs: ["EndpointView"],
                 pipeline: [
                     {
                         "@join": {
@@ -292,15 +296,16 @@ const OPERATOR_SPEC = {
                         },
                     },
                 ],
-                targets: [{ kind: "EndpointView" }],
+                transforms: [{ name: "Reconciler" }, { name: "Distincter" }, { name: "Incrementalizer" }],
             },
         ],
+        targets: [{ kind: "EndpointView" }],
     },
 };
 
 // --- Tests -----------------------------------------------------------------
 
-describe("endpointslice controller — gathered output", (it) => {
+describe("endpointslice controller - gathered output", (it) => {
     it("operator becomes ready", async () => {
         publish("write-operator", [[OPERATOR_SPEC, 1]]);
         await waitForOpReady(OP_NAME);
@@ -313,7 +318,7 @@ describe("endpointslice controller — gathered output", (it) => {
             makeEndpoint("192.0.2.2"),
         ]);
 
-        // 2 ports (TCP 80, UDP 3478) → 2 EndpointViews, each with both addresses.
+        // 2 ports (TCP 80, UDP 3478) -> 2 EndpointViews, each with both addresses.
         const addrs = ["192.0.2.1", "192.0.2.2"];
         await waitForGatheredSpec(addrs, 80,   "TCP");
         await waitForGatheredSpec(addrs, 3478, "UDP");

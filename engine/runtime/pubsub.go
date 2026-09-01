@@ -6,7 +6,6 @@ import (
 	"log"
 	"sync"
 
-	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -20,6 +19,8 @@ var (
 	ErrChannelFull = errors.New("runtime channel full")
 	// ErrChannelClosed indicates that a channel was closed while publishing.
 	ErrChannelClosed = errors.New("runtime channel closed")
+	// ErrPublisherClosed indicates a publish through a closed publisher.
+	ErrPublisherClosed = errors.New("runtime publisher closed")
 )
 
 // Event is a named payload sent through runtime endpoints.
@@ -58,6 +59,15 @@ type Publisher interface {
 	Publish(event Event) error
 }
 
+// PublisherCloser is a Publisher that can be closed. Closing fences the
+// publisher: further publishes are refused, so a straggling component
+// cannot write into a successor's stream. Components close their
+// publisher on teardown.
+type PublisherCloser interface {
+	Publisher
+	Close()
+}
+
 // PublishFunc adapts a function to Publisher.
 type PublishFunc func(Event) error
 
@@ -66,23 +76,34 @@ func (f PublishFunc) Publish(event Event) error { return f(event) }
 
 type publisher struct {
 	pubsub *PubSub
+
+	mu     sync.Mutex
+	closed bool
 }
 
-// Publish folds the event into the topic's retained integral and sends it to
-// all current subscribers of event.Name. On a full subscriber channel it logs
-// the overflow and then blocks until the event is accepted, preserving
-// backpressure. Folding and fan-out happen atomically under the topic lock, so
-// every subscriber sees a gap-free, duplicate-free delta stream relative to
-// the integral it received on subscription.
+// Publish delivers the event through the fence: a closed publisher
+// refuses to write into a successor's stream.
 func (p *publisher) Publish(event Event) error {
-	ts := p.pubsub.topic(event.Name)
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return fmt.Errorf("%w: topic %s", ErrPublisherClosed, event.Name)
+	}
+	p.mu.Unlock()
+
+	return p.pubsub.Publish(event)
+}
+
+// Publish delivers the event to all subscribers of event.Name registered
+// at this moment; an event published to a topic with no subscribers is
+// gone. This is the one-shot form for hosts; long-lived components
+// publish through a Publisher, whose Close fences a straggler. On a full
+// subscriber channel the publish logs the overflow and then blocks until
+// the event is accepted, preserving backpressure.
+func (ps *PubSub) Publish(event Event) error {
+	ts := ps.topic(event.Name)
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-
-	event.Data.Iter(func(doc datamodel.Document, w zset.Weight) bool {
-		ts.acc.Insert(doc, w)
-		return true
-	})
 
 	for _, ch := range ts.subs {
 		if err := sendEvent(ch, event); err != nil {
@@ -97,6 +118,14 @@ func (p *publisher) Publish(event Event) error {
 		}
 	}
 	return nil
+}
+
+// Close fences the publisher: further publishes are refused, so a
+// straggling component cannot write into a successor's stream.
+func (p *publisher) Close() {
+	p.mu.Lock()
+	p.closed = true
+	p.mu.Unlock()
 }
 
 // Subscriber can consume events from topic channels.
@@ -125,12 +154,10 @@ type subscriber struct {
 	topics map[string]struct{}
 }
 
-// Subscribe registers interest in a topic. If the topic has a non-empty
-// retained integral (state accumulated from events published before this
-// subscription), it is delivered first as a single synthetic event, so a late
-// subscriber bootstraps to the current state before receiving live deltas.
-// Replay and registration happen atomically under the topic lock: no delta
-// published after the replayed integral can be missed or double-counted.
+// Subscribe registers interest in a topic. Only events published after
+// the registration are delivered: the pub/sub retains nothing, so a
+// subscriber that must see a stream from its beginning subscribes before
+// the stream's producers start.
 func (s *subscriber) Subscribe(topic string) {
 
 	s.mu.Lock()
@@ -145,26 +172,11 @@ func (s *subscriber) Subscribe(topic string) {
 	ts := s.pubsub.topic(topic)
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-
-	if !ts.acc.IsZero() {
-		replay := Event{Name: topic, Data: ts.acc.ShallowCopy()}
-		if err := sendEvent(ch, replay); err != nil {
-			if errors.Is(err, ErrChannelFull) {
-				log.Printf("runtime: event channel full, blocking replay: topic=%s err=%v", topic, err)
-				err = sendEventBlocking(ch, replay)
-			}
-			if err != nil {
-				log.Printf("runtime: cannot replay retained state: topic=%s err=%v", topic, err)
-			}
-		}
-	}
-
 	ts.subs = append(ts.subs, ch)
 }
 
-// Unsubscribe unregisters a topic. The channel closes when the last topic is
-// removed. The topic's retained integral is kept: retention outlives
-// subscriber churn.
+// Unsubscribe unregisters a topic. The channel closes when the last topic
+// is removed.
 func (s *subscriber) Unsubscribe(topic string) {
 
 	s.mu.Lock()
@@ -224,22 +236,19 @@ func (s *subscriber) UnsubscribeAll() {
 	}
 }
 
-// topicState holds the per-topic subscriber list and the retained integral.
-// Publish and Subscribe for one topic serialize on mu; distinct topics
-// proceed concurrently. Sends may block while mu is held, so a consumer that
-// publishes back into the very topic it consumes can deadlock once its own
-// channel fills up; publishing to any other topic is always safe.
+// topicState holds the per-topic subscriber list. Publish and Subscribe
+// for one topic serialize on mu; distinct topics proceed concurrently.
+// Sends may block while mu is held, so a consumer that publishes back
+// into the very topic it consumes can deadlock once its own channel fills
+// up; publishing to any other topic is always safe.
 type topicState struct {
 	mu   sync.Mutex
 	subs []chan Event
-	// acc is the retained integral I(stream): the running sum of every Z-set
-	// published to the topic. For well-formed delta streams it equals the
-	// topic's current state, and it is replayed to late subscribers.
-	acc zset.ZSet
 }
 
-// PubSub is a topic-indexed subscription registry with per-topic state
-// retention for bootstrapping late subscribers.
+// PubSub is a topic-indexed subscription registry: pure fan-out
+// transport with no state. Nothing is retained, so setup order matters:
+// subscribers first, then producers.
 type PubSub struct {
 	mu     sync.RWMutex
 	topics map[string]*topicState
@@ -247,25 +256,6 @@ type PubSub struct {
 
 func NewPubSub() *PubSub {
 	return &PubSub{topics: map[string]*topicState{}}
-}
-
-// ResetTopic clears a topic's retained integral. Retention outlives
-// subscriber churn by design, so the integral of a topic whose producing
-// circuit was uninstalled keeps carrying the dead circuit's state, and a
-// replacement subscriber would bootstrap from a multiset mixing dead and
-// live outputs. Whoever owns the circuit lifecycle resets the topic when
-// tearing the producer down; live subscribers are unaffected (no event is
-// emitted), only future replays start empty.
-func (ps *PubSub) ResetTopic(name string) {
-	ps.mu.RLock()
-	ts, ok := ps.topics[name]
-	ps.mu.RUnlock()
-	if !ok {
-		return
-	}
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	ts.acc = zset.New()
 }
 
 // topic returns the state for a topic, creating it on first use.
@@ -282,7 +272,7 @@ func (ps *PubSub) topic(name string) *topicState {
 	if ts, ok := ps.topics[name]; ok {
 		return ts
 	}
-	ts = &topicState{acc: zset.New()}
+	ts = &topicState{}
 	ps.topics[name] = ts
 	return ts
 }

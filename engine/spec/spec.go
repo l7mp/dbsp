@@ -1,8 +1,8 @@
-// Package spec defines the serialized operator format: the single shape a
-// pipeline program freezes into and loads from. The dcontroller Operator
-// CRD types alias the types here, so a spec saved by one frontend (a
-// JavaScript freezer, a hand-written YAML) loads unchanged through the
-// other (kubectl apply + dcontroller).
+// Package spec defines the serialized runtime format: the single shape a
+// DBSP runtime freezes into and loads from. An operator is a frozen
+// runtime, so the dcontroller Operator CRD types alias the types here and
+// a spec saved by one frontend (a JavaScript freezer, a hand-written
+// YAML) loads unchanged through the other (kubectl apply + dcontroller).
 //
 // The package is connector-agnostic: sources and targets name resources by
 // group/version/kind, and the resource GROUP routes the binding to a
@@ -21,52 +21,76 @@ import (
 	"github.com/l7mp/dbsp/engine/transform"
 )
 
-// OperatorSpec is the top-level serialized operator: a named set of
-// controllers sharing one view space.
-type OperatorSpec struct {
-	// Controllers are the controllers of the operator.
-	Controllers []Controller `json:"controllers"`
+// RuntimeSpec is the top-level serialized runtime, mirroring what a DBSP
+// runtime is: a set of sources feeding streams, a set of circuits
+// processing them, and a set of targets consuming them. Streams couple
+// the sets by name: a source feeds the stream its `as` names (defaulting
+// to the resource kind), a circuit names its input and output streams,
+// and a target consumes likewise. A stream produced and consumed only by
+// circuits is an internal wire with no binding at all.
+type RuntimeSpec struct {
+	// Sources are the bindings feeding the runtime's streams.
+	//
+	// +optional
+	Sources []Source `json:"sources,omitempty"`
+
+	// Circuits are the runtime's circuits.
+	Circuits []CircuitSpec `json:"circuits"`
+
+	// Targets are the bindings consuming the runtime's streams.
+	//
+	// +optional
+	Targets []Target `json:"targets,omitempty"`
 }
 
-// Controller is a translator that processes a set of source resources via
-// a declarative pipeline into deltas on target resources. A controller is
-// defined by a name, its sources, a processing program (exactly one of
-// pipeline, sql, or circuit), its targets, and an optional transform list.
-type Controller struct {
-	// Name is the unique name of the controller.
+// CircuitSpec is one serialized circuit: a program over the runtime's
+// streams, with the transform chain applied to it. The program is given
+// in exactly one of the three languages: an aggregation pipeline, an SQL
+// query, or a hand-built graph.
+type CircuitSpec struct {
+	// Name is the unique name of the circuit.
 	Name string `json:"name"`
 
-	// Sources are the resources the controller watches.
-	Sources []Source `json:"sources"`
+	// Inputs are the streams the circuit consumes. Omitted, it defaults
+	// to the runtime's single source stream; with several sources the
+	// list is required.
+	//
+	// +optional
+	Inputs []string `json:"inputs,omitempty"`
 
-	// Pipeline is an aggregation pipeline applied to the source deltas.
+	// Outputs are the streams the circuit produces. Omitted, it defaults
+	// to the runtime's single target stream; with several targets the
+	// list is required.
+	//
+	// +optional
+	Outputs []string `json:"outputs,omitempty"`
+
+	// Pipeline is an aggregation pipeline over the input streams.
 	//
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
 	Pipeline *json.RawMessage `json:"pipeline,omitempty"`
 
-	// SQL is an SQL query applied to the source deltas.
+	// SQL is an SQL query over the input streams.
 	//
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
 	SQL *json.RawMessage `json:"sql,omitempty"`
 
-	// Circuit is a hand-built dbsp circuit.
+	// Graph is a hand-built dbsp circuit graph.
 	//
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
-	Circuit *json.RawMessage `json:"circuit,omitempty"`
+	Graph *json.RawMessage `json:"graph,omitempty"`
 
-	// Targets are the resource endpoints the results are written to.
-	Targets []Target `json:"targets"`
-
-	// Transforms is the list of circuit transforms applied to the compiled
-	// program, in canonical order (the engine orders the set; listing
-	// states what the controller is, not the order). An absent list means
-	// the default chain: Reconciler, Distincter, Incrementalizer.
+	// Transforms is the list of circuit transforms applied to the
+	// compiled program, in canonical order (the engine orders the set;
+	// listing states what the circuit is, not the order). There are no
+	// default transforms: an absent or empty list means none, and the
+	// circuit runs as the snapshot program it compiles to.
 	//
 	// +optional
 	Transforms []transform.TransformSpec `json:"transforms,omitempty"`
@@ -198,46 +222,48 @@ const (
 	Patcher TargetType = "Patcher"
 )
 
-// Validate checks the structural invariants a serialized controller must
+// Validate checks the structural invariants a serialized circuit must
 // satisfy; connector-specific fields are validated by the binding
-// connector at load time.
-func (c *Controller) Validate() error {
+// connector at assembly.
+func (c *CircuitSpec) Validate() error {
 	if c.Name == "" {
-		return fmt.Errorf("controller: name is required")
+		return fmt.Errorf("circuit: name is required")
 	}
 	programs := 0
-	for _, p := range []*json.RawMessage{c.Pipeline, c.SQL, c.Circuit} {
+	for _, p := range []*json.RawMessage{c.Pipeline, c.SQL, c.Graph} {
 		if p != nil {
 			programs++
 		}
 	}
 	if programs != 1 {
-		return fmt.Errorf("controller %q: exactly one of pipeline, sql, or circuit must be set", c.Name)
-	}
-	for i, s := range c.Sources {
-		if s.Kind == "" {
-			return fmt.Errorf("controller %q: source %d: kind is required", c.Name, i)
-		}
-	}
-	for i, t := range c.Targets {
-		if t.Kind == "" {
-			return fmt.Errorf("controller %q: target %d: kind is required", c.Name, i)
-		}
-	}
-	if _, err := transform.NewChainFromSpecs(c.Transforms); err != nil && len(c.Transforms) > 0 {
-		return fmt.Errorf("controller %q: %w", c.Name, err)
+		return fmt.Errorf("circuit %q: exactly one of pipeline, sql, or graph must be set", c.Name)
 	}
 	return nil
 }
 
-// Validate checks every controller of the operator.
-func (s *OperatorSpec) Validate() error {
-	if len(s.Controllers) == 0 {
-		return fmt.Errorf("operator: at least one controller is required")
+// Validate checks the structural invariants of the serialized runtime.
+func (s *RuntimeSpec) Validate() error {
+	if len(s.Circuits) == 0 {
+		return fmt.Errorf("runtime: at least one circuit is required")
 	}
-	for i := range s.Controllers {
-		if err := s.Controllers[i].Validate(); err != nil {
-			return fmt.Errorf("controller %d: %w", i, err)
+	names := map[string]bool{}
+	for i := range s.Circuits {
+		if err := s.Circuits[i].Validate(); err != nil {
+			return fmt.Errorf("circuit %d: %w", i, err)
+		}
+		if names[s.Circuits[i].Name] {
+			return fmt.Errorf("circuit %q: duplicate name", s.Circuits[i].Name)
+		}
+		names[s.Circuits[i].Name] = true
+	}
+	for i, src := range s.Sources {
+		if src.Kind == "" {
+			return fmt.Errorf("source %d: kind is required", i)
+		}
+	}
+	for i, t := range s.Targets {
+		if t.Kind == "" {
+			return fmt.Errorf("target %d: kind is required", i)
 		}
 	}
 	return nil

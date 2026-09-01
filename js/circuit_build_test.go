@@ -108,7 +108,7 @@ publish("val-in", [[{n: 7}, 1]]);
 		Expect(runScript(vm, script)).To(Succeed())
 		Consistently(collector.Snapshot, 300*time.Millisecond, 50*time.Millisecond).Should(BeEmpty())
 
-		Expect(runScript(vm, `c.commit();`)).To(Succeed())
+		Expect(runScript(vm, `c.commit(); publish("val-in", [[{n: 7}, 1]]);`)).To(Succeed())
 		Eventually(collector.Snapshot, 2*time.Second, 10*time.Millisecond).ShouldNot(BeEmpty())
 	})
 

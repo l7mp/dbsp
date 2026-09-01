@@ -3,15 +3,19 @@ kind: Operator
 metadata:
   name: svc-health-operator
 spec:
-  controllers:
-    # Controller 1: Pod -> HealthView (one object per pod)
+  sources:
+    - apiGroup: ""
+      kind: Pod
+      labelSelector:
+        matchLabels:
+          "dcontroller.io/health-monitor": "enabled"
+    - apiGroup: ""
+      kind: Service
+  circuits:
+    # Circuit 1: Pod -> HealthView (one object per pod)
     - name: pod-health-monitor
-      sources:
-        - apiGroup: ""
-          kind: Pod
-          labelSelector:
-            matchLabels:
-              "dcontroller.io/health-monitor": "enabled"
+      inputs: [Pod]
+      outputs: [HealthView]
       pipeline:
         - "@project":
             metadata:
@@ -26,15 +30,16 @@ spec:
         - "@project":
             metadata: "$.key"
             pods: "$.values"
-      targets:
-        - kind: HealthView
+      transforms:
+        - name: Reconciler
+        - name: Distincter
+        - name: Incrementalizer
 
-    # Controller 2: HealthView -> Service (aggregated health annotations)
+    # Circuit 2: HealthView -> Service (aggregated health annotations);
+    # HealthView is an internal stream between the circuits.
     - name: svc-health-monitor
-      sources:
-        - kind: HealthView
-        - apiGroup: ""
-          kind: Service
+      inputs: [HealthView, Service]
+      outputs: [ServiceHealth]
       pipeline:
         - "@join":
             "@and":
@@ -59,7 +64,12 @@ spec:
                       - "/"
                       - "@string":
                           "@len": "$.HealthView.pods"
-      targets:
-        - apiGroup: ""
-          kind: Service
-          type: Patcher
+      transforms:
+        - name: Reconciler
+        - name: Distincter
+        - name: Incrementalizer
+  targets:
+    - apiGroup: ""
+      kind: Service
+      type: Patcher
+      as: ServiceHealth

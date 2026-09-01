@@ -3,15 +3,16 @@ kind: Operator
 metadata:
   name: configdep-operator
 spec:
-  controllers:
+  sources:
+    - apiGroup: ""
+      kind: ConfigMap
+    - apiGroup: "apps"
+      kind: Deployment
+    - apiGroup: "dcontroller.io"
+      kind: ConfigDeployment
+  circuits:
     - name: configmap-controller
-      sources: 
-        - apiGroup: ""
-          kind: ConfigMap
-        - apiGroup: "apps"
-          kind: Deployment
-        - apiGroup: "dcontroller.io"
-          kind: ConfigDeployment
+      inputs: [ConfigMap, Deployment, ConfigDeployment]
       pipeline:
         - "@join":
             "@and":
@@ -38,9 +39,12 @@ spec:
                     # Content token: changes exactly when the ConfigMap data changes.
                     "dcontroller.io/configmap-version":
                       "@hash": "$.ConfigMap.data"
-      # options:
-      #   disableDistincter: true
-      targets:
-        - apiGroup: "apps"
-          kind: Deployment
-          type: Patcher
+      transforms:
+        - name: Reconciler
+        - name: Distincter
+        - name: Incrementalizer
+  targets:
+    - apiGroup: "apps"
+      kind: Deployment
+      type: Patcher
+      as: DeploymentPatch

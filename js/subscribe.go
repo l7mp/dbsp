@@ -7,9 +7,10 @@ import (
 	"github.com/dop251/goja"
 )
 
-// subscribe(topic, fn) — registers fn as a sink callback for topic.
-// fn receives [[doc, weight], ...] entries; its return value is ignored.
-func (v *VM) subscribeDispatch(call goja.FunctionCall) (goja.Value, error) {
+// subscribe implements subscribe(topic, fn): fn becomes a sink callback
+// for topic on this runtime, receiving [[doc, weight], ...] entries; its
+// return value is ignored.
+func (inst *runtimeInstance) subscribe(call goja.FunctionCall) (goja.Value, error) {
 	if len(call.Arguments) < 2 {
 		return nil, fmt.Errorf("subscribe(topic, fn) requires topic and callback")
 	}
@@ -24,13 +25,14 @@ func (v *VM) subscribeDispatch(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("subscribe: callback must be a function")
 	}
 
-	v.registerCallbackConsumer(topic, jsFn)
+	inst.registerCallbackConsumer(topic, jsFn)
 	return goja.Undefined(), nil
 }
 
-// subscribe.once(topic) — returns a Promise that resolves to the first batch
-// of entries published to topic.
-func (v *VM) subscribeOnce(call goja.FunctionCall) (goja.Value, error) {
+// subscribeOnce implements subscribe.once(topic): a Promise that
+// resolves to the first batch published to topic on this runtime.
+func (inst *runtimeInstance) subscribeOnce(call goja.FunctionCall) (goja.Value, error) {
+	v := inst.vm
 	if len(call.Arguments) < 1 {
 		return nil, fmt.Errorf("subscribe.once(topic) requires topic")
 	}
@@ -41,7 +43,7 @@ func (v *VM) subscribeOnce(call goja.FunctionCall) (goja.Value, error) {
 	}
 
 	promise, resolve, reject := v.rt.NewPromise()
-	sub := v.runtime.NewSubscriber()
+	sub := inst.rt.NewSubscriber()
 	sub.Subscribe(topic)
 
 	go func() {

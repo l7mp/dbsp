@@ -173,9 +173,9 @@ function makeServiceTypeOperator(name, annotationKey, transforms) {
         kind: "Operator",
         metadata: { name },
         spec: {
-            controllers: [{
+            sources: [{ apiGroup: "", kind: "Service", namespace: TESTNS }],
+            circuits: [{
                 name: "svc-annotator",
-                sources: [{ apiGroup: "", kind: "Service", namespace: TESTNS }],
                 pipeline: [
                     { "@project": {
                         metadata: {
@@ -185,9 +185,10 @@ function makeServiceTypeOperator(name, annotationKey, transforms) {
                         },
                     } },
                 ],
-                targets: [{ apiGroup: "", kind: "Service", type: "Patcher" }],
+                transforms: [{ name: "Reconciler" }, { name: "Distincter" }, { name: "Incrementalizer" }],
                 ...(transforms ? { transforms } : {}),
             }],
+            targets: [{ apiGroup: "", kind: "Service", type: "Patcher", as: "ServiceAnnotation" }],
         },
     };
 }
@@ -199,12 +200,13 @@ function makeInvalidOperator(name) {
         kind: "Operator",
         metadata: { name },
         spec: {
-            controllers: [{
+            sources: [{ apiGroup: "", kind: "Service", namespace: TESTNS }],
+            circuits: [{
                 name: "broken",
-                sources: [{ apiGroup: "", kind: "Service", namespace: TESTNS }],
                 pipeline: [{ "@bogus": 1 }],
-                targets: [{ apiGroup: "", kind: "Service", type: "Patcher" }],
+                transforms: [{ name: "Reconciler" }, { name: "Distincter" }, { name: "Incrementalizer" }],
             }],
+            targets: [{ apiGroup: "", kind: "Service", type: "Patcher", as: "ServiceAnnotation" }],
         },
     };
 }
@@ -217,9 +219,9 @@ function makeRuntimeErrorOperator(name) {
         kind: "Operator",
         metadata: { name },
         spec: {
-            controllers: [{
+            sources: [{ apiGroup: "", kind: "Service", namespace: TESTNS }],
+            circuits: [{
                 name: "runtime-fail",
-                sources: [{ apiGroup: "", kind: "Service", namespace: TESTNS }],
                 pipeline: [
                     { "@project": {
                         apiVersion: "v1",
@@ -228,8 +230,9 @@ function makeRuntimeErrorOperator(name) {
                         data: { x: "1" },
                     } },
                 ],
-                targets: [{ apiGroup: "", kind: "ConfigMap", type: "Updater" }],
+                transforms: [{ name: "Reconciler" }, { name: "Distincter" }, { name: "Incrementalizer" }],
             }],
+            targets: [{ apiGroup: "", kind: "ConfigMap", type: "Updater" }],
         },
     };
 }
