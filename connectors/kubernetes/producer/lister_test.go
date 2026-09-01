@@ -39,7 +39,7 @@ var _ = Describe("Kubernetes lister producer", func() {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(first, second).Build()
 		wc := &fakeWithWatchClient{Client: c, watch: watch.NewFake()}
 
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		sub := rt.NewSubscriber()
 		sub.Subscribe("in")
 
@@ -98,7 +98,7 @@ var _ = Describe("Kubernetes lister producer", func() {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(first, second).Build()
 		wc := &fakeWithWatchClient{Client: c, watch: watch.NewFake()}
 
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		sub := rt.NewSubscriber()
 		sub.Subscribe("in")
 

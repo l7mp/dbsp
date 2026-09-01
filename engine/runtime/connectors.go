@@ -41,9 +41,6 @@ type ConnectorFactory struct {
 
 // ConnectorRegistry routes binding groups to registered factories. The
 // zero registry is not usable; create one with NewConnectorRegistry.
-// DefaultConnectorRegistry serves hosts with one connector environment
-// for the process; a host that scopes connector environments narrower
-// (one per VM, say) creates its own.
 type ConnectorRegistry struct {
 	mu        sync.Mutex
 	names     map[string]bool
@@ -55,13 +52,6 @@ type ConnectorRegistry struct {
 func NewConnectorRegistry() *ConnectorRegistry {
 	return &ConnectorRegistry{names: map[string]bool{}, byGroup: map[string]*ConnectorFactory{}}
 }
-
-// DefaultConnectorRegistry is the process-wide registry behind the
-// package-level RegisterConnector and the nil-registry Assemble.
-var DefaultConnectorRegistry = NewConnectorRegistry()
-
-// RegisterConnector adds a factory to the default registry.
-func RegisterConnector(f ConnectorFactory) error { return DefaultConnectorRegistry.Register(f) }
 
 // Register adds a factory to the registry. Registering the same factory
 // name again is a no-op, so hosts may register their connectors

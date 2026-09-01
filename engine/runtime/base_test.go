@@ -14,7 +14,7 @@ import (
 
 var _ = Describe("Base components", func() {
 	It("reports consume errors from BaseConsumer", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		errCh := make(chan runtime.Error, 8)
 		rt.SetErrorChannel(errCh)
 
@@ -49,7 +49,7 @@ var _ = Describe("Base components", func() {
 	})
 
 	It("reports consume errors from BaseProcessor", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		errCh := make(chan runtime.Error, 8)
 		rt.SetErrorChannel(errCh)
 
@@ -85,7 +85,7 @@ var _ = Describe("Base components", func() {
 	})
 
 	It("publishes with BaseProducer", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 
 		sub := rt.NewSubscriber()
 		sub.Subscribe("out")

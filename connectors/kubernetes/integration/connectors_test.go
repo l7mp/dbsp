@@ -35,7 +35,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 	ctx := context.Background()
 
 	It("producer emits add, update, and delete deltas for ConfigMaps", func() {
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		sub := rt.NewSubscriber()
 		sub.Subscribe("in")
 
@@ -89,7 +89,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 	})
 
 	It("lister emits full snapshots for ConfigMaps", func() {
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		sub := rt.NewSubscriber()
 		sub.Subscribe("in")
 
@@ -140,7 +140,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			Client:     suite.K8sClient,
 			OutputName: "out",
 			TargetGVK:  schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
-			Runtime:    dbspruntime.NewRuntime(logr.Discard()),
+			Runtime:    dbspruntime.NewRuntime("", logr.Discard()),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -207,7 +207,7 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			Client:     suite.K8sClient,
 			OutputName: "out",
 			TargetGVK:  schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
-			Runtime:    dbspruntime.NewRuntime(logr.Discard()),
+			Runtime:    dbspruntime.NewRuntime("", logr.Discard()),
 		})
 		Expect(err).NotTo(HaveOccurred())
 

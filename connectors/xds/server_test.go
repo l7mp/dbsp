@@ -15,7 +15,7 @@ var _ = Describe("Server", func() {
 	var rt *dbspruntime.Runtime
 
 	BeforeEach(func() {
-		rt = dbspruntime.NewRuntime(logr.Discard())
+		rt = dbspruntime.NewRuntime("", logr.Discard())
 	})
 
 	It("opens a listener and reports its resolved address", func() {

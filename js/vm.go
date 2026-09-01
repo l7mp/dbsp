@@ -133,7 +133,7 @@ func NewVMWithOptions(opts Options) (*VM, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	v := &VM{
 		loop:        eventloop.NewEventLoop(),
-		runtime:     dbspruntime.NewRuntime(logger),
+		runtime:     dbspruntime.NewRuntime("", logger),
 		db:          relation.NewDatabase("dbsp"),
 		logger:      logger,
 		opts:        opts,

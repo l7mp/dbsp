@@ -13,7 +13,7 @@ import (
 
 var _ = Describe("Runtime", func() {
 	It("exposes pubsub factories", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		Expect(rt.PubSub).NotTo(BeNil())
 		Expect(rt.Manager).NotTo(BeNil())
 
@@ -24,7 +24,7 @@ var _ = Describe("Runtime", func() {
 	})
 
 	It("runs added runnable through manager", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		started := make(chan struct{}, 1)
 		rt.Add(runnableFunc(func(ctx context.Context) error {
 			started <- struct{}{}
@@ -42,7 +42,7 @@ var _ = Describe("Runtime", func() {
 	})
 
 	It("blocks publish when subscriber channel is full", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		pub := rt.NewPublisher()
 		sub := rt.NewSubscriber()
 		sub.Subscribe("topic")

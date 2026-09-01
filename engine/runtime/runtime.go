@@ -24,22 +24,21 @@ type observerSetter interface {
 	SetObserver(executor.ObserverFunc)
 }
 
-// NewRuntime creates a Runtime. log is used as a fallback sink for non-critical
-// errors when no error channel has been set via SetErrorChannel.
-func NewRuntime(log logr.Logger) *Runtime {
+// NewRuntime creates a Runtime under the given name; the name keys the
+// runtime's view group and connector services when the runtime is
+// assembled from a serialized spec, and an ad-hoc runtime may leave it
+// empty. log is used as a fallback sink for non-critical errors when no
+// error channel has been set via SetErrorChannel.
+func NewRuntime(name string, log logr.Logger) *Runtime {
 	return &Runtime{
 		PubSub:    NewPubSub(),
 		Manager:   NewManager(),
+		name:      name,
 		log:       log,
 		runnables: map[string]Runnable{},
 		observers: map[string]observerSetter{},
 	}
 }
-
-// SetName names the runtime. The name prefixes the runtime's shared
-// topics and component names when the runtime is assembled from a
-// serialized spec; set it once, before components are added.
-func (rt *Runtime) SetName(name string) { rt.name = name }
 
 // Name returns the runtime's name.
 func (rt *Runtime) Name() string { return rt.name }

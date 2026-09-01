@@ -18,7 +18,8 @@ import (
 // view group and its connector services.
 //
 // Each stream materializes as one topic named by the stream. reg routes
-// the bindings; nil means the process default registry.
+// the bindings; nil means no connectors, so a spec with bindings needs a
+// registry while a bindings-free one assembles without.
 func (rt *Runtime) Assemble(op *spec.RuntimeSpec, reg *ConnectorRegistry) error {
 	if err := op.Validate(); err != nil {
 		return err
@@ -27,7 +28,7 @@ func (rt *Runtime) Assemble(op *spec.RuntimeSpec, reg *ConnectorRegistry) error 
 		return fmt.Errorf("the runtime must be named")
 	}
 	if reg == nil {
-		reg = DefaultConnectorRegistry
+		reg = NewConnectorRegistry()
 	}
 
 	// The source and target streams, in declaration order. A stream fed

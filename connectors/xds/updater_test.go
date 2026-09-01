@@ -64,7 +64,7 @@ var _ = Describe("Consumer end to end", func() {
 	}
 
 	BeforeEach(func() {
-		rt = dbspruntime.NewRuntime(logr.Discard())
+		rt = dbspruntime.NewRuntime("", logr.Discard())
 		var err error
 		srv, err = NewServer(ServerConfig{Address: "127.0.0.1:0", Runtime: rt})
 		Expect(err).NotTo(HaveOccurred())

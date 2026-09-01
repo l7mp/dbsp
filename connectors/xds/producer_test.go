@@ -101,7 +101,7 @@ var _ = Describe("Producer ingest (against an in-process Server)", func() {
 	}
 
 	BeforeEach(func() {
-		rt = dbspruntime.NewRuntime(logr.Discard())
+		rt = dbspruntime.NewRuntime("", logr.Discard())
 		var err error
 		// The upstream is one of our own Servers, fed by an Updater on "up-src".
 		upstream, err = NewServer(ServerConfig{Address: "127.0.0.1:0", Runtime: rt})

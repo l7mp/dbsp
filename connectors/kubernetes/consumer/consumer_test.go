@@ -29,7 +29,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		u, err := NewUpdater(Config{Name: "test-updater", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		add := map[string]any{
@@ -115,7 +115,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seed).WithObjects(seed).Build()
 
-		u, err := NewUpdater(Config{Name: "test-updater-status", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater-status", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		upsert := map[string]any{
@@ -194,7 +194,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		base := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seed).WithObjects(seed).Build()
 		recording := &recordingClient{Client: base}
 
-		u, err := NewUpdater(Config{Name: "test-updater-payload-status", Client: recording, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater-payload-status", Client: recording, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		upsert := map[string]any{
@@ -250,7 +250,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		p, err := NewPatcher(Config{Name: "test-patcher", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		p, err := NewPatcher(Config{Name: "test-patcher", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		patchUpsert := map[string]any{
@@ -317,7 +317,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		p, err := NewPatcher(Config{Name: "test-patcher-no-clobber", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		p, err := NewPatcher(Config{Name: "test-patcher-no-clobber", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		patchUpsert := map[string]any{
@@ -371,7 +371,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seed).WithObjects(seed).Build()
 
-		p, err := NewPatcher(Config{Name: "test-patcher-status", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		p, err := NewPatcher(Config{Name: "test-patcher-status", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		upsert := map[string]any{
@@ -492,7 +492,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		p, err := NewPatcher(Config{Name: "test-patcher-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		p, err := NewPatcher(Config{Name: "test-patcher-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		oldDoc := map[string]any{
@@ -555,7 +555,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 		recording := &recordingClient{Client: base}
 
-		p, err := NewPatcher(Config{Name: "test-patcher-view-status", Client: recording, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		p, err := NewPatcher(Config{Name: "test-patcher-view-status", Client: recording, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		doc := map[string]any{
@@ -587,7 +587,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		p, err := NewPatcher(Config{Name: "test-patcher-no-create", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		p, err := NewPatcher(Config{Name: "test-patcher-no-create", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		doc := map[string]any{
@@ -613,7 +613,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		u, err := NewUpdater(Config{Name: "test-updater-resurrect", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater-resurrect", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		oldDoc := map[string]any{
@@ -657,7 +657,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		u, err := NewUpdater(Config{Name: "test-updater-exists", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater-exists", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		doc := map[string]any{
@@ -689,7 +689,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		u, err := NewUpdater(Config{Name: "test-updater-multiplicity", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater-multiplicity", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		d1 := map[string]any{
@@ -724,7 +724,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		base := fake.NewClientBuilder().WithScheme(scheme).Build()
 		failing := &failingClient{Client: base, remaining: 1, err: apierrors.NewServiceUnavailable("plant down")}
 
-		u, err := NewUpdater(Config{Name: "test-updater-retry", Client: failing, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater-retry", Client: failing, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		doc := map[string]any{
@@ -766,7 +766,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
 
-		u, err := NewUpdater(Config{Name: "test-updater-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		u, err := NewUpdater(Config{Name: "test-updater-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		oldDoc := map[string]any{
@@ -943,7 +943,7 @@ var _ = Describe("Kubernetes setter", func() {
 				seed(cm("extra", nil, map[string]any{"b": "1"})),
 			).Build()
 
-		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(st.Consume(ctx, level("out",
@@ -971,7 +971,7 @@ var _ = Describe("Kubernetes setter", func() {
 		c := fake.NewClientBuilder().WithScheme(scheme).
 			WithObjects(seed(cm("same", nil, map[string]any{"a": "1"}))).Build()
 
-		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		obj := keyObject(gvk, "default", "same")
@@ -993,7 +993,7 @@ var _ = Describe("Kubernetes setter", func() {
 				seed(cm("other", nil, map[string]any{"b": "1"})),
 			).Build()
 
-		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		// An empty level empties the whole kind: the Setter owns it.
@@ -1021,7 +1021,7 @@ var _ = Describe("Kubernetes setter", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(seedObj).WithObjects(seedObj).Build()
 
-		st, err := NewSetter(Config{Name: "test-setter-status", Client: c, OutputName: "out", TargetGVK: dgvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		st, err := NewSetter(Config{Name: "test-setter-status", Client: c, OutputName: "out", TargetGVK: dgvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		// Same spec, different status: wholesale comparison must write it.
@@ -1047,7 +1047,7 @@ var _ = Describe("Kubernetes setter", func() {
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime(logr.Discard())})
+		st, err := NewSetter(Config{Name: "test-setter", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
 
 		z := zset.New()

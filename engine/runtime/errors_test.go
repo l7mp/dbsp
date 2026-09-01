@@ -51,7 +51,7 @@ var _ = Describe("Error reporting", func() {
 	Describe("Runtime.ReportError", func() {
 		It("sends to error channel when set", func() {
 			errCh := make(chan runtime.Error, 4)
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			rt.SetErrorChannel(errCh)
 
 			sentinel := errors.New("test error")
@@ -65,7 +65,7 @@ var _ = Describe("Error reporting", func() {
 		})
 
 		It("does not block when no channel is set", func() {
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			// Must not panic or block.
 			Expect(func() {
 				rt.ReportError("my-component", errors.New("test"))
@@ -74,7 +74,7 @@ var _ = Describe("Error reporting", func() {
 
 		It("drops and logs when channel is full", func() {
 			errCh := make(chan runtime.Error, 1) // capacity 1
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			rt.SetErrorChannel(errCh)
 
 			rt.ReportError("c1", errors.New("first"))  // fills the channel
@@ -89,7 +89,7 @@ var _ = Describe("Error reporting", func() {
 	Describe("Circuit error reporting", func() {
 		It("reports executor errors to the error channel with the circuit name", func() {
 			errCh := make(chan runtime.Error, 4)
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			rt.SetErrorChannel(errCh)
 
 			q := failingCircuitQuery()
@@ -119,7 +119,7 @@ var _ = Describe("Error reporting", func() {
 			// Build a circuit with one pass-through query to verify the circuit
 			// survives the error and keeps running.
 			errCh := make(chan runtime.Error, 16)
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			rt.SetErrorChannel(errCh)
 
 			q := failingCircuitQuery()
@@ -154,7 +154,7 @@ var _ = Describe("Error reporting", func() {
 		})
 
 		It("rejects duplicate circuit names", func() {
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			q := mustCompileCircuitQuery()
 			c1, err := runtime.NewCircuit("shared-name", rt, q, logr.Discard())
 			Expect(err).NotTo(HaveOccurred())
@@ -169,7 +169,7 @@ var _ = Describe("Error reporting", func() {
 	Describe("Critical errors", func() {
 		It("returns invalid circuit creation errors directly", func() {
 			errCh := make(chan runtime.Error, 4)
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			rt.SetErrorChannel(errCh)
 
 			bad := circuit.New("bad")
@@ -191,7 +191,7 @@ var _ = Describe("Error reporting", func() {
 
 		It("returns duplicate registration errors directly", func() {
 			errCh := make(chan runtime.Error, 4)
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			rt.SetErrorChannel(errCh)
 
 			p1 := newCriticalFailProducer("dup", nil)
@@ -205,7 +205,7 @@ var _ = Describe("Error reporting", func() {
 
 		It("returns producer Start errors via Runtime.Start", func() {
 			errCh := make(chan runtime.Error, 4)
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			rt.SetErrorChannel(errCh)
 
 			sentinel := errors.New("producer start failed")
@@ -227,7 +227,7 @@ var _ = Describe("Error reporting", func() {
 
 		It("returns consumer Start errors via Runtime.Start", func() {
 			errCh := make(chan runtime.Error, 4)
-			rt := runtime.NewRuntime(logr.Discard())
+			rt := runtime.NewRuntime("", logr.Discard())
 			rt.SetErrorChannel(errCh)
 
 			sentinel := errors.New("consumer start failed")

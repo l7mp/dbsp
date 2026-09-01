@@ -21,7 +21,7 @@ var _ = Describe("LogProducer", func() {
 			Name:      "x",
 			PodName:   "p",
 			InputName: "t",
-			Runtime:   dbspruntime.NewRuntime(logr.Discard()),
+			Runtime:   dbspruntime.NewRuntime("", logr.Discard()),
 		})
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("client"))
@@ -39,7 +39,7 @@ var _ = Describe("LogProducer", func() {
 	})
 
 	It("defaults namespace to 'default'", func() {
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		p, err := NewLogProducer(LogConfig{
 			Client:    fake.NewSimpleClientset(),
 			Name:      "ns-test",
@@ -52,7 +52,7 @@ var _ = Describe("LogProducer", func() {
 	})
 
 	It("returns nil on context cancellation", func() {
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		p, err := NewLogProducer(LogConfig{
 			Client:    fake.NewSimpleClientset(),
 			Name:      "cancel-test",
@@ -72,7 +72,7 @@ var _ = Describe("LogProducer", func() {
 	})
 
 	It("emits one event per log line via stream injection", func() {
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		sub := rt.NewSubscriber()
 		sub.Subscribe("logs")
 

@@ -66,8 +66,7 @@ func (v *VM) runtimeCreate(call goja.FunctionCall) (goja.Value, error) {
 	}
 	v.instMu.Unlock()
 
-	rt := dbspruntime.NewRuntime(v.logger)
-	rt.SetName(name)
+	rt := dbspruntime.NewRuntime(name, v.logger)
 	errCh := make(chan dbspruntime.Error, dbspruntime.EventBufferSize)
 	rt.SetErrorChannel(errCh)
 

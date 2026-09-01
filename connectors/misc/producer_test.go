@@ -16,7 +16,7 @@ import (
 
 var _ = Describe("Virtual source producers", func() {
 	It("emits exactly one event for one-shot producer", func() {
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		p, err := NewOneShotProducer(OneShotConfig{
 			Name:        "test-oneshot",
 			InputName:   "in",
@@ -58,7 +58,7 @@ var _ = Describe("Virtual source producers", func() {
 	})
 
 	It("emits repeated events for periodic producer", func() {
-		rt := dbspruntime.NewRuntime(logr.Discard())
+		rt := dbspruntime.NewRuntime("", logr.Discard())
 		p, err := NewPeriodicProducer(PeriodicConfig{
 			Name:        "test-periodic",
 			InputName:   "in",

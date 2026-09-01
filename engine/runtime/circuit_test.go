@@ -25,7 +25,7 @@ var _ runtime.Processor = (*runtime.Circuit)(nil)
 var _ = Describe("Circuit", func() {
 	It("executes incremental mode on delta input", func() {
 		q := mustCompileCircuitQuery()
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -42,7 +42,7 @@ var _ = Describe("Circuit", func() {
 
 	It("folds the queued backlog into a single step", func() {
 		q := mustCompileCircuitQuery()
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -78,7 +78,7 @@ var _ = Describe("Circuit", func() {
 
 	It("cancels opposite weights within a folded step and suppresses the empty output", func() {
 		q := mustCompileCircuitQuery()
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -107,7 +107,7 @@ var _ = Describe("Circuit", func() {
 
 	It("subscribes inputs and publishes outputs", func() {
 		q := mustCompileCircuitQuery()
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -144,7 +144,7 @@ var _ = Describe("Circuit", func() {
 	})
 
 	It("broadcasts across overlapping producers and consumers", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
@@ -187,7 +187,7 @@ var _ = Describe("Circuit", func() {
 	})
 
 	It("broadcasts bursts with deterministic totals", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
@@ -231,7 +231,7 @@ var _ = Describe("Circuit", func() {
 	})
 
 	It("supports runtime add and stop of circuits", func() {
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 
 		q1 := newBroadcasterQuery("b1", "p1", "p2", "x", "y")
 		q2 := newBroadcasterQuery("b2", "p2", "p3", "y", "z")
@@ -302,7 +302,7 @@ var _ = Describe("Circuit", func() {
 
 	It("sets circuit observers through runtime", func() {
 		q := mustCompileCircuitQuery()
-		rt := runtime.NewRuntime(logr.Discard())
+		rt := runtime.NewRuntime("", logr.Discard())
 		c, err := runtime.NewCircuit("test-circuit", rt, q, logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
 
