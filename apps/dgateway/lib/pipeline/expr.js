@@ -160,31 +160,27 @@ function sortByKeys(keys, list) {
 }
 
 // gatewayAddressExpr assigns a gateway its loopback data-plane address from
-// the pool: base octets from the pool CIDR, host octet from the
-// namespace/name length. A deliberately crude pure hack for local
-// single-host runs (same-length names collide); real address allocation
-// belongs to the plant. The two call sites (Gateway status and the Envoy
-// listener bind address) must agree, which is why this is a shared builder.
+// the pool: base octets from the pool CIDR, the two host octets folded from
+// a content hash of namespace/name (24-bit slices of the @hash hex string
+// cast through @int, reduced with @mod). The two call sites (Gateway status
+// and the Envoy listener bind address) must agree, which is why this is a
+// shared builder.
 function gatewayAddressExpr(pool, gatewayRoot) {
   const base = pool.split("/")[0].split(".").slice(0, 2).join(".");
+  const hash = {
+    "@hash": { "@concat": [`${gatewayRoot}.namespace`, "/", `${gatewayRoot}.name`] },
+  };
+  // @substring is 1-based SQL-style [string, start, count]; a 6-hex-char
+  // slice is 24 bits, comfortably inside @int's int64.
+  const octet = (start, mod) => ({
+    "@mod": [{ "@int": { "@substring": [hash, start, 6] } }, mod],
+  });
   return {
     "@concat": [
-      `${base}.0.`,
-      {
-        "@add": [
-          1,
-          {
-            "@mod": [
-              {
-                "@len": {
-                  "@concat": [`${gatewayRoot}.namespace`, "/", `${gatewayRoot}.name`],
-                },
-              },
-              253,
-            ],
-          },
-        ],
-      },
+      `${base}.`,
+      octet(1, 254),
+      ".",
+      { "@add": [1, octet(7, 253)] },
     ],
   };
 }
