@@ -108,6 +108,7 @@ func (ps *PubSub) Publish(event Event) error {
 	for _, ch := range ts.subs {
 		if err := sendEvent(ch, event); err != nil {
 			if errors.Is(err, ErrChannelFull) {
+				ps.onStall(event.Name)
 				log.Printf("runtime: event channel full, blocking publish: topic=%s err=%v", event.Name, err)
 				if err := sendEventBlocking(ch, event); err != nil {
 					return err
@@ -252,10 +253,16 @@ type topicState struct {
 type PubSub struct {
 	mu     sync.RWMutex
 	topics map[string]*topicState
+
+	// onStall is called once per publish that finds a subscriber channel
+	// full and falls back to the blocking send. Never nil: a no-op on a
+	// bare PubSub, rewired by NewRuntime to the runtime's stats counters
+	// before the first publish.
+	onStall func(topic string)
 }
 
 func NewPubSub() *PubSub {
-	return &PubSub{topics: map[string]*topicState{}}
+	return &PubSub{topics: map[string]*topicState{}, onStall: func(string) {}}
 }
 
 // topic returns the state for a topic, creating it on first use.

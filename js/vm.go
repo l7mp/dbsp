@@ -816,10 +816,13 @@ func (v *VM) injectGlobals() error {
 	if err := runtimeObj.Set("cancel", v.wrap(v.cancel)); err != nil {
 		return err
 	}
+	if err := runtimeObj.Set("stats", v.wrap(v.defaultInst.stats)); err != nil {
+		return err
+	}
 	if err := runtimeObj.Set("toJSON", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
 		return v.rt.ToValue(map[string]any{
 			"kind": "runtime",
-			"apis": []string{"sql", "aggregate", "create", "publish", "subscribe", "observe", "onError", "cancel"},
+			"apis": []string{"sql", "aggregate", "create", "publish", "subscribe", "observe", "onError", "cancel", "stats"},
 		}), nil
 	})); err != nil {
 		return err

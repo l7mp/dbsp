@@ -18,6 +18,9 @@ type Runtime struct {
 	mu        sync.RWMutex
 	runnables map[string]Runnable
 	observers map[string]observerSetter
+
+	statsMu sync.Mutex
+	stats   map[string]int64
 }
 
 type observerSetter interface {
@@ -30,14 +33,19 @@ type observerSetter interface {
 // empty. log is used as a fallback sink for non-critical errors when no
 // error channel has been set via SetErrorChannel.
 func NewRuntime(name string, log logr.Logger) *Runtime {
-	return &Runtime{
+	rt := &Runtime{
 		PubSub:    NewPubSub(),
 		Manager:   NewManager(),
 		name:      name,
 		log:       log,
 		runnables: map[string]Runnable{},
 		observers: map[string]observerSetter{},
+		stats:     map[string]int64{},
 	}
+	// A full subscriber channel stalls the publisher (backpressure, no
+	// loss); the counter makes the stalls observable per runtime.
+	rt.PubSub.onStall = func(string) { rt.CountStat("pubsub.publish_stall") }
+	return rt
 }
 
 // Name returns the runtime's name.

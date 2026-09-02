@@ -1,6 +1,7 @@
 package js
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -10,6 +11,22 @@ import (
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
+
+// stats implements the stats verb: the instance runtime's snapshot
+// (its counters, the process counters and the Go runtime figures). The
+// JSON round trip honors the snapshot's json tags, so JS sees the
+// documented camelCase field names.
+func (inst *runtimeInstance) stats(call goja.FunctionCall) (goja.Value, error) {
+	b, err := json.Marshal(inst.rt.Stats())
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return inst.vm.rt.ToValue(out), nil
+}
 
 // publish implements the publish verb: bound naked for the default
 // runtime, a handle method for created ones.

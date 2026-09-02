@@ -15,6 +15,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	toolscache "k8s.io/client-go/tools/cache"
+
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -728,8 +730,11 @@ func (w *ViewCacheWatcher) sendEvent(eventType watch.EventType, o any) {
 	select {
 	case w.eventChan <- event:
 	case <-time.After(time.Second):
-		// If we can't send the event in 1 second, log and continue
-		w.logger.Info("failed to send event, channel might be full", "event", event)
+		// A watcher that cannot drain within a second loses the event: the
+		// watch is silently incomplete from here on. Counted so long runs
+		// can prove whether this ever happens.
+		dbspruntime.CountStat("kubernetes.viewcache.watch_overflow")
+		w.logger.V(2).Info("failed to send event, channel might be full", "event", event)
 	}
 }
 
