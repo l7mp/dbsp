@@ -1,0 +1,208 @@
+#+TITLE: E3 - Actuation under feedback dead time
+#+OPTIONS: toc:nil num:t
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS: [11pt]
+#+LATEX_HEADER: \usepackage[margin=2.2cm]{geometry}
+#+LATEX_HEADER: \usepackage{pgfplots}
+#+LATEX_HEADER: \pgfplotsset{compat=1.17, log ticks with fixed point}
+#+LATEX_HEADER: \usepackage{booktabs}
+
+* What we measure, and why
+
+E2 studies /drift/ under a disturbed plant. E3 studies the dual cost - 
+/actuation/ - under a delayed plant. A reconciliation loop never confirms
+a write the instant it lands: the apiserver admits it, a watch re-lists
+it, the event propagates back. That round trip is a *dead time* of $k$
+steps between emitting a correction and observing its effect.
+
+The desired-state Reconciler is deadbeat but memoryless about what it has
+already sent: it re-emits the /whole/ outstanding correction $U=\int(\delta
+D-\delta Y_U)$ on every step until the watch echo confirms it. Under a dead
+time of $dt$ steps the same logical change is therefore actuated many
+times over before the loop learns it succeeded. The SmithPredictor
+carries an internal model of the dead time: a $K$-step window (the
+telescoped $z^{-1}U - z^{-K}U$) holding the corrections presumed in
+flight, so corrections younger than $K$ steps are not re-emitted. A
+matched model ($K = dt$) actuates every correction exactly once; an
+under-modeled loop ($K < dt$) re-emits for the $dt - K$ steps its window
+cannot cover, degenerating to the plain Reconciler as $K \to 1$. The
+sweep below fixes the plant at $dt = 10$ and sweeps the model $K$; the
+Reconciler is the $K = 1$ endpoint (the predictor itself needs
+$K \ge 2$).
+
+The controller is the pair-case endpoints pipeline (N services, 1:1 pods).
+Every round one pod IP churns (the background workload), the loop reacts,
+and the plant's feedback clock advances one tick - releasing the echoes
+whose dead time has expired. We count the *actuation volume*: entries the
+plant applier receives, each one a would-be apiserver write.
+
+#+begin_example
+   churn --> +------------+  U (corrections) --> +---------+
+   (pods)    | controller |                      |  plant  |
+             +------------+ <-- observed, ------- +---------+
+                             delayed k steps  (echo of applied writes)
+#+end_example
+
+Everything is synthetic and in-process: the dead time is injected by the
+plant, so there is no apiserver, no envtest, no Kubernetes.
+
+* Results
+
+** Actuation amplification vs. the dead-time model
+
+Steady-state actuation per round (mean over the second half of each
+trace) at plant dead time $dt = 10$, swept over the loop's model $K$. Two
+entries per round is the information-theoretic minimum (retract the old
+endpoint, insert the new).
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={dead-time model $K$ [steps] (plant $dt=10$)},
+    ylabel={actuation [entries/round]},
+    grid=major, legend pos=north east, legend style={font=\small}]
+\addplot+ [thick, mark=*] table [x=k, y=applied_per_round, col sep=comma] {results/E3-amp-reconciled.csv};
+\addlegendentry{Reconciler ($K=1$ endpoint)}
+\addplot+ [thick, mark=square*] table [x=k, y=applied_per_round, col sep=comma] {results/E3-amp-smith.csv};
+\addlegendentry{SmithPredictor ($K$-window)}
+\draw [dashed] (axis cs:1,2) -- (axis cs:10,2) node [pos=.5, above, font=\small] {minimum};
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+Actuation falls monotonically as the model approaches the true dead
+time: every step of unmodeled dead time ($dt - K$) is a step of
+re-emission the window cannot suppress, so the cost is
+$O(dt - K)$-shaped, from the Reconciler's full $O(dt)$ at $K = 1$ down
+to the matched model's $O(1)$ at $K = dt$. Over-modeling ($K > dt$) is
+not shown: it trades emission for correction latency, holding echoes
+longer than the plant needs.
+
+** Recovery under write loss
+
+The flip side of the window: every correction entry is dropped with
+probability $p = 0.1$ (actuated but lost), and each round measures the
+ticks until the churned state lands in the plant. The Reconciler
+re-emits the outstanding correction on every step, so a lost write is
+re-actuated immediately; the smith loop retires corrections against its
+$K$-step echo window and re-asserts only once the window drains -
+recovery latency grows with the model, the price of the silence the
+amplification sweep buys. The median is 0 for every loop (at $p = 0.1$
+nine writes in ten land at once); the tail carries the story, so the
+figure plots p95 and max. A second reading rides the dropped counts:
+the exposures to loss themselves fall with $K$ (fewer re-emissions,
+fewer lottery tickets).
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={dead-time model $K$ [steps] (plant $dt=10$, drop $p=0.1$)},
+    ylabel={recovery [ticks]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [thick, mark=*] table [x=k, y=p95_ticks, col sep=comma] {results/E3-rec-reconciled.csv};
+\addlegendentry{Reconciler p95 ($K=1$ endpoint)}
+\addplot+ [thick, mark=square*] table [x=k, y=p95_ticks, col sep=comma] {results/E3-rec-smith.csv};
+\addlegendentry{SmithPredictor p95}
+\addplot+ [dashed, mark=square] table [x=k, y=max_ticks, col sep=comma] {results/E3-rec-smith.csv};
+\addlegendentry{SmithPredictor max}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+Together with the amplification figure this is the whole trade: $K$ buys
+actuation silence at $O(dt - K)$ per step, and pays for it in re-assert
+latency under loss, which grows with $K$. A deployment picks the model
+it can afford to wait for.
+
+
+** Actuation trajectory ($dt = 10$)
+
+The per-round actuation at plant dead time 10: the Reconciler ($K = 1$)
+plateaus at the full amplification for the whole run; the matched
+SmithPredictor ($K = 10$) tracks the minimum, spiking only when a
+correction is genuinely new.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.92\textwidth, height=.45\textwidth,
+    xlabel={round}, ylabel={actuation [entries]},
+    grid=major, legend pos=north east, legend style={font=\small},
+    ymin=0]
+\addplot+ [mark=none, thick] table [x=round, y=applied, col sep=comma] {results/E3-trace-reconciled-dt10-k1.csv};
+\addlegendentry{Reconciler ($K=1$)}
+\addplot+ [mark=none, thick, densely dashed] table [x=round, y=applied, col sep=comma] {results/E3-trace-smith-dt10-k5.csv};
+\addlegendentry{SmithPredictor ($K=5$, under-modeled)}
+\addplot+ [mark=none, thick] table [x=round, y=applied, col sep=comma] {results/E3-trace-smith-dt10-k10.csv};
+\addlegendentry{SmithPredictor ($K=10$, matched)}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** The oscillation, and why Kubernetes hides it
+
+A single spurious object is inserted out of band at round 1 and reported to
+the loop over the watch (dead time $dt=2$); the figure traces the net weight
+the plant holds for it. The (plant, loop) configurations:
+
+- *additive plant + Reconciler*: the plant integrates deltas with no
+  idempotence (an append-only counter, a naive accumulator). Each
+  re-emission of the correction stacks; with $k\ge 2$ the loop is unstable
+  and the weight rings with growing amplitude - the $z^2=z-1$ pathology the
+  control-plane theory warns about, reproduced.
+- *idempotent plant + Reconciler*: the plant applies with read-modify-write
+  idempotence (a set clamp, $\mathrm{dist}$). The re-emissions are absorbed;
+  the weight never leaves $\{0,1\}$ and heals in one dead time. *No
+  oscillation - only wasted applies.*
+- *idempotent plant + SmithPredictor*: the disturbance is corrected once
+  and stays corrected.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={round}, ylabel={net weight held for the disturbed object},
+    grid=major, legend pos=south west, legend style={font=\small}]
+\addplot+ [thick, mark=*] table [x=round, y=weight, col sep=comma] {results/E3-osc-additive-reconciled-dt2-k1.csv};
+\addlegendentry{additive plant + Reconciler}
+\addplot+ [thick, mark=square*] table [x=round, y=weight, col sep=comma] {results/E3-osc-idempotent-reconciled-dt2-k1.csv};
+\addlegendentry{idempotent plant + Reconciler}
+\addplot+ [thick, mark=triangle*] table [x=round, y=weight, col sep=comma] {results/E3-osc-idempotent-smith-dt2-k2.csv};
+\addlegendentry{idempotent plant + SmithPredictor}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+This is the answer to a question the E5 macrobenchmark raised: real
+Kubernetes controllers run with feedback dead times well above one step,
+yet the marginal oscillation never appears in practice. The reason is not
+that the loop is stable - it is that *apiserver apply is idempotent*. A
+server-side apply is a $\mathrm{dist}$: re-applying the same object is a
+no-op, so the re-emissions that would ring an additive plant are silently
+absorbed into waste instead. Kubernetes trades the instability for the
+actuation amplification of the first figure - and it is exactly that
+amplification the SmithPredictor removes without needing the plant to be
+idempotent.
+
+* Reading the three figures together
+
+- *Amplification (fig. 1-2)*: the loop pays $O(dt - K)$ redundant
+  applies for the dead time its model does not cover - the Reconciler
+  ($K = 1$) pays the full $O(dt)$, the matched SmithPredictor pays
+  $O(1)$. On a real apiserver every redundant apply is a request, a
+  mutation, a watch event - the amplification is the mechanism behind
+  the reconciler echo storms E5 measures, and the sweep prices every
+  intermediate model.
+- *Stability (fig. 3)*: the redundant applies are harmless only because
+  the plant is idempotent. Where the plant is not (an external API
+  without server-side apply, a counter, a queue), the same re-emission
+  is an instability. The compensated loop is only stated for idempotent
+  plants: its internal $\mathrm{dist}$ is the model of exactly that
+  plant, so the non-idempotent case contradicts the loop's own model
+  and is out of scope.

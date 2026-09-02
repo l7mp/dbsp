@@ -1,0 +1,549 @@
+#+TITLE: E5 - Macro: desired-state incremental control vs. the world
+#+OPTIONS: toc:nil num:t
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS: [11pt]
+#+LATEX_HEADER: \usepackage[margin=2.2cm]{geometry}
+#+LATEX_HEADER: \usepackage{pgfplots}
+#+LATEX_HEADER: \pgfplotsset{compat=1.17, log ticks with fixed point}
+#+LATEX_HEADER: \usepackage{booktabs}
+
+* What we measure, and why
+
+This is the us-against-the-world experiment. /Us/ is the desired-state
+incremental controller (delta-gateway, closed loop). /The world/ is
+envoy-gateway - the production Gateway API controller, whose
+architecture is the state of practice: recompute on change, ship
+deltas. Between them sits one more real position: the /open-loop
+incremental/ controller, the architecture proposed by the full-stack
+SDN line of work - which here is not a reimplementation effort but the
+same declarative program with the Reconciler transform removed, i.e.
+that proposal realized over Kubernetes by dropping one compile flag. The fourth
+contender is *istiod*: Istio's Gateway API implementation is built on
+krt, Istio's declarative controller runtime that tracks dependencies
+between collections and recomputes exactly the derived state an input
+change touches - a *hand-rolled incremental* controller, conceived by
+engineering intuition, sitting between the recompute world and our
+*principled incremental* one (DBSP's incremental view maintenance,
+which delivers the same property as a compiler transform with an
+algebraic correctness argument). How hand-rolled incrementality
+compares to principled incrementality, on identical workloads through
+identical instruments, is exactly the question this grid answers. A
+fifth line, /sotw/ (full recompute inside our own engine), appears in
+the appendix as the architecture-isolating ablation: it shows that
+envoy-gateway's curves are reproduced by its architecture, not its
+implementation.
+
+E5 subsumes the former E3 (macro convergence, corners, embedded
+ablation) and E4 (status-tampering robustness): E1/E2 keep everything
+the artificial in-process setup can answer; everything real is here.
+
+One asymmetry of the system itself must be said before any chart. The
+two control loops are NOT symmetric: the k8s->k8s loop is /closed/
+(statuses are observed back through the watch and disturbances heal - 
+measured below), while the k8s->xDS leg is /open-loop incremental, at
+best/: there is no xDS watch-back in the connector today, so the
+data-plane configuration is trusted, not observed. The xDS protocol
+does carry observed-state signals (per-resource ACK/NACK,
+~initial_resource_versions~, ~/config_dump~/CSDS), so closing that loop
+is mechanically possible; it is future work, and nothing below measures
+data-plane self-healing.
+
+* The harness
+
+Every contender runs OUT OF PROCESS against a shared envtest plant - a
+real kube-apiserver with a real etcd, one fresh plant per grid point,
+with the Gateway API + Envoy Gateway CRD bundles installed and API
+request-audit logging enabled. The contenders:
+
+- *reconciler / open / sotw / smith*: the delta-gateway controller,
+  =dbsp apps/dgateway/index.js controller --mode=...=, connecting
+  through the plant kubeconfig with the runtime's shipped client
+  budget (reconciler: incremental + Reconciler; open: incremental, no
+  status loop; sotw: full recompute; smith: incremental + the Smith
+  dead-time compensator - exactly-once status actuation);
+- *envoy-gateway*: the stock runners at the pinned upstream commit
+  (provider, gateway-api translator, xDS server - the serve wrapper in
+  =../eg-harness/= starts them unmodified), pointed at the same plant
+  via ~EG_KUBECONFIG~, with its own shipped client configuration;
+- *istiod*: the stock =pilot-discovery= binary at the pinned upstream
+  tag (built by =make istio=), pointed at the same plant with
+  =--kubeconfig=, Gateway API alpha kinds enabled (TCPRoute), webhook
+  patching and telemetry providers off, and gateways in Istio's
+  documented manual-deployment mode (envtest runs no pods, so the
+  driver provisions each gateway's workload: the companion Service
+  named by =spec.addresses=, its endpoint, and a Pod carrying the
+  gateway-name label).
+
+One driver measures everything: it writes the world through the plant
+kubeconfig (sharded native-GVK updaters at a pinned 500 QPS driver
+budget), watches statuses back from the plant, and taps the
+contender's xDS server with the connector's own delta-ADS clients.
+
+Timing contract, identical for every contender:
+
+| point  | meaning                                                        |
+|--------+----------------------------------------------------------------|
+| t0     | the driver issues the mutation (before the API write)         |
+| status | the object's updated status arrives at the driver's watch     |
+| xds    | the delta arrives at the driver's delta-ADS client            |
+
+The xds point is /actual delivery over the wire/ - for envoy-gateway
+that includes its mandatory mTLS - not a self-reported internal
+timestamp. Cold start (preload) is timed to the last observed activity
+on either tap; the settle window that confirms quiescence is excluded.
+For istiod the driver's clients impersonate each watched gateway's
+proxy (a router node whose metadata labels carry the gateway-name
+label) on the plaintext delta-ADS port, with Endpoint and Route
+resources subscribed by name as the xDS spec demands.
+
+Known, bounded asymmetries, all stated rather than hidden: (1)
+envoy-gateway's xDS leg pays mTLS, delta-gateway's is plaintext - a
+per-message cost near zero after the handshake; (2) envoy-gateway
+scopes snapshots per gateway, so the driver attaches one delta-ADS
+client per watched gateway, while delta-gateway serves one wildcard
+client - the timing endpoint (delivery at the client responsible for
+the changed resource) is the same; (3) the envoy-gateway infra manager
+is not started and istiod runs manual-deployment gateways (no Envoy
+Deployments are provisioned - envtest has no kubelet to run them),
+which only removes API traffic those controllers would otherwise add.
+
+The price instruments are symmetric too: a /proc sampler records each
+contender's cumulative CPU and RSS once per second, and the plant's
+request-audit log attributes every API request to its author by user
+agent.
+
+** Workloads
+
+Structure modeled on real deployments, content synthetic, size
+parameterized by R (regions), deterministic by seed:
+
+- *multiregion* (shallow-wide): one shared GatewayClass, then R
+  regions, each its own namespace with one single-listener Gateway
+  and one HTTPRoute (backendRef histogram from the production trace;
+  generated backends with 4-5 endpoints). Scales the GATEWAY
+  dimension; the production deployment is R=73, larger ones run
+  several hundred. The source deployment is an L4 gateway; its tuples
+  are carried as HTTP listener + HTTPRoute (the operator's declared
+  surface, and the kind every compared system supports best) - at the
+  control plane the shapes cost the same (one listener, one route
+  row, one cluster, one load assignment), so the cross-system grid
+  measures identical objects.
+- *sock-shop* (deep): R regions × the Sock Shop reference application - 
+  one Gateway, 13 path-prefix HTTPRoutes, 13 backends per region.
+  Scales the ROUTES-PER-GATEWAY dimension.
+
+Changesets are shape-appropriate deployment events. multiregion:
+region-add and region-delete (the whole {namespace, service, slice,
+gateway, route} bundle - the real "new region" event), endpoint-add /
+endpoint-delete / endpoint-update (pod scale-up, scale-down, churn).
+sock-shop: route-add, route-update (path change), route-delete, and
+the same endpoint family.
+
+* Results
+
+** Convergence vs. base size - multiregion, region-add
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.9\textwidth, height=.55\textwidth,
+    xlabel={regions $R$ (gateways)}, ylabel={median convergence [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [mark=*, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-reconciler-region-add.csv};
+\addlegendentry{reconciler: region-add -> xDS}
+\addplot+ [dashed, mark=o, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-open-region-add.csv};
+\addlegendentry{open (full-stack SDN): region-add -> xDS}
+\addplot+ [mark=square*, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-smith-region-add.csv};
+\addlegendentry{smith: region-add -> xDS}
+\addplot+ [dotted, thick, mark=triangle*, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-eg-region-add.csv};
+\addlegendentry{envoy-gateway: region-add -> xDS}
+\addplot+ [densely dotted, mark=diamond*, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-istio-region-add.csv};
+\addlegendentry{istiod (krt): region-add -> xDS}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Convergence vs. base size - multiregion, endpoint-update
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.9\textwidth, height=.55\textwidth,
+    xlabel={regions $R$ (gateways)}, ylabel={median convergence [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [mark=*, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-reconciler-endpoint-update.csv};
+\addlegendentry{reconciler: endpoint-update -> xDS}
+\addplot+ [dashed, mark=o, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-open-endpoint-update.csv};
+\addlegendentry{open (full-stack SDN): endpoint-update -> xDS}
+\addplot+ [mark=square*, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-smith-endpoint-update.csv};
+\addlegendentry{smith: endpoint-update -> xDS}
+\addplot+ [dotted, thick, mark=triangle*, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-eg-endpoint-update.csv};
+\addlegendentry{envoy-gateway: endpoint-update -> xDS}
+\addplot+ [densely dotted, mark=diamond*, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-istio-endpoint-update.csv};
+\addlegendentry{istiod (krt): endpoint-update -> xDS}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Convergence vs. base size - sock-shop
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.9\textwidth, height=.55\textwidth,
+    xlabel={regions $R$ ($13R$ routes)}, ylabel={median convergence [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-sock-shop-reconciler-route-add.csv};
+\addlegendentry{reconciler: route-add -> xDS}
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-sock-shop-smith-route-add.csv};
+\addlegendentry{smith: route-add -> xDS}
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-sock-shop-reconciler-endpoint-update.csv};
+\addlegendentry{reconciler: endpoint-update -> xDS}
+\addplot+ [dashed, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-sock-shop-open-route-add.csv};
+\addlegendentry{open (full-stack SDN): route-add -> xDS}
+\addplot+ [dotted, thick, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-sock-shop-eg-route-add.csv};
+\addlegendentry{envoy-gateway: route-add -> xDS}
+\addplot+ [densely dotted, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-sock-shop-istio-route-add.csv};
+\addlegendentry{istiod (krt): route-add -> xDS}
+\addplot+ [densely dashed, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=status_median_ms, y error expr=\thisrow{status_p95_ms}-\thisrow{status_median_ms}, col sep=comma] {results/E5-sock-shop-istio-route-add.csv};
+\addlegendentry{istiod (krt): route-add -> status}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Cold start vs. base size
+
+Batch convergence from nothing: the one moment every architecture pays
+O(world). Timed to the last observed activity, same predicate on every
+line.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={regions $R$}, ylabel={cold-start convergence [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-reconciler.csv};
+\addlegendentry{reconciler}
+\addplot+ [dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-open.csv};
+\addlegendentry{open (full-stack SDN)}
+\addplot+ [densely dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-smith.csv};
+\addlegendentry{smith}
+\addplot+ [dotted, thick] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-eg.csv};
+\addlegendentry{envoy-gateway}
+\addplot+ [densely dotted] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-istio.csv};
+\addlegendentry{istiod (krt)}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Disturbance rejection: out-of-band status tampering
+
+After convergence the world's statuses become the oracle; every round
+one EndpointSlice churns (background workload) and a seeded noise
+source overwrites random Gateway/route statuses through the status
+subresource - what any out-of-band writer with API access can do to a
+real cluster. Drift = objects whose status diverges from the oracle
+(=lastTransitionTime= excluded, connector-owned). A real API server
+keeps status behind the subresource, so a wholesale wipe is not
+expressible from outside; the overwrite is the whole attack surface.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.9\textwidth, height=.5\textwidth,
+    xlabel={round}, ylabel={drifted objects},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [mark=*, mark repeat=5] table [x=round, y=drift, col sep=comma] {results/E5-disturb-trace-reconciler-l0.3.csv};
+\addlegendentry{reconciler}
+\addplot+ [dashed, mark=o, mark repeat=5] table [x=round, y=drift, col sep=comma] {results/E5-disturb-trace-open-l0.3.csv};
+\addlegendentry{open (full-stack SDN)}
+\addplot+ [mark=square*, mark repeat=5] table [x=round, y=drift, col sep=comma] {results/E5-disturb-trace-smith-l0.3.csv};
+\addlegendentry{smith}
+\addplot+ [dotted, thick, mark=triangle*, mark repeat=5] table [x=round, y=drift, col sep=comma] {results/E5-disturb-trace-eg-l0.3.csv};
+\addlegendentry{envoy-gateway}
+\addplot+ [densely dotted, mark=diamond*, mark repeat=5] table [x=round, y=drift, col sep=comma] {results/E5-disturb-trace-istio-l0.3.csv};
+\addlegendentry{istiod (krt)}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+Steady-state means per tampering rate λ and the burst-MTTR summary are
+in =results/E5-disturb-steady.csv= and =results/E5-disturb-burst.csv=
+(one burst of B tamperings at round T/2; MTTR = rounds to zero drift,
+-1 = never healed).
+
+** Congestion: the loop behind a throttled client budget
+
+A real controller's writes queue behind its client-side rate limiter
+and behind a congested apiserver, so the watch confirms each correction
+/late/ - a real, tunable feedback dead time on a real apiserver, which
+is exactly the regime the E3 synthetic benchmark predicts trouble in.
+Here the delta-gateway SUT runs with a reduced =--qps= client budget,
+and after convergence a burst of B statuses is tampered at once
+(=congestion.js=). Two loops compared: /reconciler/ (which
+keeps the outstanding correction U alive and re-presents it until the
+watch confirms) and /smith/ (the SmithPredictor, which emits every
+correction exactly once and retires the late echoes by content).
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={SUT client budget [qps]}, ylabel={burst heal time [ms]},
+    grid=major, legend pos=north east, legend style={font=\small}]
+\addplot+ [thick, mark=*] table [x=qps, y=heal_ms, col sep=comma] {results/E5-congestion-reconciler-sum.csv};
+\addlegendentry{reconciler}
+\addplot+ [thick, mark=square*] table [x=qps, y=heal_ms, col sep=comma] {results/E5-congestion-smith-sum.csv};
+\addlegendentry{smith (SmithPredictor)}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+=results/E5-congestion.csv= (phase 5, =congestion_summary.py=) joins
+each point's heal time with the PATCH counts from the request-audit
+log, attributed by user agent: =sut_patches= is what the loop actually
+put on the wire, =per_fix= normalizes by the burst size (1.0 =
+exactly-once). Two readings. The /latency/ one: the smith loop drains
+the burst at the full limiter rate, while the closed loop's re-emitted
+corrections keep re-entering its own actuation path and stretch the
+same heal over a multiple of the time - the echo-storm mechanism,
+measured on a real apiserver. The /count/ one: the closed loop's wire
+duplicates are already suppressed by consumer-side backlog folding and
+no-op elision - framework machinery that re-derives, outside the
+algebra, what the SmithPredictor states inside it; the compensated loop
+needs neither.
+
+** The price of desired state
+
+Symmetric instruments over the convergence grid: the /proc sampler
+(=results/proc.csv=: cumulative CPU ticks and RSS per second, one
+labeled series per grid point) and the plant's request-audit log
+(=results/requests-<point>.log=, one JSON line per API request,
+attributable by user agent). The reading to extract: what the closed
+loop pays over open for the Reconciler (the answer at steady state is
+"nothing measurable" - the correction stream is empty when nothing is
+wrong), and both contenders' CPU/RSS/API-request budgets for the same
+delivered convergence.
+
+** Corners: where recompute genuinely hurts - and where we do
+
+Both systems on the same plant, same driver (=corner.js=).
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.45\textwidth, height=.45\textwidth,
+    xlabel={routes $K$ (one gateway)}, ylabel={route-add -> xDS [ms]},
+    grid=major, legend pos=north west, legend style={font=\footnotesize}]
+\addplot table [x=routes, y=xds_median_ms, col sep=comma] {results/corner-megavhost-reconciler.csv};
+\addlegendentry{reconciler}
+\addplot+ [dashed] table [x=routes, y=xds_median_ms, col sep=comma] {results/corner-megavhost-sotw.csv};
+\addlegendentry{sotw}
+\addplot+ [dotted, thick] table [x=routes, y=xds_median_ms, col sep=comma] {results/corner-megavhost-eg.csv};
+\addlegendentry{envoy-gateway}
+\addplot+ [densely dotted] table [x=routes, y=xds_median_ms, col sep=comma] {results/corner-megavhost-istio.csv};
+\addlegendentry{istiod (krt)}
+\end{loglogaxis}
+\end{tikzpicture}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.45\textwidth, height=.45\textwidth,
+    xlabel={endpoints $E$ per backend}, ylabel={eps-update -> xDS [ms]},
+    grid=major, legend pos=north west, legend style={font=\footnotesize}]
+\addplot table [x=endpoints, y=xds_median_ms, col sep=comma] {results/corner-endpointheavy-reconciler.csv};
+\addlegendentry{reconciler}
+\addplot+ [dashed] table [x=endpoints, y=xds_median_ms, col sep=comma] {results/corner-endpointheavy-sotw.csv};
+\addlegendentry{sotw}
+\addplot+ [dotted, thick] table [x=endpoints, y=xds_median_ms, col sep=comma] {results/corner-endpointheavy-eg.csv};
+\addlegendentry{envoy-gateway}
+\addplot+ [densely dotted] table [x=endpoints, y=xds_median_ms, col sep=comma] {results/corner-endpointheavy-istio.csv};
+\addlegendentry{istiod (krt)}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+The honest limit: when the touched artifact is itself O(N) - one vhost
+with K routes, one load assignment with E endpoints - incremental
+convergence degrades to the artifact size and the recompute
+architectures catch up.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={endpoint updates per second}, ylabel={delivery latency [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot table [x=rate, y=lat_median_ms, col sep=comma] {results/corner-saturation-reconciler.csv};
+\addlegendentry{reconciler (median)}
+\addplot+ [densely dashed] table [x=rate, y=lat_p95_ms, col sep=comma] {results/corner-saturation-reconciler.csv};
+\addlegendentry{reconciler (p95)}
+\addplot+ [dashed] table [x=rate, y=lat_median_ms, col sep=comma] {results/corner-saturation-sotw.csv};
+\addlegendentry{sotw (median)}
+\addplot+ [dotted, thick] table [x=rate, y=lat_median_ms, col sep=comma] {results/corner-saturation-eg.csv};
+\addlegendentry{envoy-gateway (median)}
+\addplot+ [densely dotted] table [x=rate, y=lat_median_ms, col sep=comma] {results/corner-saturation-istio.csv};
+\addlegendentry{istiod (krt, median)}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+Saturation: sustained endpoint churn at a fixed rate; the knee where
+latency diverges (and the =lost= column goes non-zero) is the maximum
+sustainable churn - the elevator-pitch scenario.
+
+*Amplification* (=corner-amplification-{annotation,label}-<arch>.csv=):
+the dependency-granularity probe. One gateway admits N routes from a
+label-selected namespace; a field of that namespace churns at a fixed
+rate while an endpoint-update probe measures interference and the /proc
+sampler prices the recompute. Two variants: an /annotation/ (outside
+every gateway semantic) and a /label/ (inside the admission selector's
+input, though never matched by it). The smoke already shows the
+two-sided truth. Annotation churn: delta-gateway pays exactly zero (the
+delta dies at the input projection - the algebra's field granularity),
+istiod pays a small recompute-then-suppress cost per event (krt
+invalidates at object granularity, then equality-compares). Label
+churn: istiod is unaffected (krt's dependency filters are
+membership-semantic - a label change that does not change selector
+membership invalidates nothing), while delta-gateway's namespace⋈routes
+join fans the changed namespace document out to all N route rows before
+downstream projections cancel it - probe latency 8 ms -> 681 ms at
+N=500, rate 20/s. Hand-rolled dependency tracking is /well/-rolled
+exactly where its author thought to filter, and blind where they did
+not; the algebraic pipeline is free wherever a projection kills the
+delta, and pays the join fan-out where it does not - with the fix being
+a principled query rewrite (evaluate selectors against namespaces
+before the fan-out join), not a new cache.
+
+** The price of the real API path (ablation)
+
+The same controller hosted in-process on the embedded API server
+(=ablation.js=: real watch/patch machinery and delta-ADS data plane,
+no etcd, no HTTP) against the envtest grid above. The delta is the
+cost of the real Kubernetes API path - apiserver + etcd round trips on
+the watch, patch and echo legs. Compare
+=results/E5-ablation-multiregion-reconciler-*.csv= against the
+same-changeset grid CSVs; both carry identical columns.
+
+* Appendix
+
+** The SotW ablation
+
+The same declarative program compiled to full recompute
+(InputIntegrators + OutputDifferentiators): envoy-gateway's "SotW
+compute, delta ship" architecture reproduced inside our own engine, on
+the same plant. Matching shape and slope pins envoy-gateway's curves
+on its architecture rather than its implementation.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={regions $R$}, ylabel={median convergence [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [dashed, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-sotw-region-add.csv};
+\addlegendentry{sotw: region-add -> xDS}
+\addplot+ [dashed, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-sotw-endpoint-update.csv};
+\addlegendentry{sotw: endpoint-update -> xDS}
+\addplot+ [dotted, thick, error bars/.cd, y dir=plus, y explicit] table [x=regions, y=xds_median_ms, y error expr=\thisrow{xds_p95_ms}-\thisrow{xds_median_ms}, col sep=comma] {results/E5-multiregion-eg-region-add.csv};
+\addlegendentry{envoy-gateway: region-add -> xDS}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Fan-out: time-to-last-client vs. client count
+
+On the embedded stack (the API plant is not in the measured path).
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={delta-ADS clients $C$}, ylabel={endpoint-update -> last client [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot table [x=clients, y=xds_last_median_ms, col sep=comma] {results/E5-fanout-endpoint-update.csv};
+\addlegendentry{median}
+\addplot+ [dashed] table [x=clients, y=xds_last_p95_ms, col sep=comma] {results/E5-fanout-endpoint-update.csv};
+\addlegendentry{p95}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+The server keeps per-stream delta state and broadcasts the full
+resource set to every client (no per-node scoping - a known roadmap
+item), so this is worst-case fan-out.
+
+** Reconnect storm
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={clients $C$ joining}, ylabel={time to all synced [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot table [x=clients, y=sync_ms, col sep=comma] {results/E5-storm-simultaneous.csv};
+\addlegendentry{simultaneous}
+\addplot+ [dashed] table [x=clients, y=sync_ms, col sep=comma] {results/E5-storm-staggered.csv};
+\addlegendentry{staggered (50 ms)}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+A dataplane fleet restart (all Envoys reconnecting at once) is a real
+operational event for per-gateway dataplane deployments; each joining
+client costs the server one full initial sync.
+
+* Reading the numbers
+
+The full sweep on this harness is pending on the server; the entries
+below record what the harness bring-up already established
+(laptop smoke, R ≤ 3, reps=2 - magnitudes indicative only).
+
+- *Apples to apples, at last*: at R=3, region-add lands at the
+  delta-ADS client in 68 ms (reconciler) vs. 63 ms (envoy-gateway), with
+  status write-backs at 78 vs. 70 ms - the same plant, the same
+  driver, the same clock, actual delivery on both. The separations
+  this experiment exists to show (flat-vs-O(N), saturation) live at
+  scale, not at R=3; the small-R agreement is the sanity check that
+  the harness measures the same thing on both sides.
+- *Envoy-gateway does not reject status disturbances*: under λ=1
+  tampering the closed loop holds drift at 0 (every sample), while
+  envoy-gateway drifts exactly like the open-loop line (mean 4.3 of 8
+  objects in the smoke) - its watches react to spec/generation
+  changes, so a tampered status sits until something else touches the
+  object. The state of practice is an open loop on the status side.
+- *The real API path found a real bug*: on the embedded plant the
+  reconciler's re-emitted corrections were absorbed by sub-millisecond
+  echoes; on the real apiserver they queued behind the client rate
+  limiter - with the canceling echo stuck at the back of the same
+  queue - draining ~2000 no-op requests over 40 s after a sock-shop
+  preload. Consumer-side backlog folding (Z-set addition over the
+  queued deltas) plus no-op merge-patch elision in the patcher cut
+  that preload to 945 ms and ~200 requests. The harness paid for
+  itself before producing a single figure.
+- The embedded-vs-envtest delta (the API-path price) is visible
+  already in the smoke: endpoint-update 3.4 ms embedded vs. ~8-11 ms
+  through the plant.
+- *Hand-rolled vs. principled incrementality*: istiod's krt layer is
+  genuinely incremental - statuses land in ~13 ms and, with the push
+  debounce disabled, endpoint updates reach the wire in ~7 ms, squarely
+  in delta-gateway's class at small scale. The benchmark therefore runs
+  istiod at its best case (debounce off; as deployed, istiod guards the
+  push pipeline with a fixed 100 ms debounce - a churn floor the stock
+  configuration pays on every delta; ~ISTIO_DEBOUNCE~ restores it). And
+  unlike envoy-gateway, istiod *heals* tampered statuses (drift 0 in
+  the smoke): the hand-rolled incremental loop is closed on the status
+  side. What separates hand-rolled from principled is then not the
+  small-scale constant but where the incrementality breaks: the
+  dependency granularity (see the amplification corner) and the
+  batching istio needs as a safety net where the algebra needs none.
