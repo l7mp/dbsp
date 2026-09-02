@@ -3,6 +3,8 @@ package dbsp
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/expression"
@@ -54,6 +56,32 @@ func (e *intExpr) Evaluate(ctx *expression.EvalContext) (any, error) {
 	value, err := e.operand.Evaluate(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// @int is the explicit cast site, so strings get a best-effort parse
+	// ladder beyond the strict AsInt coercion: decimal first, then
+	// hexadecimal (with or without a 0x prefix, e.g. a @hash result), then
+	// a float literal truncated toward zero. Values that overflow int64
+	// are an error.
+	if str, ok := value.(string); ok {
+		str = strings.TrimSpace(str)
+		i, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			hexStr := str
+			if len(hexStr) > 2 && (hexStr[:2] == "0x" || hexStr[:2] == "0X") {
+				hexStr = hexStr[2:]
+			}
+			i, err = strconv.ParseInt(hexStr, 16, 64)
+		}
+		if err != nil {
+			if f, ferr := strconv.ParseFloat(str, 64); ferr == nil {
+				i, err = int64(f), nil
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("@int: cannot convert string %q to int", str)
+		}
+		ctx.Logger().V(8).Info("eval", "op", "@int", "result", i)
+		return i, nil
 	}
 	i, err := AsInt(value)
 	if err != nil {

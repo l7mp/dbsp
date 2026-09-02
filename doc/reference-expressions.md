@@ -120,6 +120,11 @@ Related examples:
 "@bool": "$.spec.enabled"
 ```
 
+`@int` gives strings a best-effort parse: decimal first, then hexadecimal (bare or `0x`-prefixed),
+then a float literal truncated toward zero. A value that overflows a 64-bit integer (for instance a
+full 16-character hash with the high bit set) is an error, as is a string that parses in no
+base. Likewise, `@float` and `@bool` perform best-effort conversion to the corresponding type.
+
 ### `@list`
 
 Builds a list by evaluating each element.

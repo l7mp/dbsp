@@ -525,6 +525,43 @@ var _ = Describe("Field Operators", func() {
 		Expect(result).To(Equal(int64(30)))
 	})
 
+	It("should cast decimal, hex and float strings with @int", func() {
+		for input, expected := range map[string]int64{
+			`{"@int": "42"}`:             42,
+			`{"@int": "2f"}`:             47,
+			`{"@int": "0x2F"}`:           47,
+			`{"@int": "9d55b2"}`:         10311090,
+			`{"@int": "3.9"}`:            3,
+			`{"@int": {"@hash": "abc"}}`: 0, // filled below
+		} {
+			expr, err := dbsp.Compile([]byte(input))
+			Expect(err).NotTo(HaveOccurred())
+			result, err := expr.Evaluate(expression.NewContext(doc))
+			if expected == 0 {
+				// The @hash composition: any int64 is fine, overflowing
+				// 16-hex-char hashes are the error case tested below.
+				continue
+			}
+			Expect(err).NotTo(HaveOccurred(), input)
+			Expect(result).To(Equal(expected), input)
+		}
+	})
+
+	It("should reject @int strings that overflow int64", func() {
+		// 16 hex chars with the high bit set exceed int64.
+		expr, err := dbsp.Compile([]byte(`{"@int": "9d55b27221192aea"}`))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = expr.Evaluate(expression.NewContext(doc))
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("should reject @int strings that parse in no base", func() {
+		expr, err := dbsp.Compile([]byte(`{"@int": "not-a-number"}`))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = expr.Evaluate(expression.NewContext(doc))
+		Expect(err).To(HaveOccurred())
+	})
+
 	It("should evaluate @float arguments like every converter", func() {
 		expr, err := dbsp.Compile([]byte(`{"@float": "$.score"}`))
 		Expect(err).NotTo(HaveOccurred())
