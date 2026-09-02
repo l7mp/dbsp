@@ -22,9 +22,9 @@ func rawJSON(s string) *json.RawMessage {
 
 func groupPtr(s string) *string { return &s }
 
-var _ = Describe("Assemble", func() {
-	It("jackets a transform-less pipeline: snapshot semantics on the delta bus", func() {
-		rt := runtime.NewRuntime("jackettest", logr.Discard())
+var _ = Describe("Load", func() {
+	It("adapts a transform-less pipeline: snapshot semantics on the delta bus", func() {
+		rt := runtime.NewRuntime("adaptertest", logr.Discard())
 		reg := runtime.NewConnectorRegistry()
 		Expect(reg.Register(runtime.ConnectorFactory{
 			Name:   "fake",
@@ -46,7 +46,7 @@ var _ = Describe("Assemble", func() {
 				Pipeline: rawJSON(`[[{"@inputs": ["A"]}, "@distinct", {"@output": "Out"}]]`),
 			}},
 		}
-		Expect(rt.Assemble(op, reg)).To(Succeed())
+		Expect(rt.Load(op, reg)).To(Succeed())
 
 		sub := rt.NewSubscriber()
 		sub.Subscribe("Out")
@@ -65,9 +65,9 @@ var _ = Describe("Assemble", func() {
 		Eventually(sub.GetChannel(), time.Second).Should(Receive(&out))
 		Expect(out.Data.Lookup(doc.Hash())).To(Equal(zset.Weight(1)))
 
-		// A duplicate assertion changes nothing distinct: the jacketed
+		// A duplicate assertion changes nothing distinct: the adapted
 		// circuit recomputes over the input integral and differentiates
-		// the unchanged result away. Un-jacketed snapshot-on-deltas
+		// the unchanged result away. Un-adapted snapshot-on-deltas
 		// would emit the document a second time.
 		dup := zset.New()
 		dup.Insert(doc, 1)

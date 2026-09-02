@@ -94,7 +94,7 @@ func (v *VM) runtimeCreate(call goja.FunctionCall) (goja.Value, error) {
 			return nil, fmt.Errorf("runtime.create spec: %w", err)
 		}
 		v.compileStarted = true
-		if err := rt.Assemble(&op, reg); err != nil {
+		if err := rt.Load(&op, reg); err != nil {
 			return nil, fmt.Errorf("runtime.create: %w", err)
 		}
 		inst.rawSpec = raw
@@ -217,6 +217,7 @@ func (inst *runtimeInstance) jsObject() (*goja.Object, error) {
 	_ = subObj.Set("once", v.wrap(inst.subscribeOnce))
 	_ = obj.Set("observe", v.wrap(inst.observe))
 	_ = obj.Set("onError", v.wrap(inst.onError))
+	_ = obj.Set("stats", v.wrap(inst.stats))
 
 	// The runtime-scoped compile family: handles install into this
 	// runtime on commit.

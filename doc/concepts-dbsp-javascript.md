@@ -458,7 +458,7 @@ In a spec, streams couple the three sets by name: a source or target attaches to
 `as` names (defaulting to the resource kind), and a circuit lists its `inputs` and `outputs`
 (defaulting to the single source or target stream). A stream produced and consumed only by
 circuits is an internal wire with no binding at all. An empty `transforms` list compiles the
-circuit to the jacketed snapshot execution ∫ -> Q -> D; see the
+circuit to the snapshot-adapted execution ∫ -> Q -> D; see the
 [transforms guide](/doc/concepts-transforms.md).
 
 ### `runtime.onError(fn)`

@@ -14,7 +14,7 @@ const { use, collector, byName, upsert, retract, replace } = require("./lib/test
 const fixtures = require("./lib/fixtures.js");
 
 // The suite runs the pipeline in either execution mode: the default
-// incremental one, or --mode sotw, the jacketed snapshot execution. The
+// incremental one, or --mode sotw, the snapshot-adapted execution. The
 // cases are identical: the two compilations are the same semantics.
 const argv = minimist(process.argv.slice(2));
 const SOTW = String(argv.mode || "") === "sotw";

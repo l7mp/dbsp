@@ -69,7 +69,7 @@ func (v *VM) aggregateCompile(rt *dbspruntime.Runtime, call goja.FunctionCall) (
 		srcKind: "pipeline", src: pipelineJSON,
 		bindIn: inputs, bindOut: outputs, specName: compileName,
 	}
-	if err := validateCircuit(h.c); err != nil {
+	if err := dbspruntime.ValidateCircuit(h.c); err != nil {
 		return nil, fmt.Errorf("aggregate.compile: %w", err)
 	}
 	return h.jsObject(), nil

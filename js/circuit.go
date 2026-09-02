@@ -16,14 +16,13 @@ import (
 )
 
 type circuitHandle struct {
-	c       *circuit.Circuit
-	query   *compiler.Query
-	vm      *VM
-	rt      *dbspruntime.Runtime
-	proc    *dbspruntime.Circuit
-	obsFn   goja.Callable
-	applied []transform.TransformerType
-	seq     int // auto-id counter for hand-built nodes
+	c     *circuit.Circuit
+	query *compiler.Query
+	vm    *VM
+	rt    *dbspruntime.Runtime
+	proc  *dbspruntime.Circuit
+	obsFn goja.Callable
+	seq   int // auto-id counter for hand-built nodes
 
 	// The handle's serialized form, printed by spec(): the program source
 	// (pipeline or sql), the topic bindings, and the transforms applied.
@@ -69,25 +68,9 @@ func (h *circuitHandle) specValue() map[string]any {
 	return doc
 }
 
-// validateCircuit is the single well-formedness validator every circuit-
-// producing path funnels through: every .transform() validates its result,
-// .validate() is the explicit check, and .commit() validates before
-// installing. It returns one formatted error, or nil.
-func validateCircuit(c *circuit.Circuit) error {
-	errs := c.Validate()
-	if len(errs) == 0 {
-		return nil
-	}
-	messages := make([]string, 0, len(errs))
-	for _, err := range errs {
-		messages = append(messages, err.Error())
-	}
-	return fmt.Errorf("circuit validation failed: %s", strings.Join(messages, "; "))
-}
-
 func (h *circuitHandle) hasApplied(typ transform.TransformerType) bool {
-	for _, t := range h.applied {
-		if t == typ {
+	for _, t := range h.transformSpecs {
+		if t.Name == string(typ) {
 			return true
 		}
 	}
@@ -112,94 +95,81 @@ func parseTransformEntry(arg goja.Value) (transform.TransformSpec, error) {
 	return e, nil
 }
 
-// commit validates the circuit and installs it into the runtime, replacing
-// any previously installed processor. It is the single install point: every
-// other verb (compile, .transform(), .validate()) leaves the handle offline,
-// so a circuit starts running exactly when the script says so.
-func (h *circuitHandle) commit() error {
-	if err := validateCircuit(h.c); err != nil {
+// parseCommitOptions decodes the optional commit/validate argument
+// {inputs: [...], outputs: [...]}: the positive snapshot-adapter lists.
+func parseCommitOptions(call goja.FunctionCall) (commitOptions, error) {
+	var opts commitOptions
+	if len(call.Arguments) == 0 {
+		return opts, nil
+	}
+	arg := call.Argument(0)
+	if goja.IsUndefined(arg) || goja.IsNull(arg) {
+		return opts, nil
+	}
+	data, err := json.Marshal(arg.Export())
+	if err != nil {
+		return opts, fmt.Errorf("commit options: %w", err)
+	}
+	if err := json.Unmarshal(data, &opts); err != nil {
+		return opts, fmt.Errorf("commit options: %w", err)
+	}
+	return opts, nil
+}
+
+// commitOptions are the parsed commit(opts) arguments: the positive
+// adapter lists. An absent list keeps the engine default (adapt every
+// boundary of a compiled circuit; none of a hand-built one).
+type commitOptions struct {
+	Inputs  *[]string `json:"inputs"`
+	Outputs *[]string `json:"outputs"`
+}
+
+// commit hands the pristine circuit, the accumulated transform entries
+// and the adapter selection to the engine's single install point.
+func (h *circuitHandle) commit(opts commitOptions, dryRun bool) error {
+	proc, err := h.rt.CommitCircuit(h.c.Name(), h.query, h.transformSpecs, dbspruntime.CommitOptions{
+		AdaptInputs:  opts.Inputs,
+		AdaptOutputs: opts.Outputs,
+		// A non-empty srcKind marks the pipeline/SQL origin: born
+		// snapshot, defaulting to full adaptation.
+		Compiled: h.srcKind != "",
+		Replace:  h.proc,
+		DryRun:   dryRun,
+		Logger:   h.vm.logger,
+	})
+	if err != nil {
 		return err
 	}
-
-	query := *h.query
-	query.Circuit = h.c
-
-	proc, err := dbspruntime.NewCircuit(h.c.Name(), h.rt, &query, h.vm.logger)
-	if err != nil {
-		return fmt.Errorf("runtime circuit: %w", err)
-	}
-
-	if h.proc != nil {
-		h.rt.Stop(h.proc)
-	}
-
-	if err := h.rt.Add(proc); err != nil {
-		return fmt.Errorf("runtime add circuit: %w", err)
+	if dryRun {
+		return nil
 	}
 
 	h.proc = proc
-	if err := h.installObserver(); err != nil {
-		return err
-	}
-
-	return nil
+	return h.installObserver()
 }
 
-// applyTransformer runs a transformer over the circuit and validates the
-// result. It does not install: the transformed circuit reaches the runtime on
-// the next commit. A failed transform leaves the handle on its previous
-// circuit, so the transform chain is all-or-nothing.
-func (h *circuitHandle) applyTransformer(label string, t transform.Transformer) error {
-	result, err := t.Transform(h.c)
-	if err != nil {
-		return fmt.Errorf("transform %s: %w", label, err)
-	}
-
-	if err := validateCircuit(result); err != nil {
-		return fmt.Errorf("transform %s: %w", label, err)
-	}
-
-	h.c = result
-	return nil
-}
-
-func (h *circuitHandle) doTransform(entry transform.TransformSpec) error {
-	spec, err := entry.Spec()
-	if err != nil {
+// recordTransform validates and records one transform entry: the entry's
+// arguments must parse and the accumulated set must form a valid chain
+// (unknown names and duplicates are rejected here, across calls too). The
+// chain is applied, in canonical order, at commit.
+func (h *circuitHandle) recordTransform(entry transform.TransformSpec) error {
+	if _, err := entry.Spec(); err != nil {
 		return fmt.Errorf("transform: %w", err)
 	}
-
-	// The Smith compensator is a snapshot-side construction: the distinct
-	// it injects must be compiled by the Incrementalizer, so applying it to
-	// an already-incremental circuit would run the distinct on delta
-	// streams.
-	if spec.Type == transform.SmithPredictor && h.hasApplied(transform.Incrementalizer) {
-		return fmt.Errorf("transform %s: the circuit is already incremental", spec.Type)
-	}
-
-	t, err := transform.New(spec.Type, spec.Args...)
-	if err != nil {
+	specs := append(append([]transform.TransformSpec(nil), h.transformSpecs...), entry)
+	if _, err := transform.NewChainFromSpecs(specs); err != nil {
 		return fmt.Errorf("transform: %w", err)
 	}
-
-	if err := h.applyTransformer(string(spec.Type), t); err != nil {
-		return err
-	}
-
-	h.applied = append(h.applied, spec.Type)
-	h.transformSpecs = append(h.transformSpecs, entry)
+	h.transformSpecs = specs
 	return nil
 }
 
-// doTransformChain applies a set of transform entries as one atomic step,
-// in canonical order regardless of the order given (transform.NewChain owns
-// the ordering). The circuit swap is atomic: all transforms apply, or none.
+// doTransformChain records a list of transform entries; commit builds
+// the canonical chain over everything recorded.
 func (h *circuitHandle) doTransformChain(raw []any) error {
 	if len(raw) == 0 {
 		return fmt.Errorf("circuit.transform([...]) requires at least one transform")
 	}
-
-	entries := make([]transform.TransformSpec, 0, len(raw))
 	for i, el := range raw {
 		if _, ok := el.(string); ok {
 			return fmt.Errorf("transform list entry %d: expected a {name, ...} object, got a string", i)
@@ -212,28 +182,10 @@ func (h *circuitHandle) doTransformChain(raw []any) error {
 		if err := json.Unmarshal(data, &entry); err != nil {
 			return fmt.Errorf("transform list entry %d: %w", i, err)
 		}
-		entries = append(entries, entry)
-	}
-
-	ch, err := transform.NewChainFromSpecs(entries)
-	if err != nil {
-		return fmt.Errorf("transform: %w", err)
-	}
-
-	for _, s := range ch.Specs() {
-		if s.Type == transform.SmithPredictor && h.hasApplied(transform.Incrementalizer) {
-			return fmt.Errorf("transform %s: the circuit is already incremental", s.Type)
+		if err := h.recordTransform(entry); err != nil {
+			return fmt.Errorf("transform list entry %d: %w", i, err)
 		}
 	}
-
-	if err := h.applyTransformer("Chain", ch); err != nil {
-		return err
-	}
-
-	for _, s := range ch.Specs() {
-		h.applied = append(h.applied, s.Type)
-	}
-	h.transformSpecs = append(h.transformSpecs, entries...)
 	return nil
 }
 
@@ -361,7 +313,7 @@ func (h *circuitHandle) jsObject() *goja.Object {
 			return nil, err
 		}
 
-		if err := h.doTransform(entry); err != nil {
+		if err := h.recordTransform(entry); err != nil {
 			return nil, err
 		}
 		return obj, nil
@@ -419,14 +371,22 @@ func (h *circuitHandle) jsObject() *goja.Object {
 	}))
 
 	_ = obj.Set("commit", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
-		if err := h.commit(); err != nil {
+		opts, err := parseCommitOptions(call)
+		if err != nil {
+			return nil, err
+		}
+		if err := h.commit(opts, false); err != nil {
 			return nil, err
 		}
 		return obj, nil
 	}))
 
 	_ = obj.Set("validate", h.vm.wrap(func(call goja.FunctionCall) (goja.Value, error) {
-		if err := validateCircuit(h.c); err != nil {
+		opts, err := parseCommitOptions(call)
+		if err != nil {
+			return nil, err
+		}
+		if err := h.commit(opts, true); err != nil {
 			return nil, err
 		}
 		return obj, nil

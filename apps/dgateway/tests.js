@@ -16,7 +16,7 @@ const { describe, assert } = require("testing");
 const minimist = require("minimist");
 
 // The suite runs the pipeline in either execution mode: the default
-// incremental one, or --mode sotw, the jacketed snapshot execution. The
+// incremental one, or --mode sotw, the snapshot-adapted execution. The
 // cases are identical: the two compilations are the same semantics.
 const argv = minimist(process.argv.slice(2));
 const SOTW = String(argv.mode || "") === "sotw";

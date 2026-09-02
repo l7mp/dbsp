@@ -83,7 +83,7 @@ function buildOperatorSpec(options = {}) {
   });
 
   // State-of-the-world mode runs the same programs with empty transform
-  // chains: the engine compiles them to the jacketed snapshot execution
+  // chains: the engine commits them with the snapshot adapters
   // (integrators on the inputs, differentiation on the outputs), so the
   // bus still carries deltas and the connectors are the same plain ones.
   // The loop transforms are edge-world constructions and stay off.

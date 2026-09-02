@@ -92,12 +92,13 @@ func (v *VM) sqlCompile(rt *dbspruntime.Runtime, call goja.FunctionCall) (goja.V
 		return nil, fmt.Errorf("sql.compile: marshal query: %w", err)
 	}
 	h := &circuitHandle{
+
 		rt: rt,
 		c:  compiled.Circuit, query: compiled, vm: v,
 		srcKind: "sql", src: srcJSON,
 		bindOut: []aggcompiler.Binding{{Name: binding.Name, Logical: binding.Logical}},
 	}
-	if err := validateCircuit(h.c); err != nil {
+	if err := dbspruntime.ValidateCircuit(h.c); err != nil {
 		return nil, fmt.Errorf("sql.compile: %w", err)
 	}
 	return h.jsObject(), nil

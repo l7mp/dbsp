@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/l7mp/dbsp/engine/circuit"
 	aggcompiler "github.com/l7mp/dbsp/engine/compiler/aggregation"
 	"github.com/l7mp/dbsp/engine/spec"
-	"github.com/l7mp/dbsp/engine/transform"
 )
 
-// Assemble populates the runtime from its serialized spec: every
-// circuit's program is compiled and transformed, circuits and target
+// Load populates the runtime from its serialized spec: every circuit's
+// program is compiled and committed (CommitCircuit places the snapshot
+// adapters and applies the transform chain), circuits and target
 // consumers are constructed with their subscriptions in place, and
 // sources are built but not producing. Nothing flows until the runtime
 // runs (Start). The runtime must be named: the name keys the runtime's own
@@ -19,8 +18,8 @@ import (
 //
 // Each stream materializes as one topic named by the stream. reg routes
 // the bindings; nil means no connectors, so a spec with bindings needs a
-// registry while a bindings-free one assembles without.
-func (rt *Runtime) Assemble(op *spec.RuntimeSpec, reg *ConnectorRegistry) error {
+// registry while a bindings-free one loads without.
+func (rt *Runtime) Load(op *spec.RuntimeSpec, reg *ConnectorRegistry) error {
 	if err := op.Validate(); err != nil {
 		return err
 	}
@@ -107,7 +106,7 @@ func (rt *Runtime) Assemble(op *spec.RuntimeSpec, reg *ConnectorRegistry) error 
 		for _, s := range outputs {
 			produced[s] = true
 		}
-		if err := rt.assembleCircuit(c, inputs, outputs); err != nil {
+		if err := rt.loadCircuit(c, inputs, outputs); err != nil {
 			return fmt.Errorf("circuit %q: %w", c.Name, err)
 		}
 	}
@@ -162,47 +161,6 @@ func (rt *Runtime) Assemble(op *spec.RuntimeSpec, reg *ConnectorRegistry) error 
 	return nil
 }
 
-// jacketCircuit wraps a compiled snapshot program for the delta bus:
-// every input feeds through an integrator and every output through a
-// differentiator, turning Q into ∫ -> Q -> D.
-func jacketCircuit(c *circuit.Circuit) error {
-	for _, in := range c.Inputs() {
-		intID := in.ID + "-sotw-integrate"
-		if err := c.AddNode(circuit.Integrate(intID)); err != nil {
-			return err
-		}
-		for _, e := range append([]*circuit.Edge(nil), c.EdgesFrom(in.ID)...) {
-			if err := c.RemoveEdge(e.From, e.To, e.Port); err != nil {
-				return err
-			}
-			if err := c.AddEdge(circuit.NewEdge(intID, e.To, e.Port)); err != nil {
-				return err
-			}
-		}
-		if err := c.AddEdge(circuit.NewEdge(in.ID, intID, 0)); err != nil {
-			return err
-		}
-	}
-	for _, out := range c.Outputs() {
-		diffID := out.ID + "-sotw-differentiate"
-		if err := c.AddNode(circuit.Differentiate(diffID)); err != nil {
-			return err
-		}
-		for _, e := range append([]*circuit.Edge(nil), c.EdgesTo(out.ID)...) {
-			if err := c.RemoveEdge(e.From, e.To, e.Port); err != nil {
-				return err
-			}
-			if err := c.AddEdge(circuit.NewEdge(e.From, diffID, e.Port)); err != nil {
-				return err
-			}
-		}
-		if err := c.AddEdge(circuit.NewEdge(diffID, out.ID, 0)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // streamName is the stream a binding feeds or consumes: the explicit
 // `as`, defaulting to the resource kind.
 func streamName(as, kind string) string {
@@ -212,21 +170,9 @@ func streamName(as, kind string) string {
 	return kind
 }
 
-func validateCircuit(c *circuit.Circuit) error {
-	errs := c.Validate()
-	if len(errs) == 0 {
-		return nil
-	}
-	messages := make([]string, 0, len(errs))
-	for _, err := range errs {
-		messages = append(messages, err.Error())
-	}
-	return fmt.Errorf("circuit validation failed: %s", strings.Join(messages, "; "))
-}
-
-// assembleCircuit compiles one circuit over its streams, applies its
-// transform chain, and adds it to the runtime.
-func (rt *Runtime) assembleCircuit(c *spec.CircuitSpec, inputs, outputs []string) error {
+// loadCircuit compiles one circuit over its streams and commits it:
+// CommitCircuit applies the transform chain and the snapshot adapters.
+func (rt *Runtime) loadCircuit(c *spec.CircuitSpec, inputs, outputs []string) error {
 	if c.Pipeline == nil {
 		return fmt.Errorf("only pipeline programs are supported")
 	}
@@ -244,54 +190,6 @@ func (rt *Runtime) assembleCircuit(c *spec.CircuitSpec, inputs, outputs []string
 	if err != nil {
 		return err
 	}
-	compiled.Circuit.SetName(c.Name)
-	if err := validateCircuit(compiled.Circuit); err != nil {
-		return err
-	}
-
-	// A chain without the Incrementalizer asks for snapshot execution:
-	// the program runs non-incrementally on the delta bus as ∫ -> Q -> D.
-	// The input integrators hold the full current state (a silent input's
-	// integral simply stands, so multi-input steps are always complete),
-	// and the output differentiation emits the change of the recomputed
-	// result, deletions included. With the Incrementalizer the program
-	// compiles to Q^Δ instead; the two are the same semantics by the DBSP
-	// equation Q^Δ = D ∘ Q ∘ ∫.
-	incremental := false
-	for _, t := range c.Transforms {
-		if t.Name == "Incrementalizer" {
-			incremental = true
-		}
-	}
-	if !incremental {
-		if err := jacketCircuit(compiled.Circuit); err != nil {
-			return err
-		}
-		if err := validateCircuit(compiled.Circuit); err != nil {
-			return err
-		}
-	}
-
-	transformed := compiled.Circuit
-	if len(c.Transforms) > 0 {
-		chain, err := transform.NewChainFromSpecs(c.Transforms)
-		if err != nil {
-			return fmt.Errorf("transform: %w", err)
-		}
-		transformed, err = chain.Transform(compiled.Circuit)
-		if err != nil {
-			return fmt.Errorf("transform: %w", err)
-		}
-		if err := validateCircuit(transformed); err != nil {
-			return fmt.Errorf("transform: %w", err)
-		}
-	}
-
-	query := *compiled
-	query.Circuit = transformed
-	proc, err := NewCircuit(c.Name, rt, &query, rt.Logger())
-	if err != nil {
-		return fmt.Errorf("runtime circuit: %w", err)
-	}
-	return rt.Add(proc)
+	_, err = rt.CommitCircuit(c.Name, compiled, c.Transforms, CommitOptions{Compiled: true})
+	return err
 }

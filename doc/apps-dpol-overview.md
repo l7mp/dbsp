@@ -24,7 +24,7 @@ moment the violation clears. The code lives in `apps/dpolicy/`.
 ## Modes
 
 Like Δ-gateway, the control loop is selectable with `--mode`: `reconciler` (the closed loop,
-default), `open`, and `smith` (dead-time compensated), and `sotw` (the jacketed snapshot
+default), `open`, and `smith` (dead-time compensated), and `sotw` (the snapshot-adapted
 execution, the same programs with empty transform chains). The pipelines are identical in every
 mode.
 
