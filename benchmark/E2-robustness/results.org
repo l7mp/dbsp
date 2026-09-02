@@ -1,0 +1,165 @@
+#+TITLE: E2 - State drift under plant disturbance
+#+OPTIONS: toc:nil num:t
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS: [11pt]
+#+LATEX_HEADER: \usepackage[margin=2.2cm]{geometry}
+#+LATEX_HEADER: \usepackage{pgfplots}
+#+LATEX_HEADER: \pgfplotsset{compat=1.17, log ticks with fixed point}
+#+LATEX_HEADER: \usepackage{booktabs}
+
+* What we measure, and why
+
+Speed is easy to sell; robustness needs a number. Ours is *drift*: the
+Z-set distance $\lVert Y_U - D \rVert$ between the plant content and the
+desired state (sum of absolute weights: a missing object counts 1, a
+spurious object 1, a corrupted object 2). The desired state is known
+analytically - the fixtures are synthetic, so an oracle computes the
+correct endpoints documents from the current inputs in closed form.
+
+The controller is the pair-case endpoints pipeline (N services, 1:1
+pods). Every round: one pod churns (the background workload that keeps
+each architecture doing work), the controller reacts, then a seeded
+noise source tampers with the plant behind the controller's back - 
+deleting a random object (a lost or reverted write), corrupting one (an
+out-of-band edit), or inserting a spurious one (an unmanaged leftover) - 
+at rate $\lambda$ disturbances/round. Drift is sampled at the end of
+every round.
+
+#+begin_example
+              +-----------------------+  deltas/snapshots/corrections
+   churn ---> |  endpoints controller | -------> +---------+
+   (pods)     +-----------------------+  apply   |  plant  | <-- noise W
+                          ^                      +---------+    (delete/
+                          |        observed (watch)   |          corrupt/
+                          +--------- reconciled only -+          insert)
+                                                       drift = |plant - oracle|
+#+end_example
+
+The disturbance is /reported/ to the controller only in reconciled mode
+(that is the point of the watch); SotW never sees it but overwrites
+everything on its next emission; the open-loop incremental controller
+never sees it and never overwrites.
+
+Predictions from the loop model:
+
+- *SotW*: drift is wiped by the next full write - a sawtooth bounded by
+  one round's noise, mean $\approx \lambda \cdot \text{(sampling offset)}$,
+  never accumulating.
+- *incremental (open loop)*: every disturbance in the blind spot stays;
+  drift grows without bound, slope $\propto \lambda$ (minus the
+  disturbances that later churn happens to overwrite).
+- *reconciled*: the watch report triggers a correction the same round - 
+  the deadbeat loop rejects the disturbance in one step; sampled drift
+  stays 0.
+
+* Results
+
+** Drift over time ($\lambda = 0.2$)
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.92\textwidth, height=.5\textwidth,
+    xlabel={round}, ylabel={drift $\lVert Y_U - D\rVert$},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [mark=none, thick] table [x=round, y=drift, col sep=comma] {results/E2-trace-incremental-l0.2.csv};
+\addlegendentry{incremental (open loop)}
+\addplot+ [mark=none, thick] table [x=round, y=drift, col sep=comma] {results/E2-trace-sotw-l0.2.csv};
+\addlegendentry{SotW}
+\addplot+ [mark=none, thick] table [x=round, y=drift, col sep=comma] {results/E2-trace-reconciled-l0.2.csv};
+\addlegendentry{incremental desired-state}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Steady-state drift vs. noise intensity
+
+Mean drift over the second half of each trace, per rate.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={noise rate $\lambda$ [disturbances/round]},
+    ylabel={mean steady-state drift},
+    xmode=log, grid=major, legend pos=north west, legend style={font=\small}]
+\addplot table [x=lambda, y=mean_drift, col sep=comma] {results/E2-steady-incremental.csv};
+\addlegendentry{incremental (open loop)}
+\addplot table [x=lambda, y=mean_drift, col sep=comma] {results/E2-steady-sotw.csv};
+\addlegendentry{SotW}
+\addplot table [x=lambda, y=mean_drift, col sep=comma] {results/E2-steady-reconciled.csv};
+\addlegendentry{incremental desired-state}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Recovery from a burst (MTTR)
+
+A burst of disturbances hits at the trace midpoint with no further
+noise; the figure shows the recovery. SotW heals at its next full
+write (one round later); the reconciled loop heals within the burst
+round itself (MTTR 0: deadbeat); the open-loop controller never
+recovers what churn does not accidentally overwrite.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.92\textwidth, height=.5\textwidth,
+    xlabel={round}, ylabel={drift},
+    grid=major, legend pos=north east, legend style={font=\small}]
+\addplot+ [mark=none, thick] table [x=round, y=drift, col sep=comma] {results/E2-trace-incremental-burst.csv};
+\addlegendentry{incremental (open loop)}
+\addplot+ [mark=none, thick] table [x=round, y=drift, col sep=comma] {results/E2-trace-sotw-burst.csv};
+\addlegendentry{SotW}
+\addplot+ [mark=none, thick] table [x=round, y=drift, col sep=comma] {results/E2-trace-reconciled-burst.csv};
+\addlegendentry{incremental desired-state}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+* Notes on fairness
+
+- The open-loop applier is not strawmanned: it content-checks
+  retractions (precondition-guarded deletes, as a careful edge-triggered
+  applier would), and later churn on a disturbed object incidentally
+  heals it, since inserts write by key. The residual drift comes from
+  spurious objects (never retracted) and disturbed objects the workload
+  does not happen to touch - which is exactly the real-world failure
+  mode.
+- SotW's healing is bounded by its emission period. Here it emits on
+  every churn event; a SotW controller with a slower resync period
+  drifts for correspondingly longer.
+- The reconciled mode pays for its robustness with the feedback
+  traffic: one observed-topic report per plant change and one (empty)
+  confirmation step per correction. E1's update-size figure shows this
+  cost is delta-sized, and zero at quiescence.
+
+* Reading the numbers
+
+Fast-profile sweep (N=100, 300 rounds, seed 42).
+
+- *Steady state.* Open-loop drift is linear in the noise rate for
+  small $\lambda$ (mean 4.6 / 11.3 / 23.7 at $\lambda$ = 0.05 / 0.1 /
+  0.2) and saturating toward the state size at $\lambda = 1$ (112.6
+  with only 100 managed objects): every uncorrected disturbance is
+  permanent, discounted only by churn incidentally rewriting a
+  disturbed key. SotW's mean drift is two orders of magnitude lower
+  (0.07-1.39) and /independent of history/ - it is just the noise that
+  landed since the last write, never more than one round's worth
+  (max 2 across all rates). The reconciled loop sampled 0.00 at every
+  rate including one disturbance per round: the correction lands
+  within the round, so the sampler never sees residual drift.
+- *Burst.* Flat zero until the burst; then the three architectures
+  separate exactly as the model predicts: open-loop jumps to 23 and
+  stays there for the remaining 50 rounds (MTTR ∞), SotW carries the
+  drift for one round and wipes it at its next emission (MTTR 1),
+  the reconciled loop absorbs all 20 disturbances within the burst
+  round itself (MTTR 0, max drift 0 at sampling) - the deadbeat
+  property, measured.
+- Robustness here costs what E1 measured: ~30 us and one feedback
+  report per plant change. The drift-vs-rate figure is the value side
+  of that trade; together they are the paper's claim in two charts:
+  delta-priced compute /and/ SotW-grade (better, one-step) healing.

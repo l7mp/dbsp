@@ -1,0 +1,240 @@
+#+TITLE: E1 - Per-delta cost vs. base-configuration size
+#+OPTIONS: toc:nil num:t
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS: [11pt]
+#+LATEX_HEADER: \usepackage[margin=2.2cm]{geometry}
+#+LATEX_HEADER: \usepackage{pgfplots}
+#+LATEX_HEADER: \pgfplotsset{compat=1.17, log ticks with fixed point}
+#+LATEX_HEADER: \usepackage{booktabs}
+
+* What we measure, and why
+
+The claim under test: an automatically incrementalized controller reacts
+to a change in time proportional to the /size of the change/, while a
+state-of-the-world controller pays for the /size of the world/ - and the
+desired-state reconciler (incremental + closed loop) keeps the
+incremental price.
+
+All four architectures are *the same declarative program* - the
+endpoints controller, ~Services ⋈ Pods -> Endpoints~ - differing only in
+the transforms applied at compile time. There is no hand-written
+baseline to mistune:
+
+| mode        | commit / transform             | compute     | update shipped |
+|-------------+--------------------------------+-------------+----------------|
+| sotw        | input adapters only (Model 1)  | full state  | full state     |
+| sotw-diff   | plain commit (Model 2)         | full state  | delta          |
+| incremental | Incrementalizer                | delta       | delta          |
+| reconciled  | Incrementalizer + Reconciler   | delta       | correction $U$ |
+
+The measurement plane is fully in-process: inputs are published into the
+circuit's topics, and a JS "plant" (a keyed store) applies whatever the
+output topic carries. Timestamps are taken at the publish and at the
+step callback in which the expected output document lands, so there is
+no external component whose latency would have to be factored out.
+
+#+begin_example
+  publish(delta)                            plant (keyed store)
+  ------------> [ endpoints circuit ] ----> apply per mode
+  t0                    ^                   t1 = expected doc landed
+                        |                        |
+                        +--- observed (feedback) +   reconciled mode only
+#+end_example
+
+Per point (case, mode, N): load the base config, warm up, then measure
+~reps~ single-object add/retract cycles (the add is timed; the retract
+restores the base so every rep sees the same state size). We report the
+median with the p95 as the upper whisker, and the mean update size in
+objects and bytes written to the plant.
+
+* The three cases
+
+The two output shapes of the endpoints controller are not an academic
+choice - they are the two update interfaces real load-balancing planes
+expose. The *flat 1:1 form* (~Services ⋈ Pods -> one row per (VIP, pod)
+binding~, our /join/ case) matches every backend with a per-endpoint
+add/remove primitive: Linux IPVS destinations (~ipvsadm -a/-d~, what
+kube-proxy's IPVS mode does in production), HAProxy 2.4+ dynamic
+servers (~add server~/~del server~ on the runtime socket), AWS target
+groups (~RegisterTargets~/~DeregisterTargets~), eBPF LB map entries
+(Cilium's kube-proxy replacement, Meta's Katran), nftables verdict-map
+elements (kube-proxy's nftables mode), and OpenFlow 1.5 select-group
+~insert-buckets~/~remove-buckets~ (OVS). The *aggregated form*
+(~Services ⋈ Pods -> @groupBy(service) -> one document carrying the
+whole pool~, our /fanout/ case) matches pool-granular consumers: an Envoy
+~ClusterLoadAssignment~ over EDS, or an nginx upstream block (reload).
+Kubernetes itself sits between the two: the Endpoints -> EndpointSlice
+evolution (one unbounded object -> slices of ≤100 endpoints) hand-tuned
+exactly this aggregation granularity, and Envoy's LEDS proposal
+(endpoints as individual xDS resources) exists because delta xDS
+cannot go below resource granularity. Here both shapes are the same
+declarative query, with and without the ~@groupBy~ - and the cases
+below measure precisely what each shape costs each architecture.
+
+- *join* - 1 Service selecting all N Pods, output one row per pod, no
+  aggregation. A pod delta touches one O(1) output row. Expected:
+  SotW recomputes the join, i.e. it is linear in N; the incremental
+  modes touch one row: constant. /The linear-vs-constant headline./
+- *pair* - N Services, each selecting exactly one of N Pods, ~@groupBy~
+  per service (groups of size 1). With the default cartesian ~@join~,
+  the snapshot join enumerates all Services × Pods pairs: SotW is
+  /quadratic/ in N. The incremental circuit only evaluates the delta
+  against the opposite side's state: /linear/ in N with a small
+  constant. With the indexed equi-join (~pair-idx~), both drop an order:
+  SotW linear, incremental ~constant. (A caveat for honesty: the
+  indexed join captures only the single-key equality core of label
+  matching. Full Kubernetes label-selector semantics - 
+  ~matchExpressions~, set operators - are richer than an equi-join key;
+  the connector's ~@selectorMatches~ implements them faithfully but as
+  a predicate, which is exactly the cartesian regime. The indexed line
+  shows what an index buys where one applies.)
+- *fanout* - 1 Service selecting all N Pods, ~@groupBy~ into a single
+  group: the output document carries N addresses. Every mode must emit
+  an O(N) document, so /every/ line is linear: the honest limit of the
+  incremental advantage - when the output itself is as big as the
+  world, nothing beats O(world).
+
+A historical note: an earlier version of this benchmark swept the
+number of services /within/ one run at fixed pod count and read the
+per-step trend off that sweep, which shows the growth in the swept
+variable only - SotW looked "linear" and incremental "constant" for
+what are really the quadratic/linear regimes of the pair case. The
+harness now sweeps N across runs and measures fixed-size deltas at
+steady state, so exponents are read off the log-log slope.
+
+* Results
+
+** Latency: join (linear vs. constant)
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.9\textwidth, height=.55\textwidth,
+    xlabel={base size $N$ (pods)}, ylabel={median add latency [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-join-sotw.csv};
+\addlegendentry{SotW}
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-join-sotw-diff.csv};
+\addlegendentry{SotW + diff}
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-join-incremental.csv};
+\addlegendentry{incremental (open loop)}
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-join-reconciled.csv};
+\addlegendentry{incremental desired-state}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Latency: pair (cartesian join: quadratic vs. linear)
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.9\textwidth, height=.55\textwidth,
+    xlabel={base size $N$ (services = pods)}, ylabel={median add latency [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-pair-sotw.csv};
+\addlegendentry{SotW}
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-pair-incremental.csv};
+\addlegendentry{incremental (open loop)}
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-pair-reconciled.csv};
+\addlegendentry{incremental desired-state}
+\addplot+ [dashed, error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-pair-idx-sotw.csv};
+\addlegendentry{SotW, indexed join}
+\addplot+ [dashed, error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-pair-idx-incremental.csv};
+\addlegendentry{incremental, indexed join}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Latency: fanout (the O(output) lower bound)
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.9\textwidth, height=.5\textwidth,
+    xlabel={base size $N$ (pods in one service)}, ylabel={median add latency [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-fanout-sotw.csv};
+\addlegendentry{SotW}
+\addplot+ [error bars/.cd, y dir=plus, y explicit] table [x=n, y=median_ms, y error expr=\thisrow{p95_ms}-\thisrow{median_ms}, col sep=comma] {results/E1-fanout-incremental.csv};
+\addlegendentry{incremental (open loop)}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** Update size: what a delta ships to the plant (join case)
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.9\textwidth, height=.5\textwidth,
+    xlabel={base size $N$ (pods)}, ylabel={plant bytes written per add},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\addplot table [x=n, y=delta_write_bytes, col sep=comma] {results/E1-join-sotw.csv};
+\addlegendentry{SotW}
+\addplot table [x=n, y=delta_write_bytes, col sep=comma] {results/E1-join-sotw-diff.csv};
+\addlegendentry{SotW + diff}
+\addplot table [x=n, y=delta_write_bytes, col sep=comma] {results/E1-join-incremental.csv};
+\addlegendentry{incremental (open loop)}
+\addplot table [x=n, y=delta_write_bytes, col sep=comma] {results/E1-join-reconciled.csv};
+\addlegendentry{incremental desired-state}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+This axis separates the two state-of-the-world models by commit
+boundary configuration alone: /sotw/ (Model 1) skips the output
+adapter, so the wire carries the recomputed full state every step;
+/sotw-diff/ (Model 2) is the plain commit, whose output adapter
+differentiates the same recomputed state into a delta. Same compute,
+opposite shipping - and the incremental modes beat both on compute
+while matching Model 2's update size. The reconciled mode additionally
+/ships nothing at quiescence/ (the outstanding correction is empty
+once the plant confirms).
+
+* Reading the numbers
+
+Fast-profile sweep (laptop). Log-log slopes measured over the top
+decade of each line.
+
+- *join*: SotW slope ≈ 1.0 (1.5 ms at N=10 -> 413 ms at N=3000,
+  ~140 us/pod recompute); incremental and reconciled are /flat at
+  ≈0.2 ms from N=10 to N=10⁴/ - the event-loop round trip is the
+  floor, the delta work (one predicate evaluation, one output row) is
+  beneath it. The reconciler tax over open-loop incremental is
+  ≈30 us/delta: on the cost axis, closing the loop is free.
+- *pair*, cartesian join: SotW slope ≈ 1.9 -> quadratic, as the
+  snapshot join enumerates Services × Pods (2.07 s per delta at
+  N=300 - recomputation is already interactive-hostile at tiny
+  scale); incremental slope ≈ 1 (the δ×state term evaluates the
+  predicate against the N-pod integral). Architecture and algorithm
+  are separable: the /indexed/ equi-join drops each line one order - 
+  SotW linear (hash join rebuild), incremental constant (two hash
+  lookups). One chart, both dimensions.
+- *fanout*: both lines linear with the /same/ constant; incremental
+  is in fact ~15% slower at N=3000 (362 vs 311 ms) - the incremental
+  group operator recomputes the affected group and emits a
+  retract+insert pair of O(N) documents. When the output is as big as
+  the world, incrementality buys nothing: O(output) is the floor for
+  every architecture. This is the honest boundary of the speedup
+  claim.
+- *update size*: SotW writes O(N) objects and bytes per delta (196 KB
+  at join/N=3000); SotW+diff, incremental and reconciled all write
+  one ~65 B object regardless of N. SotW+diff pays SotW compute for
+  delta-sized writes - the middle ground practitioners actually ship
+  (envoy-gateway), and measurably the worst of both on latency at
+  large N (the JS-side snapshot diff costs more than the recompute it
+  summarizes).
+
+A methodological bonus: the first runs of this harness showed the
+incremental modes going /linear/ in N where theory says constant. The
+slope was real - an engine performance bug (eager argument evaluation
+in disabled debug-log calls made the integrator serialize its full
+accumulator on every fold, and σ and π serialize every element) - found
+precisely because the measured exponent disagreed with the theorem.
+The numbers above are from the fixed engine; the lesson (assert
+asymptotics, not just correctness) is worth keeping.

@@ -1,0 +1,176 @@
+#+TITLE: E6 - Policy audit: continuous vs. periodic ($\Delta$-policy vs. stock Gatekeeper)
+#+OPTIONS: toc:nil num:t
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS: [11pt]
+#+LATEX_HEADER: \usepackage[margin=2.2cm]{geometry}
+#+LATEX_HEADER: \usepackage{pgfplots}
+#+LATEX_HEADER: \usepackage{pgfplotstable}
+#+LATEX_HEADER: \pgfplotsset{compat=1.17, log ticks with fixed point}
+#+LATEX_HEADER: \usepackage{booktabs}
+
+* What we measure, and why
+
+A policy auditor answers one question continuously: /which resources
+violate which policies, right now?/ Gatekeeper's audit answers it by
+brute force - every ~--audit-interval~ (default 60 s) it re-fetches the
+inventory and re-evaluates every constraint against every resource.
+$\Delta$-policy answers it incrementally: the same stock Gatekeeper policy
+objects, the same Rego, but evaluated as deltas, so a violation appears
+when the violating change happens and disappears when it is reverted.
+
+Both contenders run as their shipped binaries against the same envtest
+plant, audited by one instrument: the driver's clock, a watch on the
+constraint statuses, and a content predicate on ~totalViolations~ - 
+identical for every mode. Modes: ~dpolicy~ (reconciled), ~dpolicy-smith~
+(the Smith dead-time compensator instead of the Reconciler: exactly-once
+status actuation, echoes retired by content), ~gk~ (stock default:
+per-cycle re-LIST), ~gk-cache~ (~--audit-from-cache~, the
+architecture-isolating ablation: fetch cost gone, periodic re-evaluation
+remains).
+
+* Results
+
+** W1 - detection latency vs. inventory size
+
+One compliance flip against the converged base; flip-write -> first
+status carrying the new count. The periodic scanner sits at its
+interval regardless of N (until cycles overrun it); the delta engine
+sits at the write path.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={inventory size N [pods]}, ylabel={detection latency [ms]},
+    ymode=log, grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [thick, mark=*] table [x=n, y=median_ms, col sep=comma] {results/e6-w1-dpolicy.csv};
+\addlegendentry{$\Delta$-policy}
+\addplot+ [thick, mark=o] table [x=n, y=median_ms, col sep=comma] {results/e6-w1-dpolicy-smith.csv};
+\addlegendentry{dpolicy-smith}
+\addplot+ [thick, mark=square*] table [x=n, y=median_ms, col sep=comma] {results/e6-w1-gk.csv};
+\addlegendentry{gatekeeper}
+\addplot+ [thick, mark=triangle*] table [x=n, y=median_ms, col sep=comma] {results/e6-w1-gk-cache.csv};
+\addlegendentry{gatekeeper (cache)}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** W3 - transient-violation completeness
+
+Violations living exactly L seconds. A violation shorter than the audit
+interval is architecturally invisible to a periodic scanner - no tuning
+recovers it; the delta engine detects every one.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={violation lifetime L [s]}, ylabel={fraction detected},
+    ymin=-0.05, ymax=1.05, grid=major, legend pos=south east, legend style={font=\small}]
+\addplot+ [thick, mark=*] table [x=lifetime_s, y=detected, col sep=comma] {results/e6-w3-dpolicy.csv};
+\addlegendentry{$\Delta$-policy}
+\addplot+ [thick, mark=o] table [x=lifetime_s, y=detected, col sep=comma] {results/e6-w3-dpolicy-smith.csv};
+\addlegendentry{dpolicy-smith}
+\addplot+ [thick, mark=square*] table [x=lifetime_s, y=detected, col sep=comma] {results/e6-w3-gk.csv};
+\addlegendentry{gatekeeper}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** W4 - policy rollout
+
+One new constraint over the converged inventory: everyone pays O(N)
+evaluations; the constants and the queueing differ.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={inventory size N [pods]}, ylabel={rollout latency [ms]},
+    ymode=log, grid=major, legend pos=north west, legend style={font=\small}]
+\addplot+ [thick, mark=*] table [x=n, y=median_ms, col sep=comma] {results/e6-w4-dpolicy.csv};
+\addlegendentry{$\Delta$-policy}
+\addplot+ [thick, mark=o] table [x=n, y=median_ms, col sep=comma] {results/e6-w4-dpolicy-smith.csv};
+\addlegendentry{dpolicy-smith}
+\addplot+ [thick, mark=square*] table [x=n, y=median_ms, col sep=comma] {results/e6-w4-gk.csv};
+\addlegendentry{gatekeeper}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** W5 - churn storm
+
+A violation ramp at a fixed event rate; per-event lag from the
+status-count crossings. The periodic scanner's lag is the sawtooth
+distance to the next cycle boundary; the delta engine tracks the ramp.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={event index}, ylabel={detection lag [ms]},
+    ymode=log, grid=major, legend pos=north east, legend style={font=\small}]
+\addplot+ [thick, mark=*] table [x=event, y=lag_ms, col sep=comma] {results/e6-w5-dpolicy.csv};
+\addlegendentry{$\Delta$-policy}
+\addplot+ [thick, mark=o] table [x=event, y=lag_ms, col sep=comma] {results/e6-w5-dpolicy-smith.csv};
+\addlegendentry{dpolicy-smith}
+\addplot+ [thick, mark=square*] table [x=event, y=lag_ms, col sep=comma] {results/e6-w5-gk.csv};
+\addlegendentry{gatekeeper}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+** W2 - the cost of an idle cluster
+
+No churn for the window; nothing to audit. The periodic scanner pays
+the full fetch + evaluate + status-rewrite cycle anyway (its
+~auditTimestamp~ stamps every constraint every cycle); the delta engine
+does nothing.
+
+#+begin_export latex
+\begin{center}
+\pgfplotstabletypeset[col sep=comma, string type,
+    every head row/.style={before row=\toprule, after row=\midrule},
+    every last row/.style={after row=\bottomrule},
+    columns/mode/.style={column name=mode},
+    columns/n/.style={column name=$N$},
+    columns/p/.style={column name=$P$},
+    columns/idle_s/.style={column name=idle [s]},
+    columns/status_writes/.style={column name=status writes},
+    columns/cpu_s/.style={column name=CPU [s]},
+    columns/rss_mb/.style={column name=RSS [MB]},
+    columns/api_requests/.style={column name=API requests},
+]{results/e6-w2.csv}
+\end{center}
+#+end_export
+
+* Method notes
+
+- One fresh envtest plant per (mode, N, P) grid point; the contender
+  runs out of process (the stock gatekeeper binary with
+  ~audit+status+generate~ operations, or the $\Delta$-policy controller), the
+  driver hosts none of them.
+- Client budgets as shipped: Gatekeeper configures no client-side rate
+  limit (client-go's 5 QPS / burst 10 - at P=50 a single cycle's status
+  writes alone spend seconds inside its own limiter); $\Delta$-policy's runtime
+  defaults to 50/100. The driver loads at 500/1000 through sharded
+  updaters, identically for every mode.
+- The corpus is stock Gatekeeper policy YAML, byte-identical for both
+  engines ($\Delta$-policy evaluates the same Rego through the embedded OPA).
+- W2's API-request counts come from the plant's own request-audit log,
+  attributed by user agent; CPU/RSS from one /proc sampler over the
+  contender's process.
+- The audit interval is normalized to 10 s: a periodic scanner's
+  detection behavior is scale-free in $L/\text{interval}$ (W3) and
+  latency/interval (W1), so the compressed interval measures the same
+  curves in a fraction of the wall clock; Gatekeeper's as-deployed
+  default is 60 s, and the numbers scale linearly.
+- W3's reps run concurrently, one probe namespace + probe constraint per
+  rep (independent 0/1 counts), creations staggered across one audit
+  interval - uniform phase sampling where sequential reps would
+  phase-lock with the scanner's cycle (and Σ(L)·reps of wall clock
+  becomes Σ(L)).
