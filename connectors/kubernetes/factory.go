@@ -31,49 +31,58 @@ type Env struct {
 	Runtime func() (*kruntime.Runtime, error)
 }
 
+// ResolveResource resolves a serialized resource reference against a
+// runtime: an absent group names the runtime's own view group, view
+// groups pin the view version, and Kubernetes API groups resolve a
+// missing version through the RESTMapper. krt supplies the shared
+// Kubernetes runtime lazily.
+func ResolveResource(rt *runtime.Runtime, krt func() (*kruntime.Runtime, error), r spec.Resource) (schema.GroupVersionKind, error) {
+	kind := strings.TrimSpace(r.Kind)
+	if kind == "" {
+		return schema.GroupVersionKind{}, fmt.Errorf("missing kind")
+	}
+	version := ""
+	if r.Version != nil {
+		version = strings.TrimSpace(*r.Version)
+	}
+
+	if r.Group == nil {
+		if rt.Name() == "" {
+			return schema.GroupVersionKind{}, fmt.Errorf("a runtime name is required when apiGroup is omitted")
+		}
+		return viewv1a1.GroupVersionKind(rt.Name(), kind), nil
+	}
+
+	group := strings.TrimSpace(*r.Group)
+	if group == "" {
+		if version == "" {
+			version = "v1"
+		}
+		return schema.GroupVersionKind{Group: "", Version: version, Kind: kind}, nil
+	}
+	if viewv1a1.IsViewGroup(group) {
+		return schema.GroupVersionKind{Group: group, Version: viewv1a1.Version, Kind: kind}, nil
+	}
+	if version != "" {
+		return schema.GroupVersionKind{Group: group, Version: version, Kind: kind}, nil
+	}
+	k, err := krt()
+	if err != nil {
+		return schema.GroupVersionKind{}, err
+	}
+	mapping, err := k.GetRESTMapper().RESTMapping(schema.GroupKind{Group: group, Kind: kind})
+	if err != nil {
+		return schema.GroupVersionKind{}, fmt.Errorf("resolve GVK for %s/%s: %w", group, kind, err)
+	}
+	return mapping.GroupVersionKind, nil
+}
+
 // NewFactory returns the Kubernetes connector's binding factory. It
 // claims plain resource references: absent groups (the runtime's own view
 // group), view groups, and Kubernetes API groups.
 func NewFactory(env Env) runtime.ConnectorFactory {
 	resolve := func(rt *runtime.Runtime, r spec.Resource) (schema.GroupVersionKind, error) {
-		kind := strings.TrimSpace(r.Kind)
-		if kind == "" {
-			return schema.GroupVersionKind{}, fmt.Errorf("missing kind")
-		}
-		version := ""
-		if r.Version != nil {
-			version = strings.TrimSpace(*r.Version)
-		}
-
-		if r.Group == nil {
-			if rt.Name() == "" {
-				return schema.GroupVersionKind{}, fmt.Errorf("a runtime name is required when apiGroup is omitted")
-			}
-			return viewv1a1.GroupVersionKind(rt.Name(), kind), nil
-		}
-
-		group := strings.TrimSpace(*r.Group)
-		if group == "" {
-			if version == "" {
-				version = "v1"
-			}
-			return schema.GroupVersionKind{Group: "", Version: version, Kind: kind}, nil
-		}
-		if viewv1a1.IsViewGroup(group) {
-			return schema.GroupVersionKind{Group: group, Version: viewv1a1.Version, Kind: kind}, nil
-		}
-		if version != "" {
-			return schema.GroupVersionKind{Group: group, Version: version, Kind: kind}, nil
-		}
-		krt, err := env.Runtime()
-		if err != nil {
-			return schema.GroupVersionKind{}, err
-		}
-		mapping, err := krt.GetRESTMapper().RESTMapping(schema.GroupKind{Group: group, Kind: kind})
-		if err != nil {
-			return schema.GroupVersionKind{}, fmt.Errorf("resolve GVK for %s/%s: %w", group, kind, err)
-		}
-		return mapping.GroupVersionKind, nil
+		return ResolveResource(rt, env.Runtime, r)
 	}
 
 	return runtime.ConnectorFactory{

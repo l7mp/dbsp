@@ -21,6 +21,16 @@ var kinds = map[string]string{
 	"ClusterLoadAssignment": "eds",
 }
 
+// KindOf maps an xDS type shorthand to its serialized resource kind.
+func KindOf(typ string) (string, bool) {
+	for kind, t := range kinds {
+		if t == typ {
+			return kind, true
+		}
+	}
+	return "", false
+}
+
 // Env is the host environment the factory closes over. Server resolves
 // host-owned egress servers by name (nil when the host runs none): a
 // host-started server is shared and outlives the loaded runtimes bound

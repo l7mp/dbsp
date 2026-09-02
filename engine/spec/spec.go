@@ -23,6 +23,7 @@ package spec
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/l7mp/dbsp/engine/transform"
 )
@@ -116,6 +117,46 @@ type Resource struct {
 	Version *string `json:"version,omitempty"`
 	// Kind is the type of the resource. Mandatory.
 	Kind string `json:"kind"`
+}
+
+// ParseResource parses the compact resource reference: "Kind" (the
+// runtime's own view group), "apiVersion/Kind" (a core "v1/Pod" or a
+// view-group apiVersion), or "group/version/Kind".
+func ParseResource(ref string) (Resource, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return Resource{}, fmt.Errorf("missing resource reference")
+	}
+	parts := strings.Split(ref, "/")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	switch len(parts) {
+	case 1:
+		if parts[0] == "" {
+			return Resource{}, fmt.Errorf("missing kind")
+		}
+		return Resource{Kind: parts[0]}, nil
+	case 2:
+		if parts[0] == "" || parts[1] == "" {
+			return Resource{}, fmt.Errorf("resource reference: expected apiVersion/Kind")
+		}
+		group, version := "", parts[0]
+		if i := strings.LastIndex(parts[0], "."); i >= 0 {
+			// An apiVersion with a dotted group, e.g.
+			// "discovery.k8s.io/v1" cannot appear in the two-segment
+			// form (the slash splits it); a bare version has no dot.
+			return Resource{}, fmt.Errorf("resource reference %q: expected apiVersion/Kind or group/version/Kind", ref)
+		}
+		return Resource{Group: &group, Version: &version, Kind: parts[1]}, nil
+	case 3:
+		if parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return Resource{}, fmt.Errorf("resource reference: expected group/version/Kind")
+		}
+		return Resource{Group: &parts[0], Version: &parts[1], Kind: parts[2]}, nil
+	default:
+		return Resource{}, fmt.Errorf("resource reference %q: expected Kind, apiVersion/Kind or group/version/Kind", ref)
+	}
 }
 
 // Source is a source that feeds deltas into the controller.

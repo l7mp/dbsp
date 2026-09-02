@@ -1,7 +1,10 @@
 package js
 
 import (
+	"encoding/json"
 	"fmt"
+
+	enginespec "github.com/l7mp/dbsp/engine/spec"
 
 	"github.com/dop251/goja"
 
@@ -176,7 +179,25 @@ func (v *VM) xdsWatch(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("%s: empty address", kind)
 	}
 
-	runnable, err := xds.NewProducerFromSpec(topic, opts, xds.Deps{Runtime: v.runtime, Logger: v.logger})
+	// The verb goes through the loader path: the options become a
+	// serialized Source (the xDS type shorthand names the resource kind,
+	// the rest rides the parameters) and the connector factory constructs
+	// the producer, exactly as a spec-loaded runtime would.
+	resKind, ok := xds.KindOf(opts.Type)
+	if !ok {
+		return nil, fmt.Errorf("%s: unknown xds type %q", kind, opts.Type)
+	}
+	params, err := json.Marshal(opts)
+	if err != nil {
+		return nil, fmt.Errorf("%s options: %w", kind, err)
+	}
+	group := xds.Group
+	raw := json.RawMessage(params)
+	src := enginespec.Source{
+		Resource:   enginespec.Resource{Group: &group, Kind: resKind},
+		Parameters: &raw,
+	}
+	runnable, err := v.factoryByName("xds").NewSource(v.runtime, &src, topic)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}

@@ -2,9 +2,14 @@ package js
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+
+	k8sconn "github.com/l7mp/dbsp/connectors/kubernetes"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
+	enginespec "github.com/l7mp/dbsp/engine/spec"
 
 	"github.com/dop251/goja"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -127,12 +132,10 @@ func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
 		}
 	}
 
-	krt, err := v.ensureK8sRuntime()
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", kind, err)
-	}
-
-	gvk, err := v.parseGVK(spec.GVK)
+	// The verb goes through the loader path: the options become a
+	// serialized Source and the connector factory constructs the
+	// producer, exactly as a spec-loaded runtime would.
+	src, err := v.k8sSourceSpec(spec)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
@@ -144,18 +147,7 @@ func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
 		callbackStop = v.registerProducerCallback(publishTopic, topic, "kubernetes-watch-callback", callback)
 	}
 
-	// Every connector gets its own client (own rate limiter, own connection
-	// pool): readers and writers must not contend on one token bucket.
-	producerClient, err := krt.NewCompositeClient()
-	if err != nil {
-		return nil, fmt.Errorf("%s: connector client: %w", kind, err)
-	}
-	runnable, err := k8sproducer.NewFromSpec(publishTopic, spec, k8sproducer.Deps{
-		Client:  producerClient,
-		GVK:     gvk,
-		Runtime: v.runtime,
-		Logger:  v.logger,
-	})
+	runnable, err := v.factoryByName("kubernetes").NewSource(v.runtime, src, publishTopic)
 	if err != nil {
 		if callbackStop != nil {
 			callbackStop()
@@ -170,6 +162,41 @@ func (v *VM) k8sWatch(call goja.FunctionCall) (goja.Value, error) {
 	}
 
 	return v.boundHandle(runnable, kind, topic, spec, callbackStop), nil
+}
+
+// k8sSourceSpec converts the verb options into the serialized Source the
+// connector factory consumes, resolving and registering the view GVK the
+// way the ambient runtime always has.
+func (v *VM) k8sSourceSpec(ps k8sproducer.Spec) (*enginespec.Source, error) {
+	res, err := enginespec.ParseResource(ps.GVK)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := v.parseGVK(ps.GVK); err != nil {
+		return nil, err
+	}
+	src := enginespec.Source{Resource: res}
+	if ps.Namespace != "" {
+		ns := ps.Namespace
+		src.Namespace = &ns
+	}
+	if sel := ps.Selector(); sel != nil {
+		data, err := json.Marshal(sel)
+		if err != nil {
+			return nil, err
+		}
+		raw := json.RawMessage(data)
+		src.LabelSelector = &raw
+	}
+	if ps.Predicate != nil {
+		data, err := json.Marshal(ps.Predicate)
+		if err != nil {
+			return nil, err
+		}
+		raw := json.RawMessage(data)
+		src.Predicate = &raw
+	}
+	return &src, nil
 }
 
 func (v *VM) k8sPatch(call goja.FunctionCall) (goja.Value, error) {
@@ -202,33 +229,22 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (go
 	if err := decodeOptionValue(call.Argument(1), &spec); err != nil {
 		return nil, fmt.Errorf("%s options: %w", kind, err)
 	}
-	verb := "update"
+	// The verb goes through the loader path: the options become a
+	// serialized Target and the connector factory constructs the
+	// consumer, exactly as a spec-loaded runtime would.
+	res, err := enginespec.ParseResource(spec.GVK)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", kind, err)
+	}
+	if _, err := v.parseGVK(spec.GVK); err != nil {
+		return nil, fmt.Errorf("%s: %w", kind, err)
+	}
+	tgt := enginespec.Target{Resource: res, Type: enginespec.Updater}
 	if consumerKind == "patcher" {
-		verb = "patch"
+		tgt.Type = enginespec.Patcher
 	}
 
-	krt, err := v.ensureK8sRuntime()
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", kind, err)
-	}
-
-	gvk, err := v.parseGVK(spec.GVK)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", kind, err)
-	}
-
-	// Every connector gets its own client (own rate limiter, own connection
-	// pool): readers and writers must not contend on one token bucket.
-	consumerClient, err := krt.NewCompositeClient()
-	if err != nil {
-		return nil, fmt.Errorf("%s: connector client: %w", kind, err)
-	}
-	consumer, err := k8sconsumer.NewFromSpec(topic, verb, spec, k8sconsumer.Deps{
-		Client:  consumerClient,
-		GVK:     gvk,
-		Runtime: v.runtime,
-		Logger:  v.logger,
-	})
+	consumer, err := v.factoryByName("kubernetes").NewTarget(v.runtime, &tgt, topic)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
@@ -237,6 +253,17 @@ func (v *VM) installK8sConsumer(call goja.FunctionCall, consumerKind string) (go
 	}
 
 	return v.boundHandle(consumer, kind, topic, spec), nil
+}
+
+// factoryByName finds a registered connector factory; the factories are
+// installed at VM construction, so a miss is a programming error.
+func (v *VM) factoryByName(name string) *dbspruntime.ConnectorFactory {
+	for i := range v.factories {
+		if v.factories[i].Name == name {
+			return &v.factories[i]
+		}
+	}
+	panic(fmt.Sprintf("connector factory %q not registered", name))
 }
 
 func (v *VM) ensureK8sRuntime() (*k8sruntime.Runtime, error) {
@@ -251,49 +278,17 @@ func (v *VM) ensureK8sRuntime() (*k8sruntime.Runtime, error) {
 }
 
 func (v *VM) parseGVK(raw string) (schema.GroupVersionKind, error) {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return schema.GroupVersionKind{}, fmt.Errorf("missing gvk")
-	}
-
-	var gk schema.GroupKind
-	var version string
-
-	parts := strings.Split(s, "/")
-	switch len(parts) {
-	case 2:
-		gv, err := schema.ParseGroupVersion(parts[0])
-		if err != nil {
-			return schema.GroupVersionKind{}, fmt.Errorf("gvk apiVersion: %w", err)
-		}
-		kind := strings.TrimSpace(parts[1])
-		if kind == "" {
-			return schema.GroupVersionKind{}, fmt.Errorf("gvk: missing kind")
-		}
-		gk = schema.GroupKind{Group: gv.Group, Kind: kind}
-		version = gv.Version
-	case 3:
-		group := strings.TrimSpace(parts[0])
-		version = strings.TrimSpace(parts[1])
-		kind := strings.TrimSpace(parts[2])
-		if group == "" || version == "" || kind == "" {
-			return schema.GroupVersionKind{}, fmt.Errorf("gvk: expected group/version/kind")
-		}
-		gk = schema.GroupKind{Group: group, Kind: kind}
-	default:
-		return schema.GroupVersionKind{}, fmt.Errorf("gvk must be v1/Kind or group/version/kind")
-	}
-
-	mapping, err := v.k8sRESTMapping(gk, version)
+	res, err := enginespec.ParseResource(raw)
 	if err != nil {
 		return schema.GroupVersionKind{}, err
 	}
-
-	gvk := mapping.GroupVersionKind
+	gvk, err := k8sconn.ResolveResource(v.runtime, v.ensureK8sRuntime, res)
+	if err != nil {
+		return schema.GroupVersionKind{}, err
+	}
 	if err := v.ensureK8sViewDiscovery(gvk); err != nil {
 		return schema.GroupVersionKind{}, err
 	}
-
 	return gvk, nil
 }
 

@@ -1294,9 +1294,11 @@ console.error("test-error", { code: 42 });
 		Expect(vm.k8sRuntime).To(BeNil())
 		Expect(runScript(vm, `kubernetes.runtime.start();`)).To(Succeed())
 
-		_, err = vm.parseGVK("v1/Pod")
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("only view resources can be used"))
+		// Native references resolve structurally, without the mapper; the
+		// view-only restriction surfaces when a producer is constructed.
+		native, err := vm.parseGVK("v1/Pod")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(native).To(Equal(schema.GroupVersionKind{Version: "v1", Kind: "Pod"}))
 
 		viewGVK := schema.GroupVersionKind{Group: "demo.view.dcontroller.io", Version: "v1alpha1", Kind: "Widget"}
 		got, err := vm.parseGVK("demo.view.dcontroller.io/v1alpha1/Widget")
@@ -1450,7 +1452,7 @@ const c = aggregate.compile([
 
 const ci = c.transform({ name: "Incrementalizer" }).commit();
 
-runtime.observe("aggregation^Δ", (e) => {
+runtime.observe("aggregation", (e) => {
   runtime.publish("agg-inc-obs", [[{node: e.node.id}, 1]]);
   cancel();
 });
