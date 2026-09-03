@@ -1,7 +1,4 @@
-[![CI](https://github.com/l7mp/dbsp/actions/workflows/ci.yml/badge.svg)](https://github.com/l7mp/dbsp/actions/workflows/ci.yml)<br>
-[![Engine Go Reference](https://pkg.go.dev/badge/github.com/l7mp/dbsp/engine.svg)](https://pkg.go.dev/github.com/l7mp/dbsp/engine)
-[![JS Go Reference](https://pkg.go.dev/badge/github.com/l7mp/dbsp/js.svg)](https://pkg.go.dev/github.com/l7mp/dbsp/js)
-[![Δ-controller Go Reference](https://pkg.go.dev/badge/github.com/l7mp/dbsp/dcontroller.svg)](https://pkg.go.dev/github.com/l7mp/dbsp/dcontroller)
+[![Go Reference](https://pkg.go.dev/badge/github.com/l7mp/dbsp/engine.svg)](https://pkg.go.dev/github.com/l7mp/dbsp)
 
 # DBSP: A runtime for incremental declarative controllers 
 
