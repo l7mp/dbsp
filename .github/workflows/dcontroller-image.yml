@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - master
       - main
+    tags:
+      - 'dcontroller-v*'
   pull_request:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build:
@@ -34,6 +34,8 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=dev,enable={{is_default_branch}}
             type=ref,event=branch
+            type=ref,event=pr
+            type=match,pattern=dcontroller-v(.*),group=1
             type=sha,prefix=sha-
 
       - name: Log in to Docker Hub
@@ -47,8 +49,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: dcontroller/Dockerfile
+          file: apps/dcontroller/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,40 +1,63 @@
+# syntax=docker/dockerfile:1
+#
+# Build context is the workspace root:
+#   docker build -f apps/dcontroller/Dockerfile .
+#
+# Delta-controller is a DBSP JavaScript program: the image ships the `dbsp`
+# runtime binary from the js module, the JavaScript stdlib the runtime loads
+# modules from, and the dcontroller script tree.
+
 ###########
-# Build the dbsp binary (monorepo-aware). The dcontroller operator runs as a
-# DBSP JavaScript program inside the dbsp runtime; the dctl binary has been
-# retired.
-FROM docker.io/golang:1.26-alpine AS builder
+# Build the dbsp runtime binary.
+FROM --platform=$BUILDPLATFORM docker.io/golang:1.26-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /workspace
 
-# Copy module manifests first to maximize build cache reuse.
-COPY js/go.mod js/go.sum /workspace/js/
-
-# Copy local replacement modules referenced by js/go.mod.
-COPY engine /workspace/engine
-COPY connectors/kubernetes /workspace/connectors/kubernetes
-COPY connectors/misc /workspace/connectors/misc
+# Module manifests first, so the dependency download layer is cached across
+# source edits. The js module resolves engine and the connectors through
+# `replace` directives pointing at sibling directories, so their manifests must
+# be in place before the module graph can be loaded at all.
+COPY engine/go.mod engine/go.sum engine/
+COPY connectors/kubernetes/go.mod connectors/kubernetes/go.sum connectors/kubernetes/
+COPY connectors/misc/go.mod connectors/misc/go.sum connectors/misc/
+COPY connectors/xds/go.mod connectors/xds/go.sum connectors/xds/
+COPY js/go.mod js/go.sum js/
 
 WORKDIR /workspace/js
-RUN go mod download
-RUN go mod tidy
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
-# Copy the js sources.
+# Sources. No go.work: the js module carries its own replace directives, and a
+# workspace file would drag in modules that are not part of this image.
+COPY engine /workspace/engine
+COPY connectors /workspace/connectors
 COPY js /workspace/js
 
-# Copy the dcontroller JavaScript manager sources.
-COPY apps/dcontroller/dcontroller.js /workspace/dcontroller/dcontroller.js
-COPY apps/dcontroller/lib /workspace/dcontroller/lib
-
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /workspace/bin/dbsp ./cmd
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags "-s -w" -o /out/dbsp ./cmd
 
 ###########
-# Use distroless as the minimal base image to package the dbsp binary.
-# Refer to https://github.com/GoogleContainerTools/distroless for more details.
+# Distroless runtime image. See
+# https://github.com/GoogleContainerTools/distroless for details.
 FROM gcr.io/distroless/static:nonroot
 
-WORKDIR /
-COPY --from=builder /workspace/bin/dbsp .
-COPY --from=builder /workspace/dcontroller /dcontroller
+# The runtime resolves named require() targets against its JavaScript stdlib,
+# which it discovers as <directory of the binary>/../stdlib. DBSP_STDLIB states
+# the same location explicitly so the layout survives an entrypoint override.
+COPY --from=builder /out/dbsp /usr/local/bin/dbsp
+COPY js/stdlib /usr/local/stdlib
+ENV DBSP_STDLIB=/usr/local/stdlib
+
+# The dcontroller script tree. dcontroller.js resolves ./lib relative to itself.
+COPY apps/dcontroller/dcontroller.js /dcontroller/dcontroller.js
+COPY apps/dcontroller/lib /dcontroller/lib
+
 USER 65532:65532
 
-ENTRYPOINT ["/dbsp"]
+ENTRYPOINT ["/usr/local/bin/dbsp"]
+CMD ["/dcontroller/dcontroller.js"]

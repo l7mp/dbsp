@@ -6,7 +6,7 @@ GOARGS = -trimpath
 export GOTOOLCHAIN ?= local
 
 # Image URL to use all building/pushing image targets
-IMG ?= retvari/dcontroller:latest
+IMG ?= docker.io/l7mp/dcontroller:latest
 
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.30.0
@@ -28,6 +28,10 @@ endif
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
+
+# The workspace root: the container build context, and where the js module that
+# builds the dbsp binary lives.
+ROOT := $(abspath ../..)
 
 .PHONY: all
 all: build
@@ -64,27 +68,29 @@ lint: vet
 test: manifests generate fmt vet envtest
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out #-ginkgo.v -ginkgo.trace
 
-##@ Build
+##@ Container image
 
-# The operator runs as a DBSP JavaScript program inside the `dbsp` binary; the
-# `dctl` binary has been retired. The `dbsp` binary lives in the js/ module and
-# is built from there. The targets below cover only Docker / chart packaging.
+# The operator runs as a DBSP JavaScript program inside the `dbsp` binary, which
+# lives in the js/ module and is built from there. The build context is
+# therefore the workspace root: the image carries the dbsp binary, the local
+# modules it links against, and the JavaScript stdlib the runtime loads modules
+# from.
 
 .PHONY: docker-build
-docker-build: test
-	docker build -f Dockerfile -t ${IMG} ..
+docker-build:
+	docker build -f Dockerfile -t $(IMG) $(ROOT)
 
 .PHONY: docker-push
 docker-push:
-	docker push ${IMG}
+	docker push $(IMG)
 
 .PHONY: podman-build
-podman-build: test
-	sudo podman build -t ${IMG} .
+podman-build:
+	podman build -f Dockerfile -t $(IMG) $(ROOT)
 
 .PHONY: podman-push
 podman-push:
-	sudo podman push ${IMG}
+	podman push $(IMG)
 
 # The chart repository is published from this monorepo's gh-pages branch
 # under the dcontroller/ prefix.

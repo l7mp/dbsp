@@ -1,0 +1,23 @@
+# Build context for apps/dcontroller/Dockerfile. The image needs the Go modules
+# the dbsp binary links against plus the dcontroller JavaScript sources.
+*
+
+!.dockerignore
+!apps/dcontroller/Dockerfile
+!apps/dcontroller/dcontroller.js
+!apps/dcontroller/lib/
+!connectors/
+!engine/
+!js/
+
+# Re-exclude artifacts and local scratch living inside the allowed trees.
+**/bin
+**/bin/**
+**/testdata
+**/testdata/**
+**/node_modules
+**/node_modules/**
+**/*.test
+**/*.out
+**/.claude
+**/.claude/**

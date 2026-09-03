@@ -16,9 +16,10 @@ jobs:
       fail-fast: false
       matrix:
         module:
+          - apps/dcontroller
           - connectors/kubernetes
           - connectors/misc
-          - dcontroller
+          - connectors/xds
           - engine
           - js
     steps:
@@ -84,6 +85,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: dcontroller/Dockerfile
+          file: apps/dcontroller/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
