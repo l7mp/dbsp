@@ -60,14 +60,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Chart and app version come from `git describe`.
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.work
 
-      - name: Build dcontroller Helm chart
-        run: make -C dcontroller chart
+      - name: Lint dcontroller Helm chart
+        run: make -C apps/dcontroller chart-lint
+
+      - name: Package dcontroller Helm chart
+        run: make -C apps/dcontroller chart
+
+      - name: Verify the CRD template is up to date
+        run: git diff --exit-code -- apps/dcontroller/config apps/dcontroller/chart/helm/templates/crd.yaml
 
   dcontroller-image-build:
     runs-on: ubuntu-latest

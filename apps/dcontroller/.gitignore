@@ -25,3 +25,6 @@ hack/tools/bin
 
 junit-report.xml
 /artifacts
+
+# Packaged chart artifacts and the local chart repository index.
+chart/repo/

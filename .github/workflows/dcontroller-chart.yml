@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - master
       - main
+    tags:
+      - 'dcontroller-v*'
 
 permissions:
   contents: write
@@ -17,6 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          # Chart and app version come from `git describe`.
           fetch-depth: 0
 
       - name: Set up Go
@@ -24,15 +26,32 @@ jobs:
         with:
           go-version-file: go.work
 
+      # The published repository is the source of truth for which versions
+      # exist. Seeding the local index with it lets `helm repo index --merge`
+      # carry earlier releases forward instead of dropping them.
+      - name: Check out the published chart repository
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Seed the chart repository index
+        run: |
+          mkdir -p apps/dcontroller/chart/repo
+          if [ -f gh-pages/dcontroller/index.yaml ]; then
+            cp gh-pages/dcontroller/index.yaml apps/dcontroller/chart/repo/
+          fi
+
       - name: Build Helm chart
-        run: make -C dcontroller chart
+        run: make -C apps/dcontroller chart
 
       - name: Publish chart to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
-          publish_dir: dcontroller/chart/repo
+          publish_dir: apps/dcontroller/chart/repo
           destination_dir: dcontroller
           keep_files: true
           force_orphan: false

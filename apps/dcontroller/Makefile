@@ -1,28 +1,15 @@
-# Build variables
-PACKAGE = github.com/l7mp/dbsp/dcontroller
-GOARGS = -trimpath
+# Delta-controller runs as a DBSP JavaScript program inside the `dbsp` runtime,
+# which is built from the js module. This Makefile covers what is specific to
+# the application: the Operator CRD, the container image, and the Helm chart.
 
 # Use only the locally installed Go toolchain (for example from Debian apt).
 export GOTOOLCHAIN ?= local
 
-# Image URL to use all building/pushing image targets
+# Container image to build and push.
 IMG ?= docker.io/l7mp/dcontroller:latest
 
-# ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
+# Version of the kubebuilder assets envtest downloads.
 ENVTEST_K8S_VERSION = 1.30.0
-
-# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
-ifeq (,$(shell go env GOBIN))
-GOBIN=$(shell go env GOPATH)/bin
-else
-GOBIN=$(shell go env GOBIN)
-endif
-
-ifeq (${VERBOSE}, 1)
-ifeq ($(filter -v,${GOARGS}),)
-	GOARGS += -v
-endif
-endif
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -47,7 +34,7 @@ build-bin:
 
 .PHONY: manifests
 manifests: controller-gen
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/resources
+	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd/resources
 
 .PHONY: generate
 generate: controller-gen
@@ -66,15 +53,13 @@ lint: vet
 
 .PHONY: test
 test: manifests generate fmt vet envtest
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out #-ginkgo.v -ginkgo.trace
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out
 
 ##@ Container image
 
-# The operator runs as a DBSP JavaScript program inside the `dbsp` binary, which
-# lives in the js/ module and is built from there. The build context is
-# therefore the workspace root: the image carries the dbsp binary, the local
-# modules it links against, and the JavaScript stdlib the runtime loads modules
-# from.
+# The build context is the workspace root: the image carries the dbsp binary
+# built from the js module, that module's local dependencies, and the JavaScript
+# stdlib the runtime loads modules from.
 
 .PHONY: docker-build
 docker-build:
@@ -92,41 +77,83 @@ podman-build:
 podman-push:
 	podman push $(IMG)
 
-# The chart repository is published from this monorepo's gh-pages branch
-# under the dcontroller/ prefix.
-HELM_URL ?= "https://l7mp.github.io/dbsp/dcontroller/"
+##@ Helm chart
 
+CHART_DIR := chart/helm
+CHART_REPO_DIR := chart/repo
+CRD_SOURCE := config/crd/resources/dcontroller.io_operators.yaml
+CHART_CRD := $(CHART_DIR)/templates/crd.yaml
+
+# Chart and app version. A release is cut by tagging dcontroller-vX.Y.Z; any
+# other commit packages a prerelease sorting below the last release, so that
+# `helm repo update` on a released chart never picks up a development build.
+GIT_TAG := $(shell git describe --tags --match 'dcontroller-v*' --exact-match 2>/dev/null)
+GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+ifneq ($(GIT_TAG),)
+CHART_VERSION ?= $(patsubst dcontroller-v%,%,$(GIT_TAG))
+APP_VERSION ?= $(CHART_VERSION)
+else
+CHART_VERSION ?= 0.0.0-dev.$(GIT_SHA)
+APP_VERSION ?= latest
+endif
+
+# The published chart repository lives on this monorepo's gh-pages branch under
+# the dcontroller/ prefix.
+HELM_URL ?= https://l7mp.github.io/dbsp/dcontroller/
+
+# Wrap the generated CRD in the chart's install and retention toggles. The
+# annotation block controller-gen emits is the injection point.
+.PHONY: chart-crd
+chart-crd: manifests
+	@{ \
+	  echo '# Generated from $(CRD_SOURCE) by `make chart-crd`. Do not edit.'; \
+	  echo '{{- if .Values.crds.install }}'; \
+	  sed -e '/^---$$/d' \
+	      -e 's|^  annotations:$$|  annotations:\n    {{- if .Values.crds.keep }}\n    helm.sh/resource-policy: keep\n    {{- end }}|' \
+	      $(CRD_SOURCE); \
+	  echo '{{- end }}'; \
+	} > $(CHART_CRD)
+
+.PHONY: chart-lint
+chart-lint: helm chart-crd
+	$(HELM) lint $(CHART_DIR) --set crds.install=true
+
+# Packages the chart and (re)builds the repository index. An index already
+# present in $(CHART_REPO_DIR) is merged, so earlier releases survive: the CI
+# job seeds the directory from the published repository before packaging.
 .PHONY: chart
-chart: helm manifests kustomize
-	$(KUSTOMIZE) build config/helm-base > chart/helm/templates/all.yaml
-	$(HELM) package chart/helm -d chart/repo
-	$(HELM) repo index --url $(HELM_URL) chart/repo
-
-# publish new helm image to github pages
-# git subtree push --prefix chart/repo origin gh-pages
+chart: helm chart-crd
+	mkdir -p $(CHART_REPO_DIR)
+	$(HELM) package $(CHART_DIR) -d $(CHART_REPO_DIR) \
+		--version $(CHART_VERSION) --app-version $(APP_VERSION)
+	$(HELM) repo index $(CHART_REPO_DIR) --url $(HELM_URL) \
+		$$(test -f $(CHART_REPO_DIR)/index.yaml && echo --merge $(CHART_REPO_DIR)/index.yaml)
 
 ##@ Deployment
 
-ifndef ignore-not-found
-  ignore-not-found = false
-endif
+# Both targets render the chart: it is the single description of a running
+# deployment, and rendering it keeps the no-Helm path from drifting away.
 
 .PHONY: install
-install: manifests kustomize
-	$(KUSTOMIZE) build config/crd | kubectl apply -f -
+install: helm chart-crd
+	$(HELM) template dcontroller $(CHART_DIR) --namespace dcontroller-system \
+		--show-only templates/crd.yaml | kubectl apply --server-side -f -
 
 .PHONY: uninstall
-uninstall: manifests kustomize
-	$(KUSTOMIZE) build config/crd | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
+uninstall: helm chart-crd
+	$(HELM) template dcontroller $(CHART_DIR) --namespace dcontroller-system \
+		--show-only templates/crd.yaml | kubectl delete --ignore-not-found -f -
 
 .PHONY: deploy
-deploy: manifests kustomize
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | kubectl apply -f -
+deploy: helm chart-crd
+	$(HELM) upgrade --install dcontroller $(CHART_DIR) \
+		--namespace dcontroller-system --create-namespace \
+		--set image.repository=$(firstword $(subst :, ,$(IMG))) \
+		--set image.tag=$(lastword $(subst :, ,$(IMG)))
 
 .PHONY: undeploy
-undeploy:
-	$(KUSTOMIZE) build config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
+undeploy: helm
+	$(HELM) uninstall dcontroller --namespace dcontroller-system --ignore-not-found
 
 ##@ Build Dependencies
 
@@ -136,23 +163,13 @@ $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
 ## Tool Binaries
-KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 HELM ?= $(LOCALBIN)/helm
 
 ## Tool Versions
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
-KUSTOMIZE_VERSION ?= v5.8.1
 HELM_VERSION ?= v4.1.3
-
-KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"
-.PHONY: kustomize
-kustomize: $(KUSTOMIZE)
-$(KUSTOMIZE): $(LOCALBIN)
-	test -s $(LOCALBIN)/kustomize && $(LOCALBIN)/kustomize version | grep -q $(KUSTOMIZE_VERSION) || \
-	(rm -f $(LOCALBIN)/kustomize && \
-	curl -s $(KUSTOMIZE_INSTALL_SCRIPT) | bash -s -- $(subst v,,$(KUSTOMIZE_VERSION)) $(LOCALBIN))
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN)

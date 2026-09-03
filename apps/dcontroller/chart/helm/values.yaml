@@ -1,71 +1,136 @@
+# Container image. The image ships the `dbsp` runtime binary, the JavaScript
+# stdlib, and the dcontroller manager script.
 image:
-  name: docker.io/l7mp/dcontroller
-  tag: latest
-  pullPolicy: Always
+  repository: docker.io/l7mp/dcontroller
+  # Defaults to the chart appVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
 
-# API Server configuration
+imagePullSecrets: []
+
+# The DBSP script the runtime executes. The image ships the manager script at
+# this path; point it at a mounted volume to run a custom manager.
+script: /dcontroller/dcontroller.js
+
+# Extra command line arguments passed to the script.
+extraArgs: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+
+crds:
+  # Install the Operator CRD with the release. Turn this off when the CRD is
+  # managed out of band.
+  install: true
+  # Keep the CRD (and with it every Operator resource) on `helm uninstall`.
+  keep: true
+
+serviceAccount:
+  create: true
+  # Defaults to "<name>-account" when empty.
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+  # The manager is granted full cluster access. An Operator resource carries a
+  # frozen DBSP pipeline that names the resources it watches and writes only at
+  # load time, so the permission set cannot be known when the chart is
+  # installed. Narrowing this means deriving the rules from the loaded Operator
+  # resources, which the manager does not do yet.
+
+  # Policy rules appended verbatim to the manager ClusterRole.
+  extraRules: []
+
+# Embedded extension API server. It serves the operators' internal views as a
+# Kubernetes API, so `kubectl` can inspect them.
 apiServer:
-  # Enable/disable the embedded API server
   enabled: true
 
-  # Deployment mode: "development" or "production"
-  # development: HTTP mode, no authentication, ClusterIP service (port-forward access only)
-  # production: HTTPS mode, JWT authentication, configurable service type
+  # Deployment mode, "development" or "production".
+  #   development: plain HTTP, authentication disabled, ClusterIP service
+  #                (reachable through `kubectl port-forward`).
+  #   production:  HTTPS with JWT authentication, service type configurable.
   mode: development
 
-  # Port for the API server
   port: 8443
 
-  # TLS configuration (only used in production mode)
-  tls:
-    # If enabled, TLS secret must be provided
-    enabled: true
+  # Serve the OpenAPI schema of the view resources.
+  openAPI: true
 
-    # Name of the secret containing tls.crt and tls.key
-    # The secret must exist in the dcontroller-system namespace
-    # Create it with: kubectl create secret tls dcontroller-tls --cert=apiserver.crt --key=apiserver.key -n dcontroller-system
+  # TLS material, used in production mode only.
+  tls:
+    # Name of a kubernetes.io/tls secret in the release namespace holding
+    # tls.crt and tls.key. Create it with:
+    #   kubectl create secret tls dcontroller-tls \
+    #     --cert=apiserver.crt --key=apiserver.key -n dcontroller-system
     secretName: dcontroller-tls
 
-    # Alternatively, provide certificate and key directly (they will be created as a secret)
-    # This is useful for initial setup but NOT recommended for production
+    # Alternatively let the chart create the secret from inline PEM material.
+    # Convenient for a first deployment, not recommended beyond that.
     # cert: |
     #   -----BEGIN CERTIFICATE-----
     #   ...
-    #   -----END CERTIFICATE-----
     # key: |
     #   -----BEGIN PRIVATE KEY-----
     #   ...
-    #   -----END PRIVATE KEY-----
+    cert: ""
+    key: ""
 
-  # Service configuration
   service:
-    # Service type: ClusterIP, LoadBalancer, or NodePort
-    # ClusterIP: API server only accessible within cluster (use port-forward)
-    # LoadBalancer: API server exposed with cloud load balancer
-    # NodePort: API server exposed on node ports
+    # ClusterIP, LoadBalancer or NodePort.
     type: ClusterIP
-
-    # NodePort to use when service.type is NodePort (optional, will be auto-assigned if not specified)
-    # nodePort: 30443
-
-    # Annotations for the service (useful for cloud-specific load balancer configuration)
+    # Fixed node port when type is NodePort; auto-assigned when empty.
+    nodePort: ""
     annotations: {}
-      # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-      # service.beta.kubernetes.io/azure-load-balancer-internal: "true"
 
-  # Gateway API configuration (optional, advanced)
-  # If enabled, creates HTTPRoute for exposing the API server through Gateway API
+  # Expose the API server through a Gateway API HTTPRoute.
   gateway:
     enabled: false
-    # Name of the Gateway to attach to
     gatewayName: ""
-    # Namespace of the Gateway
     gatewayNamespace: ""
-    # Hostname for the HTTPRoute
-    hostname: "dcontroller-api.example.com"
-    # TLS configuration for the HTTPRoute (if different from service TLS)
-    # If not specified, Gateway's TLS configuration will be used
-    tls:
-      enabled: false
-      # Name of the secret containing the certificate
-      secretName: ""
+    hostname: dcontroller-api.example.com
+
+# Path to a JSON runtime configuration file. When set, the manager reads it and
+# merges it over the environment-derived configuration.
+runtimeConfigFile: ""
+
+# Additional environment variables for the manager container.
+extraEnv: []
+  # - name: DCONTROLLER_KUBECONFIG
+  #   value: /etc/dcontroller/kubeconfig
+
+# Additional volumes and mounts, for example to carry a runtime config file.
+extraVolumes: []
+extraVolumeMounts: []
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# The manager holds an informer cache per watched resource kind, so memory
+# scales with the size of the watched cluster state. Raise these for large
+# clusters or pipelines watching many kinds.
+resources:
+  limits:
+    cpu: "1"
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

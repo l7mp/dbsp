@@ -1,0 +1,43 @@
+{{ .Chart.Name }} {{ .Chart.Version }} is installed in namespace {{ .Release.Namespace }}.
+
+Load a controller by applying the Operator resource it was frozen into:
+
+  kubectl apply -f my-operator.yaml
+  kubectl get operators
+
+Follow the manager:
+
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name={{ include "dcontroller.name" . }} -f
+{{- if .Values.apiServer.enabled }}
+
+The extension API server serves the operators' internal views on port
+{{ .Values.apiServer.port }} of service {{ include "dcontroller.fullname" . }}-apiserver.
+{{- if eq .Values.apiServer.mode "development" }}
+It runs in development mode: plain HTTP, authentication disabled. Reach it from
+your workstation with
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "dcontroller.fullname" . }}-apiserver {{ .Values.apiServer.port }}:{{ .Values.apiServer.port }}
+
+and do not expose it outside the cluster.
+{{- end }}
+{{- if and (eq .Values.apiServer.mode "production") (not (and .Values.apiServer.tls.cert .Values.apiServer.tls.key)) }}
+It serves HTTPS from secret {{ .Values.apiServer.tls.secretName }}, which this
+release did not create. Until that secret exists the manager stays NotReady.
+Generate an RSA key pair for {{ include "dcontroller.fullname" . }}-apiserver.{{ .Release.Namespace }}.svc,
+as described in doc/connectors-kubernetes-API-server.md, then load it whenever
+you are ready:
+
+  kubectl create secret tls {{ .Values.apiServer.tls.secretName }} \
+    --cert=apiserver.crt --key=apiserver.key -n {{ .Release.Namespace }}
+
+Keep the pair: the private key also signs the kubeconfig tokens that
+authenticate view clients, so replacing it invalidates every kubeconfig already
+issued.
+{{- end }}
+{{- end }}
+{{- if .Values.rbac.create }}
+
+The manager holds full cluster access: a hosted operator's permissions are
+fixed by its pipeline, which is only known once the Operator resource is
+loaded.
+{{- end }}

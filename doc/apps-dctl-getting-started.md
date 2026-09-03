@@ -83,16 +83,20 @@ RBAC profiles, custom rules, and production HTTPS examples.
 ## Helm install
 
 ```bash
-helm repo add dcontroller https://l7mp.github.io/dcontroller/
+helm repo add dcontroller https://l7mp.github.io/dbsp/dcontroller/
 helm repo update
 helm upgrade --install dcontroller dcontroller/dcontroller \
   --namespace dcontroller-system \
   --create-namespace
 ```
 
-The deployment runs `/dbsp <script>`. API-server behavior is expected to be
-declared in the script via `kubernetes.runtime.config(...).start()`.
-The repository-provided manager script is `apps/dcontroller/dcontroller.js`.
+The image runs `dbsp <script>`, where the script defaults to the manager it
+ships at `/dcontroller/dcontroller.js` (the source is
+`apps/dcontroller/dcontroller.js`). Point `--set script=...` at a mounted volume
+to run a manager of your own. The chart drives the API server through the
+`DCONTROLLER_API_SERVER_*` environment variables that `lib/config.js` reads; a
+script may equally declare it directly with
+`kubernetes.runtime.config(...).start()`.
 
 ## Script-driven configuration pattern
 

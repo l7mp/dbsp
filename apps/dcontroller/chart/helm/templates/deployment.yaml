@@ -1,95 +1,130 @@
+{{- $production := and .Values.apiServer.enabled (eq .Values.apiServer.mode "production") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dcontroller-manager
-  namespace: dcontroller-system
+  name: {{ include "dcontroller.fullname" . }}-manager
+  namespace: {{ .Release.Namespace }}
   labels:
-    control-plane: dcontroller
+    {{- include "dcontroller.labels" . | nindent 4 }}
 spec:
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      control-plane: dcontroller
-  replicas: 1
+      {{- include "dcontroller.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
         kubectl.kubernetes.io/default-container: dcontroller
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       labels:
-        control-plane: dcontroller
+        {{- include "dcontroller.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "dcontroller.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
-        runAsNonRoot: true
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-      - command:
-        - /dbsp
-        args:
-        - {{ .Values.script | default "/dcontroller/dcontroller.js" }}
-        image: "{{ .Values.image.name }}:{{ .Values.image.tag }}"
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
-        name: dcontroller
-        env:
-        - name: DCONTROLLER_API_SERVER_ENABLED
-          value: {{ ternary "true" "false" .Values.apiServer.enabled | quote }}
-        - name: DCONTROLLER_API_SERVER_MODE
-          value: {{ .Values.apiServer.mode | quote }}
-        - name: DCONTROLLER_API_SERVER_ADDR
-          value: "0.0.0.0"
-        - name: DCONTROLLER_API_SERVER_PORT
-          value: {{ printf "%d" .Values.apiServer.port | quote }}
-        - name: DCONTROLLER_API_SERVER_HTTP
-          value: {{ ternary "true" "false" (eq .Values.apiServer.mode "development") | quote }}
-        - name: DCONTROLLER_API_SERVER_INSECURE
-          value: {{ ternary "true" "false" (eq .Values.apiServer.mode "development") | quote }}
-        - name: DCONTROLLER_API_SERVER_OPENAPI
-          value: "true"
-{{- if and .Values.apiServer.enabled (eq .Values.apiServer.mode "production") }}
-        - name: DCONTROLLER_API_SERVER_CERT_FILE
-          value: "/etc/dcontroller/tls/tls.crt"
-        - name: DCONTROLLER_API_SERVER_KEY_FILE
-          value: "/etc/dcontroller/tls/tls.key"
-        - name: DCONTROLLER_AUTH_PRIVATE_KEY_FILE
-          value: "/etc/dcontroller/tls/tls.key"
-        - name: DCONTROLLER_AUTH_PUBLIC_KEY_FILE
-          value: "/etc/dcontroller/tls/tls.crt"
-{{- end }}
-{{- if .Values.apiServer.enabled }}
-        ports:
-        - name: api
-          containerPort: {{ .Values.apiServer.port }}
-          protocol: TCP
-{{- end }}
-        securityContext:
-          allowPrivilegeEscalation: false
-{{- if .Values.apiServer.enabled }}
-        livenessProbe:
-          tcpSocket:
-            port: api
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        readinessProbe:
-          tcpSocket:
-            port: api
-          initialDelaySeconds: 5
-          periodSeconds: 10
-{{- end }}
-        resources:
-          limits:
-            cpu: 500m
-            memory: 128Mi
-          requests:
-            cpu: 10m
-            memory: 64Mi
-{{- if and .Values.apiServer.enabled (eq .Values.apiServer.mode "production") }}
-        volumeMounts:
-        - name: tls
-          mountPath: /etc/dcontroller/tls
-          readOnly: true
-{{- end }}
-{{- if and .Values.apiServer.enabled (eq .Values.apiServer.mode "production") }}
+        - name: dcontroller
+          image: {{ include "dcontroller.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - {{ .Values.script | quote }}
+            {{- with .Values.runtimeConfigFile }}
+            - --runtime-config={{ . }}
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: DCONTROLLER_API_SERVER_ENABLED
+              value: {{ .Values.apiServer.enabled | quote }}
+            {{- if .Values.apiServer.enabled }}
+            - name: DCONTROLLER_API_SERVER_MODE
+              value: {{ .Values.apiServer.mode | quote }}
+            - name: DCONTROLLER_API_SERVER_ADDR
+              value: "0.0.0.0"
+            - name: DCONTROLLER_API_SERVER_PORT
+              value: {{ .Values.apiServer.port | quote }}
+            - name: DCONTROLLER_API_SERVER_HTTP
+              value: {{ eq .Values.apiServer.mode "development" | quote }}
+            - name: DCONTROLLER_API_SERVER_INSECURE
+              value: {{ eq .Values.apiServer.mode "development" | quote }}
+            - name: DCONTROLLER_API_SERVER_OPENAPI
+              value: {{ .Values.apiServer.openAPI | quote }}
+            {{- end }}
+            {{- if $production }}
+            - name: DCONTROLLER_API_SERVER_CERT_FILE
+              value: /etc/dcontroller/tls/tls.crt
+            - name: DCONTROLLER_API_SERVER_KEY_FILE
+              value: /etc/dcontroller/tls/tls.key
+            - name: DCONTROLLER_AUTH_PRIVATE_KEY_FILE
+              value: /etc/dcontroller/tls/tls.key
+            - name: DCONTROLLER_AUTH_PUBLIC_KEY_FILE
+              value: /etc/dcontroller/tls/tls.crt
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.apiServer.enabled }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.apiServer.port }}
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if or $production .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- if $production }}
+            - name: tls
+              mountPath: /etc/dcontroller/tls
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+      {{- if or $production .Values.extraVolumes }}
       volumes:
-      - name: tls
-        secret:
-          secretName: {{ .Values.apiServer.tls.secretName }}
-{{- end }}
-      serviceAccountName: dcontroller-account
+        {{- if $production }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.apiServer.tls.secretName }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       terminationGracePeriodSeconds: 10

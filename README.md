@@ -44,14 +44,20 @@ to handle any control loop of this kind in a single framework.
 if you want to use just Δ-controller via a injecting controllers as YAML files:
 
 ```bash
-helm repo add dcontroller https://l7mp.github.io/dcontroller/
+helm repo add dcontroller https://l7mp.github.io/dbsp/dcontroller/
 helm repo update
-helm install dcontroller dcontroller/dcontroller --set apiServer.mode=production --set apiServer.service.type=LoadBalancer
+helm install dcontroller dcontroller/dcontroller \
+  --namespace dcontroller-system --create-namespace
 ```
 
-This will start the embedded API server in hardened more and expose it via a LoadBalancer Service
-on port 8443. This makes it possible to inspect and load Δ-controller's internal objects, called
-"views", via a standard `kubectl` client.
+This starts the embedded API server in development mode, reachable through `kubectl port-forward`.
+It makes it possible to inspect and load Δ-controller's internal objects, called "views", via a
+standard `kubectl` client.
+
+Add `--set apiServer.mode=production --set apiServer.service.type=LoadBalancer` to serve the API
+over HTTPS with JWT authentication and expose it on port 8443 through a LoadBalancer Service.
+Production mode reads its certificate from a `kubernetes.io/tls` secret named `dcontroller-tls`,
+which must exist in the release namespace beforehand.
 
 To use the full JS suite:
 
