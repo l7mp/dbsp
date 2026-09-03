@@ -64,10 +64,19 @@ class RuntimeConfig {
             port: parseIntOr(process.env.DCONTROLLER_API_SERVER_PORT, 8443),
             http: httpMode,
             insecure: parseBool(process.env.DCONTROLLER_API_SERVER_INSECURE, mode === "development"),
-            certFile: process.env.DCONTROLLER_API_SERVER_CERT_FILE || "apiserver.crt",
-            keyFile: process.env.DCONTROLLER_API_SERVER_KEY_FILE || "apiserver.key",
             enableOpenAPI: parseBool(process.env.DCONTROLLER_API_SERVER_OPENAPI, true),
         };
+
+        // The TLS material is named only when it is configured. The runtime
+        // serves HTTP without a key pair, but a cert file it cannot open is a
+        // startup error, so naming a default path would make plain HTTP depend
+        // on a certificate it never uses.
+        if (process.env.DCONTROLLER_API_SERVER_CERT_FILE) {
+            cfg.apiServer.certFile = process.env.DCONTROLLER_API_SERVER_CERT_FILE;
+        }
+        if (process.env.DCONTROLLER_API_SERVER_KEY_FILE) {
+            cfg.apiServer.keyFile = process.env.DCONTROLLER_API_SERVER_KEY_FILE;
+        }
 
         const privateKeyFile = process.env.DCONTROLLER_AUTH_PRIVATE_KEY_FILE;
         const publicKeyFile = process.env.DCONTROLLER_AUTH_PUBLIC_KEY_FILE;
