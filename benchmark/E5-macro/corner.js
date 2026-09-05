@@ -38,7 +38,7 @@ const { K8sStack } = require("../lib/k8sstack.js");
 const dgw = require("../lib/dgwstack.js");
 
 const argv = minimist(process.argv.slice(2), {
-  string: ["case", "system", "mode", "out", "handshake", "eg-handshake", "xds-address", "churn"],
+  string: ["case", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address", "churn"],
   default: {
     case: "mega-vhost",
     system: "dgw",
@@ -69,7 +69,7 @@ const cfg = {
   timeoutMs: Number(argv["timeout-ms"]),
 };
 const nonce = Number(argv.nonce || Date.now() % 100000);
-const mode = cfg.system === "dgw" ? argv.mode : cfg.system;
+const mode = (cfg.system === "dgw" ? argv.mode : cfg.system) + (argv.variant ? `-${argv.variant}` : "");
 
 // Per-case object-name prefixes: each case owns a distinct name family.
 const PREFIX = { "mega-vhost": "m", "endpoint-heavy": "h", saturation: "s", amplification: "a" }[cfg.kase];

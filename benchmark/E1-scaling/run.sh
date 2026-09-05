@@ -43,11 +43,13 @@ fi
 for n in $NS_FAST; do point join incremental "$n" "$REPS"; done
 for n in $NS_FAST; do point join reconciled  "$n" "$REPS"; done
 # The state-of-the-world contenders recompute over full state, so they
-# get the short lists and few reps. sotw is Model 1 (input adapters
-# only: the level ships); sotw-diff is Model 2 (the plain commit: the
-# output adapter ships the delta of the same recompute).
-for n in $NS_SLOW; do point join sotw        "$n" "$REPS_SLOW"; done
-for n in $NS_SLOW; do point join sotw-diff   "$n" "$REPS_SLOW"; done
+# get few reps; the join recompute is linear, so they can afford the
+# mid list (the quadratic pair case below stays on the short one). sotw
+# is Model 1 (input adapters only: the level ships); sotw-diff is Model
+# 2 (the plain commit: the output adapter ships the delta of the same
+# recompute).
+for n in $NS_MID; do point join sotw        "$n" "$REPS_SLOW"; done
+for n in $NS_MID; do point join sotw-diff   "$n" "$REPS_SLOW"; done
 
 # pair: N services 1:1 N pods, @groupBy. Cartesian join: the SotW side is
 # quadratic, so it gets the short list.
@@ -56,14 +58,16 @@ for n in $NS_MID;  do point pair reconciled  "$n" "$REPS"; done
 for n in $NS_SLOW; do point pair sotw        "$n" "$REPS_SLOW"; done
 
 # pair with the indexed equi-join: same shape, hash lookups instead of
-# pair enumeration.
+# pair enumeration. The indexed SotW recompute is linear, so it affords
+# the mid list like the join case.
 for n in $NS_FAST; do point pair incremental "$n" "$REPS" --indexed; done
-for n in $NS_SLOW; do point pair sotw        "$n" "$REPS_SLOW" --indexed; done
+for n in $NS_MID;  do point pair sotw        "$n" "$REPS_SLOW" --indexed; done
 
 # fanout: 1 service, N pods, one @groupBy group of size N. The output
-# document is O(N): the honest lower bound for every mode.
+# document is O(N): the honest lower bound for every mode. The SotW
+# recompute is linear here too, so both lines share the mid list.
 for n in $NS_MID; do point fanout incremental "$n" "$REPS"; done
-for n in $NS_SLOW; do point fanout sotw        "$n" "$REPS_SLOW"; done
+for n in $NS_MID; do point fanout sotw        "$n" "$REPS_SLOW"; done
 
 if [ "$RENDER" = yes ]; then
     ../render.sh results.org
