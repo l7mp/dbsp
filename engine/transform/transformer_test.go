@@ -205,7 +205,7 @@ var _ = Describe("Incrementalize", func() {
 		It("passes delay through unchanged", func() {
 			c := circuit.New("delay-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Delay("z-1"))
+			c.AddNode(circuit.Delay("z-1", 1))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "z-1", 0))
 			c.AddEdge(circuit.NewEdge("z-1", "out", 0))

@@ -26,14 +26,15 @@ func Op(id string, op operator.Operator) *Node {
 	return &Node{ID: id, Operator: op}
 }
 
-// Delay creates a delay emit node backed by a placeholder DelayOp.
-// When added to a Circuit via AddNode, the circuit replaces the operator
-// with a fresh paired (DelayOp, DelayAbsorbOp) sharing internal state,
-// and registers the absorb node (id+"_absorb") automatically.
-// Edges directed at the emit node ID are transparently rewritten by AddEdge
-// to target the absorb node, so callers use a single consistent node ID.
-func Delay(id string) *Node {
-	emit, _ := operator.NewDelay()
+// Delay creates a delay emit node backed by a placeholder DelayOp of
+// depth k (z⁻ᵏ); k = 1 is the unit delay z⁻¹. When added to a Circuit
+// via AddNode, the circuit replaces the operator with a fresh paired
+// (DelayOp, DelayAbsorbOp) sharing internal state, preserving the depth,
+// and registers the absorb node (id+"_absorb") automatically. Edges
+// directed at the emit node ID are transparently rewritten by AddEdge to
+// target the absorb node, so callers use a single consistent node ID.
+func Delay(id string, k int) *Node {
+	emit, _ := operator.NewDelay(k)
 	return &Node{ID: id, Operator: emit}
 }
 

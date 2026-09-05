@@ -15,10 +15,13 @@ import (
 //	U  = ∫(δD − δS)                    (the pending correction, emitted)
 //	δS = dist^Δ(δY + z⁻¹U − z⁻ᴷU)      (the Smith prediction delta)
 //
-// where the two taps come from a K-cell delay line on the emission: the
-// window of in-flight commands, telescoped (the previous emission enters
-// the window, the K-steps-old one leaves). K is the assumed feedback dead
-// time, in circuit steps, and K = 1 degenerates to the plain Reconciler.
+// where the two taps delimit the window of in-flight commands, telescoped
+// (the previous emission enters the window, the K-steps-old one leaves):
+// the acc feedback delay provides the entry tap z⁻¹U, and a single
+// z⁻⁽ᴷ⁻¹⁾ ring delay on it provides the exit tap z⁻ᴷU, so the window
+// costs O(1) nodes and O(1) work per step at any K. K is the assumed
+// feedback dead time, in circuit steps, and K = 1 degenerates to the
+// plain Reconciler.
 type smithPredictor struct {
 	k     int
 	pairs []ReconcilerPair
@@ -103,6 +106,7 @@ func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
 	sumID := prefix + "_sum"
 	subID := prefix + "_sub"
 	delayID := prefix + "_delay"
+	wexitID := prefix + "_wexit"
 	winID := prefix + "_win"
 	distID := prefix + "_dist"
 
@@ -141,19 +145,14 @@ func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
 	if err := c.AddNode(circuit.Op(accID, operator.NewPlus())); err != nil {
 		return fmt.Errorf("smith: add acc node: %w", err)
 	}
-	if err := c.AddNode(circuit.Delay(delayID)); err != nil {
+	if err := c.AddNode(circuit.Delay(delayID, 1)); err != nil {
 		return fmt.Errorf("smith: add delay node: %w", err)
 	}
 
-	// The window delay line: the acc feedback delay doubles as the entry
-	// tap z⁻¹U; chaining k−1 more delays yields the exit tap z⁻ᴷU.
-	chain := make([]string, 0, k-1)
-	for i := 2; i <= k; i++ {
-		wID := fmt.Sprintf("%s_w%d", prefix, i)
-		if err := c.AddNode(circuit.Delay(wID)); err != nil {
-			return fmt.Errorf("smith: add window delay %d: %w", i, err)
-		}
-		chain = append(chain, wID)
+	// The window taps: the acc feedback delay doubles as the entry tap
+	// z⁻¹U; a single z⁻⁽ᵏ⁻¹⁾ ring delay on it yields the exit tap z⁻ᴷU.
+	if err := c.AddNode(circuit.Delay(wexitID, k-1)); err != nil {
+		return fmt.Errorf("smith: add window exit delay: %w", err)
 	}
 
 	// δS = dist^Δ(δY + z⁻¹U − z⁻ᴷU): the incrementalizer compiles the
@@ -192,12 +191,8 @@ func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
 	if err := wire(accID, delayID, 0); err != nil {
 		return err
 	}
-	prev := delayID
-	for _, wID := range chain {
-		if err := wire(prev, wID, 0); err != nil {
-			return err
-		}
-		prev = wID
+	if err := wire(delayID, wexitID, 0); err != nil {
+		return err
 	}
 	if err := wire(pair.InputID, winID, 0); err != nil {
 		return err
@@ -205,7 +200,7 @@ func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
 	if err := wire(delayID, winID, 1); err != nil {
 		return err
 	}
-	if err := wire(prev, winID, 2); err != nil {
+	if err := wire(wexitID, winID, 2); err != nil {
 		return err
 	}
 	if err := wire(winID, distID, 0); err != nil {

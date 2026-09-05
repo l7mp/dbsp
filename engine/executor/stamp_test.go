@@ -151,7 +151,7 @@ var _ = Describe("Stamp", func() {
 		explicit := circuit.New("stamp-explicit")
 		explicit.AddNode(circuit.Input("in"))
 		explicit.AddNode(circuit.Op("f", f))
-		explicit.AddNode(circuit.Delay("delay"))
+		explicit.AddNode(circuit.Delay("delay", 1))
 		explicit.AddNode(circuit.Integrate("int"))
 		explicit.AddNode(circuit.Output("out"))
 		explicit.AddEdge(circuit.NewEdge("in", "f", 0))

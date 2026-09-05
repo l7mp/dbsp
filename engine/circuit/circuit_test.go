@@ -47,7 +47,7 @@ var _ = Describe("Circuit", func() {
 		})
 
 		It("creates delay nodes", func() {
-			n := Delay("z-1")
+			n := Delay("z-1", 1)
 			Expect(n.ID).To(Equal("z-1"))
 			Expect(n.Kind()).To(Equal(operator.KindDelay))
 		})
@@ -214,7 +214,7 @@ var _ = Describe("Circuit", func() {
 			c := New("delayed-cycle")
 			c.AddNode(Input("in"))
 			c.AddNode(Op("op", operator.NewPlus()))
-			c.AddNode(Delay("z-1"))
+			c.AddNode(Delay("z-1", 1))
 			c.AddNode(Output("out"))
 
 			c.AddEdge(NewEdge("in", "op", 0))
@@ -230,7 +230,7 @@ var _ = Describe("Circuit", func() {
 			c := New("int-into-delay")
 			c.AddNode(Input("in"))
 			c.AddNode(Integrate("int"))
-			c.AddNode(Delay("z"))
+			c.AddNode(Delay("z", 1))
 			c.AddNode(Output("out"))
 			c.AddEdge(NewEdge("in", "int", 0))
 			c.AddEdge(NewEdge("int", "z", 0)) // Rewritten onto z_absorb; retains the live accumulator.
@@ -244,7 +244,7 @@ var _ = Describe("Circuit", func() {
 		It("accepts a delay feeding an integrator", func() {
 			c := New("delay-into-int")
 			c.AddNode(Input("in"))
-			c.AddNode(Delay("z"))
+			c.AddNode(Delay("z", 1))
 			c.AddNode(Integrate("int"))
 			c.AddNode(Output("out"))
 			c.AddEdge(NewEdge("in", "z", 0))

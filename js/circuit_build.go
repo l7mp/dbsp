@@ -120,6 +120,7 @@ var opArgFields = map[string]string{
 	"select":             "predicate",
 	"unwind":             "field",
 	"linear_combination": "coeffs",
+	"delay":              "k",
 }
 
 // parseOpSpec builds an operator from a node spec. Two forms are accepted:

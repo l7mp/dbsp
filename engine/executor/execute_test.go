@@ -102,7 +102,7 @@ var _ = Describe("Executor", func() {
 			// in -> delay -> out.
 			c := circuit.New("delay-test")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Delay("z-1"))
+			c.AddNode(circuit.Delay("z-1", 1))
 			c.AddNode(circuit.Output("out"))
 			c.AddEdge(circuit.NewEdge("in", "z-1", 0))
 			c.AddEdge(circuit.NewEdge("z-1", "out", 0))
@@ -501,7 +501,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 		It("normal equals incremental", func() {
 			c := circuit.New("feedback")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Delay("delay"))
+			c.AddNode(circuit.Delay("delay", 1))
 			c.AddNode(circuit.Op("plus", operator.NewPlus()))
 			c.AddNode(circuit.Output("out"))
 
@@ -550,7 +550,7 @@ var _ = Describe("Fixed-Point Circuits", func() {
 		It("stabilizes with empty input", func() {
 			c := circuit.New("feedback")
 			c.AddNode(circuit.Input("in"))
-			c.AddNode(circuit.Delay("delay"))
+			c.AddNode(circuit.Delay("delay", 1))
 			c.AddNode(circuit.Op("plus", operator.NewPlus()))
 			c.AddNode(circuit.Output("out"))
 
@@ -717,7 +717,7 @@ var _ = Describe("Value-passing invariants", func() {
 		// received strictly before step t.
 		c := circuit.New("delayed-integral")
 		c.AddNode(circuit.Input("in"))
-		c.AddNode(circuit.Delay("z"))
+		c.AddNode(circuit.Delay("z", 1))
 		c.AddNode(circuit.Integrate("int"))
 		c.AddNode(circuit.Output("out"))
 		c.AddEdge(circuit.NewEdge("in", "z", 0))
@@ -790,7 +790,7 @@ var _ = Describe("Value-passing invariants", func() {
 		// PREVIOUS sum in every step.
 		c := circuit.New("feedback-tap")
 		c.AddNode(circuit.Input("in"))
-		c.AddNode(circuit.Delay("d"))
+		c.AddNode(circuit.Delay("d", 1))
 		c.AddNode(circuit.Op("p", operator.NewPlus()))
 		c.AddNode(circuit.Output("out_sum"))
 		c.AddNode(circuit.Output("zz_out"))

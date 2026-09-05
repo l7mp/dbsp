@@ -85,10 +85,8 @@ func nodeTypeIndicator(node *Node) string {
 		return "Input"
 	case operator.KindOutput:
 		return "Output"
-	case operator.KindDelay:
-		return "z⁻¹"
-	case operator.KindDelayAbsorb:
-		return "z⁻¹(absorb)"
+	case operator.KindDelay, operator.KindDelayAbsorb:
+		return node.Operator.String()
 	case operator.KindIntegrate:
 		return "∫"
 	case operator.KindDifferentiate:

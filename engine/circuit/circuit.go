@@ -67,9 +67,14 @@ func (c *Circuit) AddNode(n *Node) error {
 		c.outputIDs[n.ID] = true
 	case operator.KindDelay:
 		// Register the emit node and automatically create its absorb partner.
-		// NewDelay returns a paired (emit, absorb) sharing the same internal state.
+		// NewDelay returns a paired (emit, absorb) sharing the same internal
+		// state; the placeholder operator's depth (z⁻ᵏ) is preserved.
 		c.delayEmitIDs[n.ID] = true
-		emitOp, absorbOp := operator.NewDelay()
+		k := 1
+		if d, ok := n.Operator.(*operator.DelayOp); ok {
+			k = d.K()
+		}
+		emitOp, absorbOp := operator.NewDelay(k)
 		n.Operator = emitOp
 		c.addNodeRaw(&Node{
 			ID:       n.ID + "_absorb",

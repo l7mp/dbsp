@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/l7mp/dbsp/engine/operator"
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
@@ -34,6 +35,7 @@ var _ = Describe("Circuit builder", func() {
 			Entry("@distinct prefix", "@distinct", "distinct"),
 			// Single-argument sugar.
 			Entry("linear_combination coeffs", "linear_combination:[1,1]", "linear_combination"),
+			Entry("delay depth", "delay:5", "delay"),
 			Entry("@project projection", `@project:{"m":"$.n"}`, "project"),
 			Entry("select predicate", `select:{"@eq":["$.a","$.b"]}`, "select"),
 			Entry("unwind bare-string field", "unwind:$.items", "unwind"),
@@ -46,6 +48,12 @@ var _ = Describe("Circuit builder", func() {
 		It("rejects an unknown operator", func() {
 			_, err := parseOpSpec("nonesuch")
 			Expect(err).To(HaveOccurred())
+		})
+
+		It("parses the delay depth argument", func() {
+			op, err := parseOpSpec("delay:5")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(op.(*operator.DelayOp).K()).To(Equal(5))
 		})
 	})
 

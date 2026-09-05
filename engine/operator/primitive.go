@@ -1,16 +1,34 @@
 package operator
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
-// delayState is the shared storage between a paired DelayOp (emit) and DelayAbsorbOp (absorb).
+// delayState is the shared storage between a paired DelayOp (emit) and
+// DelayAbsorbOp (absorb): a ring of k slots implementing z⁻ᵏ. Each step the
+// emit half returns vals[pos] (the value absorbed k steps ago) and the absorb
+// half then overwrites vals[pos] with the current value and advances pos, so
+// the delay costs O(1) per step at any k. Slot contents total the in-flight
+// values, independent of k; empty slots hold empty Z-sets.
 type delayState struct {
-	mu  sync.RWMutex
-	val zset.ZSet
+	mu   sync.RWMutex
+	vals []zset.ZSet
+	pos  int
+}
+
+func newDelayState(k int) *delayState {
+	if k < 1 {
+		k = 1
+	}
+	vals := make([]zset.ZSet, k)
+	for i := range vals {
+		vals[i] = zset.New()
+	}
+	return &delayState{vals: vals}
 }
 
 // InputOp is a circuit-input boundary operator (arity 0, Primitive).
@@ -95,57 +113,90 @@ type DelayAbsorbOp struct {
 	s *delayState
 }
 
-// NewDelay creates a paired (DelayOp, DelayAbsorbOp) sharing internal state,
-// implementing the z⁻¹ operator. The DelayOp emits the previous stored value;
-// the DelayAbsorbOp absorbs the current value for the next timestep.
-func NewDelay(opts ...Option) (*DelayOp, *DelayAbsorbOp) {
-	s := &delayState{val: zset.New()}
-	return &DelayOp{baseOp: newBaseOp("delay", opts), s: s},
-		&DelayAbsorbOp{baseOp: newBaseOp("delay_absorb", opts), s: s}
+// NewDelay creates a paired (DelayOp, DelayAbsorbOp) sharing a k-slot ring,
+// implementing the z⁻ᵏ operator: the DelayOp emits the value the
+// DelayAbsorbOp absorbed k timesteps earlier. k < 1 is clamped to 1; k = 1 is
+// the plain z⁻¹.
+func NewDelay(k int, opts ...Option) (*DelayOp, *DelayAbsorbOp) {
+	if k < 1 {
+		k = 1
+	}
+	s := newDelayState(k)
+	emit := &DelayOp{baseOp: newBaseOp("delay", opts), s: s}
+	if k > 1 {
+		emit.jsonOp.K = k
+	}
+	return emit, &DelayAbsorbOp{baseOp: newBaseOp("delay_absorb", opts), s: s}
 }
 
 // DelayOp methods.
 
-func (o *DelayOp) Kind() Kind           { return KindDelay }
-func (o *DelayOp) String() string       { return "z⁻¹" }
+func (o *DelayOp) Kind() Kind { return KindDelay }
+
+// K returns the delay depth in timesteps.
+func (o *DelayOp) K() int { return len(o.s.vals) }
+
+func (o *DelayOp) String() string {
+	if o.K() == 1 {
+		return "z⁻¹"
+	}
+	return fmt.Sprintf("z⁻%d", o.K())
+}
+
 func (o *DelayOp) Arity() int           { return 0 }
 func (o *DelayOp) Linearity() Linearity { return Primitive }
 
-// Set pre-seeds the stored value with v (e.g., after reset).
+// Set clears the ring and pre-seeds the value emitted next (e.g., after reset).
 func (o *DelayOp) Set(v zset.ZSet) {
 	o.s.mu.Lock()
 	defer o.s.mu.Unlock()
-	o.s.val = v
+	for i := range o.s.vals {
+		o.s.vals[i] = zset.New()
+	}
+	o.s.pos = 0
+	o.s.vals[0] = v
 }
 
-// Apply returns the value stored by the previous timestep's DelayAbsorbOp.
+// Apply returns the value stored by the DelayAbsorbOp k timesteps ago.
 func (o *DelayOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	o.s.mu.RLock()
 	defer o.s.mu.RUnlock()
-	return o.s.val, nil
+	return o.s.vals[o.s.pos], nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (o *DelayOp) UnmarshalJSON(data []byte) error {
-	if o.s == nil {
-		o.s = &delayState{val: zset.New()}
+	if err := o.baseOp.UnmarshalJSON(data); err != nil {
+		return err
 	}
-	return o.baseOp.UnmarshalJSON(data)
+	o.s = newDelayState(o.jsonOp.K)
+	return nil
 }
 
 // DelayAbsorbOp methods.
 
-func (o *DelayAbsorbOp) Kind() Kind           { return KindDelayAbsorb }
-func (o *DelayAbsorbOp) String() string       { return "z⁻¹(absorb)" }
+func (o *DelayAbsorbOp) Kind() Kind { return KindDelayAbsorb }
+
+func (o *DelayAbsorbOp) String() string {
+	if len(o.s.vals) == 1 {
+		return "z⁻¹(absorb)"
+	}
+	return fmt.Sprintf("z⁻%d(absorb)", len(o.s.vals))
+}
+
 func (o *DelayAbsorbOp) Arity() int           { return 1 }
 func (o *DelayAbsorbOp) Linearity() Linearity { return Primitive }
 
-// Apply stores in for the next timestep's DelayOp and returns in unchanged.
+// Apply stores in into the ring slot its paired DelayOp just emitted from,
+// advances the ring, and returns in unchanged. The executor's topological
+// order runs the emit half before the absorb half within a step, so the slot
+// being overwritten has already been emitted.
 func (o *DelayAbsorbOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, error) {
 	in := inputs[0]
 	o.s.mu.Lock()
 	defer o.s.mu.Unlock()
-	o.s.val = in
+	o.s.vals[o.s.pos] = in
+	o.s.pos = (o.s.pos + 1) % len(o.s.vals)
 	return in, nil
 }
 
@@ -153,7 +204,7 @@ func (o *DelayAbsorbOp) Apply(_ *ExecContext, inputs ...zset.ZSet) (zset.ZSet, e
 // directly but the method is provided for completeness.
 func (o *DelayAbsorbOp) UnmarshalJSON(data []byte) error {
 	if o.s == nil {
-		o.s = &delayState{val: zset.New()}
+		o.s = newDelayState(1)
 	}
 	return o.baseOp.UnmarshalJSON(data)
 }

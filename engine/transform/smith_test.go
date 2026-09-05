@@ -64,13 +64,14 @@ var _ = Describe("SmithPredictor", func() {
 		sm, err := NewSmithPredictor(3, ReconcilerPair{InputID: "input_u", OutputID: "output_u"}).Transform(c)
 		Expect(err).NotTo(HaveOccurred())
 
-		// The reconciler core, the window delay line (k cells: the acc
-		// feedback delay plus k−1 chained), and the prediction distinct.
+		// The reconciler core, the two window taps (the acc feedback delay
+		// plus one z⁻⁽ᵏ⁻¹⁾ exit delay), and the prediction distinct.
 		Expect(sm.Node("_smith_output_u_sub")).NotTo(BeNil())
 		Expect(sm.Node("_smith_output_u_acc")).NotTo(BeNil())
 		Expect(sm.Node("_smith_output_u_delay")).NotTo(BeNil())
-		Expect(sm.Node("_smith_output_u_w2")).NotTo(BeNil())
-		Expect(sm.Node("_smith_output_u_w3")).NotTo(BeNil())
+		wexit := sm.Node("_smith_output_u_wexit")
+		Expect(wexit).NotTo(BeNil())
+		Expect(wexit.Operator.(*operator.DelayOp).K()).To(Equal(2))
 		Expect(sm.Node("_smith_output_u_win")).NotTo(BeNil())
 		Expect(sm.Node("_smith_output_u_dist")).NotTo(BeNil())
 		Expect(sm.Node("_smith_output_u_dist").Kind()).To(Equal(operator.KindDistinct))
@@ -195,6 +196,33 @@ var _ = Describe("SmithPredictor", func() {
 
 		out = step(map[string]zset.ZSet{})
 		Expect(out["output_u"].IsZero()).To(BeTrue())
+	})
+
+	It("executes a storm-sized window: one emission, a long silent flight, no re-emission", func() {
+		// K = 100 against a true dead time of 40 steps: the command stays in
+		// flight far longer than any chain-practical window, and the ring
+		// delay shields the loop the whole way; the plain Reconciler would
+		// re-emit on each of the 39 silent steps.
+		step := smithTestCircuit(100)
+
+		out := step(map[string]zset.ZSet{"input_d": plus()})
+		Expect(out["output_u"].Lookup(e.Hash())).To(Equal(zset.Weight(1)))
+
+		for t := 1; t < 40; t++ {
+			out = step(map[string]zset.ZSet{})
+			Expect(out["output_u"].IsZero()).To(BeTrue(), "silent flight step %d", t)
+		}
+
+		// t=40: the echo lands well inside the window: retired by content.
+		out = step(map[string]zset.ZSet{"input_u": plus()})
+		Expect(out["output_u"].IsZero()).To(BeTrue())
+
+		// Quiescent through and past the window boundary (the confirmed
+		// command's expiry at t=100 must not resurface it).
+		for t := 41; t <= 105; t++ {
+			out = step(map[string]zset.ZSet{})
+			Expect(out["output_u"].IsZero()).To(BeTrue(), "quiescent step %d", t)
+		}
 	})
 
 	It("executes the under-estimated run: re-emission every K steps, the overlap collapsed", func() {

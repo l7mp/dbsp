@@ -13,6 +13,7 @@ import (
 // wire representation is a {"type":"..."} object (no extra fields).
 type jsonOp struct {
 	Type       string                     `json:"type"`
+	K          int                        `json:"k,omitempty"`
 	Coeffs     []int                      `json:"coeffs,omitempty"`
 	Predicate  json.RawMessage            `json:"predicate,omitempty"`
 	Projection json.RawMessage            `json:"projection,omitempty"`
@@ -135,7 +136,7 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 	case "output":
 		return NewOutput(), nil
 	case "delay":
-		emit, _ := NewDelay()
+		emit, _ := NewDelay(p.K)
 		return emit, nil
 	case "integrate":
 		return NewIntegrate(), nil

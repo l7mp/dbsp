@@ -144,7 +144,7 @@ func injectReconcilerLoop(c *circuit.Circuit, pair ReconcilerPair) error {
 	if err := c.AddNode(circuit.Op(accID, operator.NewPlus())); err != nil {
 		return fmt.Errorf("reconciler: add acc node: %w", err)
 	}
-	if err := c.AddNode(circuit.Delay(delayID)); err != nil {
+	if err := c.AddNode(circuit.Delay(delayID, 1)); err != nil {
 		return fmt.Errorf("reconciler: add delay node: %w", err)
 	}
 

@@ -25,8 +25,13 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 		result.AddNode(Output(id))
 		return id, id
 	case op.Kind() == operator.KindDelay:
+		// z⁻ᵏ is LTI: it incrementalizes to itself, depth included.
 		incrID := incrementalID(id)
-		result.AddNode(Delay(incrID))
+		k := 1
+		if d, ok := op.(*operator.DelayOp); ok {
+			k = d.K()
+		}
+		result.AddNode(Delay(incrID, k))
 		return incrID, incrID
 	case op.Kind() == operator.KindDelayAbsorb:
 		emitID := strings.TrimSuffix(id, "_absorb")
@@ -59,8 +64,8 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 		sum12 := prefix + "_sum12"
 		sumAll := prefix + "_sum"
 
-		result.AddNode(Delay(delayLeft))
-		result.AddNode(Delay(delayRight))
+		result.AddNode(Delay(delayLeft, 1))
+		result.AddNode(Delay(delayRight, 1))
 		result.AddNode(Integrate(intLeft))
 		result.AddNode(Integrate(intRight))
 		result.AddNode(Op(term1, op))
@@ -119,7 +124,7 @@ func (n *Node) Incrementalize(result *Circuit) (inputNode, outputNode string) {
 		hNode := prefix + "_H_func"
 
 		result.AddNode(Op(noOpNode, operator.NewNoOp()))   // NoOp: represents a single input node
-		result.AddNode(Delay(delayNode))                   // z⁻¹: previous delta
+		result.AddNode(Delay(delayNode, 1))                // z⁻¹: previous delta
 		result.AddNode(Integrate(intNode))                 // ∫: previous integrated state (z⁻¹ then ∫)
 		result.AddNode(Op(hNode, operator.NewDistinctH())) // H(z⁻¹∫, δ)
 
