@@ -22,6 +22,12 @@ import (
 // costs O(1) nodes and O(1) work per step at any K. K is the assumed
 // feedback dead time, in circuit steps, and K = 1 degenerates to the
 // plain Reconciler.
+//
+// The transform runs on the delta side of the chain, after the
+// Incrementalizer: dead time is a property of the actuated incremental
+// loop (a snapshot circuit has no feedback and hence no dead time), so the
+// jacket is injected directly in delta form, with dist^Δ placed as its
+// compiled shape (z⁻¹ then ∫ feeding the distinct H function).
 type smithPredictor struct {
 	k     int
 	pairs []ReconcilerPair
@@ -73,42 +79,63 @@ func (t *smithPredictor) Transform(c *circuit.Circuit) (*circuit.Circuit, error)
 	return clone, nil
 }
 
-func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
+// loopCore names the injected nodes of the desired-state predictor
+// skeleton shared by the SmithPredictor and the DualRateSmith: the
+// correction integrator U = ∫(δD − δS) with its z⁻¹ entry tap, the
+// window sum δY + z⁻¹U − <exit>, and the prediction distinct in compiled
+// delta form. The caller wires its window exit into winID port 2.
+type loopCore struct {
+	subID, accID, delayID, winID string
+}
+
+// injectPredictorCore injects the shared predictor skeleton for one pair;
+// kind prefixes the error messages ("smith" or "dualrate").
+func injectPredictorCore(c *circuit.Circuit, pair ReconcilerPair, prefix, kind string) (loopCore, error) {
 	inputNode := c.Node(pair.InputID)
 	outputNode := c.Node(pair.OutputID)
 	if inputNode == nil {
-		return fmt.Errorf("smith: input node %q not found", pair.InputID)
+		return loopCore{}, fmt.Errorf("%s: input node %q not found", kind, pair.InputID)
 	}
 	if outputNode == nil {
-		return fmt.Errorf("smith: output node %q not found", pair.OutputID)
+		return loopCore{}, fmt.Errorf("%s: output node %q not found", kind, pair.OutputID)
 	}
 	if inputNode.Kind() != operator.KindInput {
-		return fmt.Errorf("smith: node %q is %s, not input", pair.InputID, inputNode.Kind())
+		return loopCore{}, fmt.Errorf("%s: node %q is %s, not input", kind, pair.InputID, inputNode.Kind())
 	}
 	if outputNode.Kind() != operator.KindOutput {
-		return fmt.Errorf("smith: node %q is %s, not output", pair.OutputID, outputNode.Kind())
+		return loopCore{}, fmt.Errorf("%s: node %q is %s, not output", kind, pair.OutputID, outputNode.Kind())
 	}
-	if c.Node("_rec_"+pair.OutputID+"_acc") != nil {
-		return fmt.Errorf("smith: output %q already carries a Reconciler loop; apply SmithPredictor instead of (not on top of) Reconciler", pair.OutputID)
-	}
-
-	prefix := "_smith_" + pair.OutputID
-	accID := prefix + "_acc"
-	if c.Node(accID) != nil {
-		return fmt.Errorf("smith: output %q already carries a Smith loop", pair.OutputID)
+	// One loop per output: refuse to stack on any existing jacket. The
+	// Reconciler runs on the snapshot side, so its jacket reaches the
+	// delta-side transforms with the incrementalizer's ^Δ suffix; check
+	// both spellings.
+	for _, existing := range []struct{ node, what string }{
+		{"_rec_" + pair.OutputID + "_acc", "Reconciler"},
+		{"_rec_" + pair.OutputID + "_acc^Δ", "Reconciler"},
+		{"_smith_" + pair.OutputID + "_acc", "Smith"},
+		{"_drs_" + pair.OutputID + "_acc", "DualRateSmith"},
+	} {
+		if c.Node(existing.node) != nil {
+			return loopCore{}, fmt.Errorf("%s: output %q already carries a %s loop", kind, pair.OutputID, existing.what)
+		}
 	}
 
 	inEdges := c.EdgesTo(pair.OutputID)
 	if len(inEdges) == 0 {
-		return fmt.Errorf("smith: output node %q has no incoming edges", pair.OutputID)
+		return loopCore{}, fmt.Errorf("%s: output node %q has no incoming edges", kind, pair.OutputID)
 	}
 
+	core := loopCore{
+		subID:   prefix + "_sub",
+		accID:   prefix + "_acc",
+		delayID: prefix + "_delay",
+		winID:   prefix + "_win",
+	}
 	sumID := prefix + "_sum"
-	subID := prefix + "_sub"
-	delayID := prefix + "_delay"
-	wexitID := prefix + "_wexit"
-	winID := prefix + "_win"
 	distID := prefix + "_dist"
+	distNoopID := prefix + "_dist_noop"
+	distDelayID := prefix + "_dist_delay"
+	distIntID := prefix + "_dist_int"
 
 	// Fold multiple predecessors into one desired-delta stream, as the
 	// Reconciler does.
@@ -127,11 +154,11 @@ func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
 			coeffs[i] = 1
 		}
 		if err := c.AddNode(circuit.Op(sumID, operator.NewLinearCombination(coeffs))); err != nil {
-			return fmt.Errorf("smith: add sum node: %w", err)
+			return loopCore{}, fmt.Errorf("%s: add sum node: %w", kind, err)
 		}
 		for _, e := range inEdges {
 			if err := c.AddEdge(circuit.NewEdge(e.From, sumID, e.Port)); err != nil {
-				return fmt.Errorf("smith: wire pred to sum: %w", err)
+				return loopCore{}, fmt.Errorf("%s: wire pred to sum: %w", kind, err)
 			}
 		}
 		predID = sumID
@@ -139,76 +166,91 @@ func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
 
 	// U = ∫(δD − δS): the Reconciler's sub/acc/delay feedback, with the
 	// prediction delta in place of the raw feedback.
-	if err := c.AddNode(circuit.Op(subID, operator.NewMinus())); err != nil {
-		return fmt.Errorf("smith: add sub node: %w", err)
+	if err := c.AddNode(circuit.Op(core.subID, operator.NewMinus())); err != nil {
+		return loopCore{}, fmt.Errorf("%s: add sub node: %w", kind, err)
 	}
-	if err := c.AddNode(circuit.Op(accID, operator.NewPlus())); err != nil {
-		return fmt.Errorf("smith: add acc node: %w", err)
+	if err := c.AddNode(circuit.Op(core.accID, operator.NewPlus())); err != nil {
+		return loopCore{}, fmt.Errorf("%s: add acc node: %w", kind, err)
 	}
-	if err := c.AddNode(circuit.Delay(delayID, 1)); err != nil {
-		return fmt.Errorf("smith: add delay node: %w", err)
-	}
-
-	// The window taps: the acc feedback delay doubles as the entry tap
-	// z⁻¹U; a single z⁻⁽ᵏ⁻¹⁾ ring delay on it yields the exit tap z⁻ᴷU.
-	if err := c.AddNode(circuit.Delay(wexitID, k-1)); err != nil {
-		return fmt.Errorf("smith: add window exit delay: %w", err)
+	if err := c.AddNode(circuit.Delay(core.delayID, 1)); err != nil {
+		return loopCore{}, fmt.Errorf("%s: add delay node: %w", kind, err)
 	}
 
-	// δS = dist^Δ(δY + z⁻¹U − z⁻ᴷU): the incrementalizer compiles the
-	// distinct; its integral is the Smith prediction.
-	if err := c.AddNode(circuit.Op(winID, operator.NewLinearCombination([]int{1, 1, -1}))); err != nil {
-		return fmt.Errorf("smith: add window sum node: %w", err)
+	// δS = dist^Δ(δY + z⁻¹U − <exit>): the prediction distinct in its
+	// compiled delta form, H(z⁻¹∫, δ), the same shape the incrementalizer
+	// emits for a snapshot-side distinct. Its integral is the prediction.
+	if err := c.AddNode(circuit.Op(core.winID, operator.NewLinearCombination([]int{1, 1, -1}))); err != nil {
+		return loopCore{}, fmt.Errorf("%s: add window sum node: %w", kind, err)
 	}
-	if err := c.AddNode(circuit.Op(distID, operator.NewDistinct())); err != nil {
-		return fmt.Errorf("smith: add prediction distinct node: %w", err)
+	if err := c.AddNode(circuit.Op(distNoopID, operator.NewNoOp())); err != nil {
+		return loopCore{}, fmt.Errorf("%s: add prediction fan node: %w", kind, err)
+	}
+	if err := c.AddNode(circuit.Delay(distDelayID, 1)); err != nil {
+		return loopCore{}, fmt.Errorf("%s: add prediction delay node: %w", kind, err)
+	}
+	if err := c.AddNode(circuit.Integrate(distIntID)); err != nil {
+		return loopCore{}, fmt.Errorf("%s: add prediction integrator node: %w", kind, err)
+	}
+	if err := c.AddNode(circuit.Op(distID, operator.NewDistinctH())); err != nil {
+		return loopCore{}, fmt.Errorf("%s: add prediction distinct node: %w", kind, err)
 	}
 
 	for _, e := range inEdges {
 		if err := c.RemoveEdge(e.From, pair.OutputID, e.Port); err != nil {
-			return fmt.Errorf("smith: remove pred to output edge: %w", err)
+			return loopCore{}, fmt.Errorf("%s: remove pred to output edge: %w", kind, err)
 		}
 	}
 
 	wire := func(from, to string, port int) error {
 		if err := c.AddEdge(circuit.NewEdge(from, to, port)); err != nil {
-			return fmt.Errorf("smith: wire %s to %s: %w", from, to, err)
+			return fmt.Errorf("%s: wire %s to %s: %w", kind, from, to, err)
 		}
 		return nil
 	}
-	if err := wire(predID, subID, 0); err != nil {
-		return err
+	for _, w := range []struct {
+		from, to string
+		port     int
+	}{
+		{predID, core.subID, 0},
+		{distID, core.subID, 1},
+		{core.subID, core.accID, 0},
+		{core.delayID, core.accID, 1},
+		{core.accID, core.delayID, 0},
+		{pair.InputID, core.winID, 0},
+		{core.delayID, core.winID, 1},
+		{core.winID, distNoopID, 0},
+		{distNoopID, distDelayID, 0},
+		{distDelayID, distIntID, 0},
+		{distIntID, distID, 0},
+		{distNoopID, distID, 1},
+		{core.accID, pair.OutputID, 0},
+	} {
+		if err := wire(w.from, w.to, w.port); err != nil {
+			return loopCore{}, err
+		}
 	}
-	if err := wire(distID, subID, 1); err != nil {
-		return err
-	}
-	if err := wire(subID, accID, 0); err != nil {
-		return err
-	}
-	if err := wire(delayID, accID, 1); err != nil {
-		return err
-	}
-	if err := wire(accID, delayID, 0); err != nil {
-		return err
-	}
-	if err := wire(delayID, wexitID, 0); err != nil {
-		return err
-	}
-	if err := wire(pair.InputID, winID, 0); err != nil {
-		return err
-	}
-	if err := wire(delayID, winID, 1); err != nil {
-		return err
-	}
-	if err := wire(wexitID, winID, 2); err != nil {
-		return err
-	}
-	if err := wire(winID, distID, 0); err != nil {
-		return err
-	}
-	if err := wire(accID, pair.OutputID, 0); err != nil {
+
+	return core, nil
+}
+
+func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
+	prefix := "_smith_" + pair.OutputID
+	core, err := injectPredictorCore(c, pair, prefix, "smith")
+	if err != nil {
 		return err
 	}
 
+	// The window taps: the acc feedback delay doubles as the entry tap
+	// z⁻¹U; a single z⁻⁽ᵏ⁻¹⁾ ring delay on it yields the exit tap z⁻ᴷU.
+	wexitID := prefix + "_wexit"
+	if err := c.AddNode(circuit.Delay(wexitID, k-1)); err != nil {
+		return fmt.Errorf("smith: add window exit delay: %w", err)
+	}
+	if err := c.AddEdge(circuit.NewEdge(core.delayID, wexitID, 0)); err != nil {
+		return fmt.Errorf("smith: wire entry tap to window exit: %w", err)
+	}
+	if err := c.AddEdge(circuit.NewEdge(wexitID, core.winID, 2)); err != nil {
+		return fmt.Errorf("smith: wire window exit: %w", err)
+	}
 	return nil
 }

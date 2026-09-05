@@ -54,6 +54,9 @@ type PeriodicConfig struct {
 	// field. Defaults to PeriodicSourceObjectName if empty.
 	TriggerName string
 	Period      time.Duration
+	// Pulse switches the emission to a bare clock signal: one empty
+	// document asserted per period, nothing retracted.
+	Pulse bool
 	// Runtime is the engine runtime used to create a publisher.
 	Runtime *dbspruntime.Runtime
 	Logger  logr.Logger
@@ -68,6 +71,9 @@ type PeriodicProducer struct {
 	period time.Duration
 }
 
+// pulseDocument is the empty clock document a pulse emission asserts.
+var pulseDocument = dbspunstructured.New(map[string]any{})
+
 type baseProducer struct {
 	*dbspruntime.BaseProducer
 
@@ -81,6 +87,9 @@ type baseProducer struct {
 	// it, so the trigger topic is a well-formed state stream holding exactly
 	// the current trigger document. Only accessed from the Start goroutine.
 	lastDoc *dbspunstructured.Unstructured
+	// pulse switches the emission to a bare clock signal: one empty document
+	// asserted per period, nothing retracted.
+	pulse bool
 
 	log logr.Logger
 }
@@ -126,6 +135,7 @@ func NewPeriodicProducer(cfg PeriodicConfig) (*PeriodicProducer, error) {
 	if err != nil {
 		return nil, err
 	}
+	b.pulse = cfg.Pulse
 	return &PeriodicProducer{baseProducer: b, period: cfg.Period}, nil
 }
 
@@ -253,13 +263,17 @@ func (p *PeriodicProducer) Start(ctx context.Context) error {
 }
 
 func (p *baseProducer) emit() error {
-	doc := p.triggerDocument()
 	zs := zset.New()
-	if p.lastDoc != nil {
-		zs.Insert(p.lastDoc, -1)
+	if p.pulse {
+		zs.Insert(pulseDocument, 1)
+	} else {
+		doc := p.triggerDocument()
+		if p.lastDoc != nil {
+			zs.Insert(p.lastDoc, -1)
+		}
+		zs.Insert(doc, 1)
+		p.lastDoc = doc
 	}
-	zs.Insert(doc, 1)
-	p.lastDoc = doc
 
 	dbspruntime.LogFlowEvent(p.log, "producer.emit", "producer", p.String(), "output", p.inputName, "", zs, nil)
 

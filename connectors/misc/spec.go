@@ -22,6 +22,9 @@ type TriggerSpec struct {
 	Namespace string `json:"namespace,omitempty"`
 	// Period is the tick cadence as a Go duration string; Tick only.
 	Period string `json:"period,omitempty"`
+	// Pulse switches the emission to a bare clock signal: one empty
+	// document asserted per period, nothing retracted. Tick only.
+	Pulse bool `json:"pulse,omitempty"`
 }
 
 // Deps carries the non-serializable runtime dependencies of a trigger
@@ -60,6 +63,7 @@ func NewTick(topic string, spec TriggerSpec, deps Deps) (*PeriodicProducer, erro
 		Namespace:   spec.Namespace,
 		TriggerName: spec.Name,
 		Period:      period,
+		Pulse:       spec.Pulse,
 		Runtime:     deps.Runtime,
 		Logger:      deps.Logger,
 	})

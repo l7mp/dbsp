@@ -32,7 +32,7 @@ var _ = Describe("Chain", func() {
 		for _, s := range ch.Specs() {
 			order = append(order, s.Type)
 		}
-		Expect(order).To(Equal([]TransformerType{SmithPredictor, Distincter, Incrementalizer}))
+		Expect(order).To(Equal([]TransformerType{Distincter, Incrementalizer, SmithPredictor}))
 	})
 
 	It("rejects duplicates and unknown types", func() {
@@ -47,16 +47,16 @@ var _ = Describe("Chain", func() {
 	})
 
 	It("applies out-of-order specs identically to the manual canonical sequence", func() {
-		// Manual: SmithPredictor on the snapshot side, then Incrementalizer.
-		manual, err := NewSmithPredictor(2, pair).Transform(newLoopCircuit())
+		// Manual: Incrementalizer first, then SmithPredictor on the delta side.
+		manual, err := NewIncrementalizer().Transform(newLoopCircuit())
 		Expect(err).NotTo(HaveOccurred())
-		manual, err = NewIncrementalizer().Transform(manual)
+		manual, err = NewSmithPredictor(2, pair).Transform(manual)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Chain, specified backwards.
 		ch, err := NewChain(
-			Spec{Type: Incrementalizer},
 			Spec{Type: SmithPredictor, Args: []any{2, []ReconcilerPair{pair}}},
+			Spec{Type: Incrementalizer},
 		)
 		Expect(err).NotTo(HaveOccurred())
 		chained, err := ch.Transform(newLoopCircuit())

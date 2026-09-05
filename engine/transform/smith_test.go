@@ -14,9 +14,10 @@ import (
 
 // smithTestCircuit builds the identity pipeline (desired deltas flow from
 // input_d to output_u; input_u is the feedback the driver injects by hand),
-// applies SmithPredictor with window k, incrementalizes, and returns an
-// executor plus a step function that plays one circuit step. Injecting the
-// feedback manually lets the test emulate any true dead time.
+// incrementalizes, applies SmithPredictor with window k on the delta side
+// (the canonical order), and returns an executor plus a step function that
+// plays one circuit step. Injecting the feedback manually lets the test
+// emulate any true dead time.
 func smithTestCircuit(k int) func(in map[string]zset.ZSet) map[string]zset.ZSet {
 	c := circuit.New("smith-run")
 	Expect(c.AddNode(circuit.Input("input_d"))).To(Succeed())
@@ -24,15 +25,15 @@ func smithTestCircuit(k int) func(in map[string]zset.ZSet) map[string]zset.ZSet 
 	Expect(c.AddNode(circuit.Output("output_u"))).To(Succeed())
 	Expect(c.AddEdge(circuit.NewEdge("input_d", "output_u", 0))).To(Succeed())
 
-	sm, err := NewSmithPredictor(k, ReconcilerPair{InputID: "input_u", OutputID: "output_u"}).Transform(c)
-	Expect(err).NotTo(HaveOccurred())
-	Expect(sm.Validate()).To(BeEmpty())
-
-	incr, err := NewIncrementalizer().Transform(sm)
+	incr, err := NewIncrementalizer().Transform(c)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(incr.Validate()).To(BeEmpty())
 
-	exec, err := executor.New(incr, logr.Discard())
+	sm, err := NewSmithPredictor(k, ReconcilerPair{InputID: "input_u", OutputID: "output_u"}).Transform(incr)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(sm.Validate()).To(BeEmpty())
+
+	exec, err := executor.New(sm, logr.Discard())
 	Expect(err).NotTo(HaveOccurred())
 
 	return func(in map[string]zset.ZSet) map[string]zset.ZSet {
@@ -65,7 +66,8 @@ var _ = Describe("SmithPredictor", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// The reconciler core, the two window taps (the acc feedback delay
-		// plus one z⁻⁽ᵏ⁻¹⁾ exit delay), and the prediction distinct.
+		// plus one z⁻⁽ᵏ⁻¹⁾ exit delay), and the prediction distinct in its
+		// compiled delta form (fan, z⁻¹, ∫, H).
 		Expect(sm.Node("_smith_output_u_sub")).NotTo(BeNil())
 		Expect(sm.Node("_smith_output_u_acc")).NotTo(BeNil())
 		Expect(sm.Node("_smith_output_u_delay")).NotTo(BeNil())
@@ -73,8 +75,11 @@ var _ = Describe("SmithPredictor", func() {
 		Expect(wexit).NotTo(BeNil())
 		Expect(wexit.Operator.(*operator.DelayOp).K()).To(Equal(2))
 		Expect(sm.Node("_smith_output_u_win")).NotTo(BeNil())
+		Expect(sm.Node("_smith_output_u_dist_noop")).NotTo(BeNil())
+		Expect(sm.Node("_smith_output_u_dist_delay")).NotTo(BeNil())
+		Expect(sm.Node("_smith_output_u_dist_int")).NotTo(BeNil())
 		Expect(sm.Node("_smith_output_u_dist")).NotTo(BeNil())
-		Expect(sm.Node("_smith_output_u_dist").Kind()).To(Equal(operator.KindDistinct))
+		Expect(sm.Node("_smith_output_u_dist").Kind()).To(Equal(operator.KindDistinctH))
 
 		outEdges := sm.EdgesTo("output_u")
 		Expect(outEdges).To(HaveLen(1))

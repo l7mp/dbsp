@@ -16,16 +16,19 @@ import (
 //	{"name": "Incrementalizer"}
 //	{"name": "Reconciler", "pairs": [["observed", "status"], ...]}
 //	{"name": "SmithPredictor", "pairs": [...], "k": 2}
+//	{"name": "DualRateSmith", "pairs": [...], "k": 10, "tick": "Tick"}
 //	{"name": "Distincter", "key": <expression>}
 //
 // Pairs name topics (or input_/output_ node IDs; bare names are
-// canonicalized), the SmithPredictor's k is its dead time in circuit
-// steps, and the optional Distincter key turns the plain distinct into
-// distinct_pi.
+// canonicalized). The SmithPredictor's k is its dead time in circuit
+// steps; the DualRateSmith's k is its compensation window in ticks and
+// tick names the clock input the transform injects (default "Tick").
+// The optional Distincter key turns the plain distinct into distinct_pi.
 type TransformSpec struct {
 	Name  string          `json:"name"`
 	Pairs [][]string      `json:"pairs,omitempty"`
 	K     int             `json:"k,omitempty"`
+	Tick  string          `json:"tick,omitempty"`
 	Key   json.RawMessage `json:"key,omitempty"`
 }
 
@@ -65,6 +68,15 @@ func (ts TransformSpec) Spec() (Spec, error) {
 			args = append(args, pairs)
 		}
 		args = append(args, ts.K)
+	case DualRateSmith:
+		if len(ts.Pairs) > 0 {
+			pairs, err := parseSpecPairs(typ, ts.Pairs)
+			if err != nil {
+				return Spec{}, err
+			}
+			args = append(args, pairs)
+		}
+		args = append(args, ts.K, ts.Tick)
 	case Rewriter:
 		return Spec{}, fmt.Errorf("transform %s: not a user-facing transform", typ)
 	default:

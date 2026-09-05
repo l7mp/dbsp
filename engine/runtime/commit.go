@@ -110,6 +110,22 @@ func (rt *Runtime) CommitCircuit(name string, q *compiler.Query, specs []transfo
 	query := *q
 	query.Circuit = c
 
+	// A transform may inject input nodes of its own (the DualRateSmith's
+	// tick input): subscribe them like compiled inputs, keyed by the topic
+	// stem of the node ID.
+	inputMap := make(map[string]string, len(q.InputMap))
+	compiled := make(map[string]bool, len(q.InputMap))
+	for k, v := range q.InputMap {
+		inputMap[k] = v
+		compiled[v] = true
+	}
+	for _, n := range c.Inputs() {
+		if !compiled[n.ID] {
+			inputMap[strings.TrimPrefix(n.ID, "input_")] = n.ID
+		}
+	}
+	query.InputMap = inputMap
+
 	logger := opts.Logger
 	if logger.GetSink() == nil {
 		logger = rt.Logger()

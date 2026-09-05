@@ -14,6 +14,7 @@ const (
 	Incrementalizer TransformerType = "Incrementalizer"
 	Reconciler      TransformerType = "Reconciler"
 	SmithPredictor  TransformerType = "SmithPredictor"
+	DualRateSmith   TransformerType = "DualRateSmith"
 	Distincter      TransformerType = "Distincter"
 
 	// Rewriter is the internal algebraic rewrite pass. It is not
@@ -44,11 +45,17 @@ func New(typ TransformerType, args ...any) (Transformer, error) {
 		}
 		return NewReconciler(pairs...), nil
 	case SmithPredictor:
-		k, pairs, err := parseSmithArgs(args)
+		k, _, pairs, err := parseSmithArgs(args)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", SmithPredictor, err)
 		}
 		return NewSmithPredictor(k, pairs...), nil
+	case DualRateSmith:
+		k, tick, pairs, err := parseSmithArgs(args)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", DualRateSmith, err)
+		}
+		return NewDualRateSmith(k, tick, pairs...), nil
 	case Distincter:
 		key, err := parseDistincterArgs(args)
 		if err != nil {
@@ -101,15 +108,20 @@ type Spec struct {
 	Args []any
 }
 
-// canonicalRank orders the transforms along the incrementalization boundary:
-// the control-loop transforms first (Reconciler, SmithPredictor), then
-// Distincter, then the Incrementalizer. Equal ranks preserve the caller's
-// relative order.
+// canonicalRank orders the transforms along the incrementalization boundary.
+// The Reconciler's jacket is all-linear, so it runs on the snapshot side and
+// passes through incrementalization unchanged; Distincter follows; then the
+// Incrementalizer. The SmithPredictor runs on the delta side, after the
+// Incrementalizer: dead time is a property of the actuated incremental loop
+// (a snapshot circuit has no feedback and hence no dead time), and the
+// jacket is injected directly in delta form, dist^Δ included. Equal ranks
+// preserve the caller's relative order.
 var canonicalRank = map[TransformerType]int{
 	Reconciler:      20,
-	SmithPredictor:  20,
 	Distincter:      30,
 	Incrementalizer: 40,
+	SmithPredictor:  50,
+	DualRateSmith:   50,
 }
 
 // Chain is a meta-transformer that applies a set of transforms in canonical
@@ -174,18 +186,21 @@ func (t *Chain) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
 	return current, nil
 }
 
-func parseSmithArgs(args []any) (int, []ReconcilerPair, error) {
+func parseSmithArgs(args []any) (int, string, []ReconcilerPair, error) {
 	var pairs []ReconcilerPair
 	k := 0
+	tick := ""
 	for i, arg := range args {
 		switch v := arg.(type) {
 		case int:
 			k = v
+		case string:
+			tick = v
 		case []ReconcilerPair:
 			pairs = v
 		default:
-			return 0, nil, fmt.Errorf("arg %d: expected int or []ReconcilerPair, got %T", i, arg)
+			return 0, "", nil, fmt.Errorf("arg %d: expected int, string or []ReconcilerPair, got %T", i, arg)
 		}
 	}
-	return k, pairs, nil
+	return k, tick, pairs, nil
 }

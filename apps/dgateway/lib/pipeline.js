@@ -126,23 +126,38 @@ function buildOperatorSpec(options = {}) {
     k8sTransforms.push({ name: "Reconciler", pairs: STATUS_PAIRS });
   } else if (options.smith) {
     // The dead-time compensated loop: same closed-loop pairs, but the
-    // SmithPredictor emits U_out = (δD - δY_U) + (δY_U ⋉ z⁻¹U) - every
-    // correction actuated exactly once, the loop's own watch echoes
-    // retired by content, however late the apiserver reflects a write.
-    // Controller mode only, like the Reconciler. The dead time k is the
-    // loop's known feedback delay in circuit steps and must be given.
+    // DualRateSmith actuates every correction exactly once and retires
+    // the loop's own watch echoes through a wall-clock window - commands
+    // enter on the event clock and expire k ticks later, so the window
+    // is k seconds at the default tick and event floods never age it.
+    // Controller mode only, like the Reconciler. k is the compensation
+    // window in ticks and must be given.
     const k = Number(options.smithK);
-    if (!Number.isInteger(k) || k < 2) {
-      throw new Error(`pipeline: smith mode needs an integer dead time k >= 2, got ${options.smithK}`);
+    if (!Number.isInteger(k) || k < 1) {
+      throw new Error(`pipeline: smith mode needs an integer window k >= 1 ticks, got ${options.smithK}`);
     }
-    k8sTransforms.push({ name: "SmithPredictor", pairs: STATUS_PAIRS, k });
+    k8sTransforms.push({ name: "DualRateSmith", pairs: STATUS_PAIRS, k, tick: "Tick" });
   }
 
   const programs = buildPrograms(options);
   const STATUSES = ["GatewayClassStatus", "GatewayStatus", "HTTPRouteStatus"];
   const XDS_STREAMS = ["XdsListeners", "XdsRouteConfigurations", "XdsClusters", "XdsEndpoints"];
+  // The window read-out clock: a misc Tick source in pulse mode (one
+  // empty document asserted per period) feeding the tick input the
+  // DualRateSmith injects. One tick per operator; smith mode only, and
+  // the default cadence is one second. options.tick is a Go duration
+  // string.
+  const tickSources = options.smith
+    ? [{
+        apiGroup: "misc.connector.dcontroller.io",
+        kind: "Timer",
+        as: "Tick",
+        type: "Tick",
+        parameters: { period: options.tick || "1s", pulse: true },
+      }]
+    : [];
   return {
-    sources: k8sBindings ? Object.values(RESOURCES) : [],
+    sources: [...(k8sBindings ? Object.values(RESOURCES) : []), ...tickSources],
     circuits: [
       {
         name: "input",
@@ -153,7 +168,10 @@ function buildOperatorSpec(options = {}) {
       },
       {
         name: "k8s",
-        inputs: [...VIEWS, ...OBSERVED],
+        // The Tick input is the window read-out clock the DualRateSmith
+        // wires into its gates; no branch consumes it. Declared here so
+        // the loader can bind the tick source to the circuit.
+        inputs: [...VIEWS, ...OBSERVED, ...(options.smith ? ["Tick"] : [])],
         outputs: STATUSES,
         pipeline: programs.outputK8s,
         transforms: k8sTransforms,

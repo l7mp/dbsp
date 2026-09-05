@@ -32,8 +32,12 @@ function runHelp() {
   console.log("      [--qps <n>] [--burst <n>] k8s client budget (default 50/100); low");
   console.log("                               values throttle the controller's writes,");
   console.log("                               stretching the feedback dead time");
-  console.log("      [--smith-k <n>]          the Smith predictor's known dead time in");
-  console.log("                               circuit steps (smith mode; default 2)");
+  console.log("      [--smith-window <ms>]    the dual-rate Smith compensation window in");
+  console.log("                               wall time (smith mode; default 10000 - a");
+  console.log("                               10 s window absorbs 500-command bursts at");
+  console.log("                               the default client budget)");
+  console.log("      [--tick-period <ms>]     the window read-out clock's period, the");
+  console.log("                               window's quantum (smith mode; default 1000)");
 }
 
 function runController() {
@@ -64,14 +68,26 @@ function runController() {
   });
   logger.info(`xDS server listening on ${server.address}`);
 
+  // The dual-rate Smith window is wall time; the tick period is its
+  // quantum. The transform counts ticks, so the window rounds up to
+  // whole ticks.
+  const tickMs = argv["tick-period"] !== undefined && Number(argv["tick-period"]) > 0
+    ? Number(argv["tick-period"]) : 1000;
+  const windowMs = argv["smith-window"] !== undefined ? Number(argv["smith-window"]) : 10000;
+  if (loopMode === "smith" && !(windowMs > 0)) {
+    throw new Error(`--smith-window must be a positive duration in ms, got ${argv["smith-window"]}`);
+  }
+
   const pipeline = compilePipeline({
     bindings: "kubernetes",
     addressPool: argv["address-pool"],
     reconcile: loopMode === "reconciler",
     sotw: loopMode === "sotw",
     smith: loopMode === "smith",
-    // The Smith predictor's known dead time, in circuit steps.
-    smithK: argv["smith-k"] !== undefined ? Number(argv["smith-k"]) : 2,
+    // The dual-rate Smith compensation window, in ticks of the read-out
+    // clock.
+    smithK: Math.ceil(windowMs / tickMs),
+    tick: `${tickMs}ms`,
   });
   if (argv.debug) {
     // Layer observers: every event each circuit processes, on stdout. The

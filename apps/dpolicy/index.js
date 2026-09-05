@@ -32,8 +32,10 @@ function runHelp() {
   console.log("                                    the reconciler; smith: incremental +");
   console.log("                                    the Smith dead-time compensator;");
   console.log("                                    sotw: snapshot execution)");
-  console.log("      [--smith-k <n>]               the Smith predictor's known dead time");
-  console.log("                                    in circuit steps (smith mode; default 2)");
+  console.log("      [--smith-window <ms>]         the dual-rate Smith compensation window");
+  console.log("                                    in wall time (smith mode; default 10000)");
+  console.log("      [--tick-period <ms>]          the window read-out clock's period, the");
+  console.log("                                    window's quantum (smith mode; default 1000)");
   console.log("      [--debug]                     attach layer observers (events on stdout)");
 }
 
@@ -57,6 +59,15 @@ function runController() {
   if (!["reconciler", "open", "smith", "sotw"].includes(loopMode)) {
     throw new Error(`unsupported --mode ${loopMode}; use reconciler, open, smith or sotw`);
   }
+  // The dual-rate Smith window is wall time; the tick period is its
+  // quantum. The transform counts ticks, so the window rounds up to
+  // whole ticks.
+  const tickMs = argv["tick-period"] !== undefined && Number(argv["tick-period"]) > 0
+    ? Number(argv["tick-period"]) : 1000;
+  const windowMs = argv["smith-window"] !== undefined ? Number(argv["smith-window"]) : 10000;
+  if (loopMode === "smith" && !(windowMs > 0)) {
+    throw new Error(`--smith-window must be a positive duration in ms, got ${argv["smith-window"]}`);
+  }
   const pipeline = compilePipeline({
     bindings: "kubernetes",
     constraintKinds,
@@ -65,8 +76,10 @@ function runController() {
     reconcile: loopMode === "reconciler",
     sotw: loopMode === "sotw",
     smith: loopMode === "smith",
-    // The Smith predictor's known dead time, in circuit steps.
-    smithK: argv["smith-k"] !== undefined ? Number(argv["smith-k"]) : 2,
+    // The dual-rate Smith compensation window, in ticks of the read-out
+    // clock.
+    smithK: Math.ceil(windowMs / tickMs),
+    tick: `${tickMs}ms`,
   });
   if (argv.debug) {
     for (const layer of ["input", "audit"]) {

@@ -107,29 +107,46 @@ function buildOperatorSpec(options = {}) {
     });
   } else if (options.smith) {
     // The dead-time compensated loop: same closed-loop pairs, but the
-    // SmithPredictor emits U_out = (δD − δY_U) + (δY_U ⋉ z⁻¹U) - every
-    // correction actuated exactly once, the loop's own watch echoes
-    // retired by content, however late the apiserver reflects a write.
-    // Controller mode only, like the Reconciler. The dead time k is the
-    // loop's known feedback delay in circuit steps and must be given.
+    // DualRateSmith actuates every correction exactly once and retires
+    // the loop's own watch echoes through a wall-clock window - commands
+    // enter on the event clock and expire k ticks later. Controller mode
+    // only, like the Reconciler. k is the compensation window in ticks.
     const k = Number(options.smithK);
-    if (!Number.isInteger(k) || k < 2) {
-      throw new Error(`pipeline: smith mode needs an integer dead time k >= 2, got ${options.smithK}`);
+    if (!Number.isInteger(k) || k < 1) {
+      throw new Error(`pipeline: smith mode needs an integer window k >= 1 ticks, got ${options.smithK}`);
     }
     auditTransforms.push({
-      name: "SmithPredictor",
+      name: "DualRateSmith",
       pairs: constraintKinds.map((kind) => [
         `ConstraintStatusObserved_${kind}`,
         `ConstraintStatus_${kind}`,
       ]),
       k,
+      tick: "Tick",
     });
   }
 
+  // The window read-out clock: a misc Tick source in pulse mode (one
+  // empty document asserted per period) feeding the tick input the
+  // DualRateSmith injects. One tick per operator; smith mode only, and
+  // the default cadence is one second. options.tick is a Go duration
+  // string.
+  const tickSources = options.smith
+    ? [{
+        apiGroup: "misc.connector.dcontroller.io",
+        kind: "Timer",
+        as: "Tick",
+        type: "Tick",
+        parameters: { period: options.tick || "1s", pulse: true },
+      }]
+    : [];
   return {
-    sources: k8sBindings
-      ? [RESOURCES.template, ...constraintKinds.map(constraintResource), RESOURCES.pod]
-      : [],
+    sources: [
+      ...(k8sBindings
+        ? [RESOURCES.template, ...constraintKinds.map(constraintResource), RESOURCES.pod]
+        : []),
+      ...tickSources,
+    ],
     circuits: [
       {
         name: "input",
@@ -140,7 +157,10 @@ function buildOperatorSpec(options = {}) {
       },
       {
         name: "audit",
-        inputs: viewStreams,
+        // The Tick input is the window read-out clock the DualRateSmith
+        // wires into its gates; no branch consumes it. Declared here so
+        // the loader can bind the tick source to the circuit.
+        inputs: [...viewStreams, ...(options.smith ? ["Tick"] : [])],
         outputs: [
           ...constraintKinds.map((kind) => `ConstraintStatus_${kind}`),
           ...(violationViews ? ["ViolationView"] : []),
@@ -173,6 +193,7 @@ class Pipeline {
     this.handle.start();
     this.topics = topicsFor(this.constraintKinds);
   }
+
 
   // observe attaches a debug observer to one layer ("input" or "audit"):
   // fn receives every event the layer's circuit processes.
