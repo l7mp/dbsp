@@ -4,6 +4,7 @@
 #+LATEX_CLASS_OPTIONS: [11pt]
 #+LATEX_HEADER: \usepackage[margin=2.2cm]{geometry}
 #+LATEX_HEADER: \usepackage{pgfplots}
+#+LATEX_HEADER: \usepackage{pgfplotstable}
 #+LATEX_HEADER: \pgfplotsset{compat=1.17, log ticks with fixed point}
 #+LATEX_HEADER: \usepackage{booktabs}
 
@@ -60,7 +61,15 @@ request-audit logging enabled. The contenders:
   through the plant kubeconfig with the runtime's shipped client
   budget (reconciler: incremental + Reconciler; open: incremental, no
   status loop; sotw: full recompute; smith: incremental + the Smith
-  dead-time compensator - exactly-once status actuation);
+  dead-time compensator - exactly-once status actuation, with the
+  compensation window retimed to a wall clock: commands enter the
+  window on the event clock and expire K ticks of the 1 s read-out
+  clock later, so the window is K seconds at any event rate and
+  absorbs bursts of up to K x 50 qps commands silently). The smith
+  grid runs one line per window, K in {1, 2, 3, 5, 10} seconds
+  (=--smith-window=); the unsuffixed "smith" line is the default K=10,
+  the =smith-kN= variants the rest. Steady-state ticks emit nothing
+  and are invisible to every measurement here;
 - *envoy-gateway*: the stock runners at the pinned upstream commit
   (provider, gateway-api translator, xDS server - the serve wrapper in
   =../eg-harness/= starts them unmodified), pointed at the same plant
@@ -238,6 +247,98 @@ line.
 \addlegendentry{istiod (krt)}
 \end{loglogaxis}
 \end{tikzpicture}
+\end{center}
+#+end_export
+
+** The compensation window: cold start vs. K
+
+The desired-state loop winds up on a cold start: the correction for the
+whole world outruns the client budget, the watch confirms late, and the
+Reconciler re-emits the outstanding set into its own congestion -
+integrator windup, in control terms. The dual-rate compensation window
+is the anti-windup lever, denominated in wall time: an emission is
+re-actuated only after K ticks of the 1 s read-out clock, so a window
+of K seconds absorbs bursts of up to K x 50 qps commands silently and
+defers disturbance rejection instead of amplifying it - at any event
+rate, since event floods do not age the window. The grid runs one
+smith line per window, K in {1, 2, 3, 5, 10} ticks; the plain "smith"
+line above is the default K=10 (a 10 s window, a 500-command burst
+budget). Curves end at the largest scale the line completed; the first
+timeout per line is in the feasibility table below.
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={regions $R$ (multiregion)}, ylabel={cold-start convergence [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\IfFileExists{results/E5-preload-multiregion-reconciler.csv}{
+\addplot table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-multiregion-reconciler.csv};
+\addlegendentry{reconciler}}{}
+\IfFileExists{results/E5-preload-multiregion-smith-k1.csv}{
+\addplot+ [dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-multiregion-smith-k1.csv};
+\addlegendentry{smith K=1}}{}
+\IfFileExists{results/E5-preload-multiregion-smith-k2.csv}{
+\addplot+ [dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-multiregion-smith-k2.csv};
+\addlegendentry{smith K=2}}{}
+\IfFileExists{results/E5-preload-multiregion-smith-k3.csv}{
+\addplot+ [densely dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-multiregion-smith-k3.csv};
+\addlegendentry{smith K=3}}{}
+\IfFileExists{results/E5-preload-multiregion-smith-k5.csv}{
+\addplot+ [densely dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-multiregion-smith-k5.csv};
+\addlegendentry{smith K=5}}{}
+\IfFileExists{results/E5-preload-multiregion-smith.csv}{
+\addplot+ [thick] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-multiregion-smith.csv};
+\addlegendentry{smith K=10 (default)}}{}
+\IfFileExists{results/E5-preload-multiregion-open.csv}{
+\addplot+ [dotted, thick] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-multiregion-open.csv};
+\addlegendentry{open (no loop)}}{}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+#+begin_export latex
+\begin{center}
+\begin{tikzpicture}
+\begin{loglogaxis}[width=.85\textwidth, height=.5\textwidth,
+    xlabel={regions $R$ (sock-shop, $13R$ routes)}, ylabel={cold-start convergence [ms]},
+    grid=major, legend pos=north west, legend style={font=\small}]
+\IfFileExists{results/E5-preload-sock-shop-reconciler.csv}{
+\addplot table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-sock-shop-reconciler.csv};
+\addlegendentry{reconciler}}{}
+\IfFileExists{results/E5-preload-sock-shop-smith-k1.csv}{
+\addplot+ [dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-sock-shop-smith-k1.csv};
+\addlegendentry{smith K=1}}{}
+\IfFileExists{results/E5-preload-sock-shop-smith-k2.csv}{
+\addplot+ [dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-sock-shop-smith-k2.csv};
+\addlegendentry{smith K=2}}{}
+\IfFileExists{results/E5-preload-sock-shop-smith-k3.csv}{
+\addplot+ [densely dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-sock-shop-smith-k3.csv};
+\addlegendentry{smith K=3}}{}
+\IfFileExists{results/E5-preload-sock-shop-smith-k5.csv}{
+\addplot+ [densely dashed] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-sock-shop-smith-k5.csv};
+\addlegendentry{smith K=5}}{}
+\IfFileExists{results/E5-preload-sock-shop-smith.csv}{
+\addplot+ [thick] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-sock-shop-smith.csv};
+\addlegendentry{smith K=10 (default)}}{}
+\IfFileExists{results/E5-preload-sock-shop-open.csv}{
+\addplot+ [dotted, thick] table [x=regions, y=preload_ms, col sep=comma] {results/E5-preload-sock-shop-open.csv};
+\addlegendentry{open (no loop)}}{}
+\end{loglogaxis}
+\end{tikzpicture}
+\end{center}
+#+end_export
+
+*Feasibility.* Every ascending sweep aborts at its wall: the first point
+whose convergence timed out is recorded and the larger scales are
+skipped. The walls, per line (empty when every line completed its list):
+
+#+begin_export latex
+\begin{center}
+\IfFileExists{results/E5-walls.csv}{\pgfplotstabletypeset[col sep=comma,
+    string type, every head row/.style={before row=\toprule, after row=\midrule},
+    every last row/.style={after row=\bottomrule}]{results/E5-walls.csv}}{}
 \end{center}
 #+end_export
 

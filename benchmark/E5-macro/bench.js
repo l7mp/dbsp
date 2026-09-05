@@ -25,7 +25,7 @@ const dgw = require("../lib/dgwstack.js");
 const traces = require("../lib/traces.js");
 
 const argv = minimist(process.argv.slice(2), {
-  string: ["trace", "system", "mode", "out", "handshake", "eg-handshake", "xds-address"],
+  string: ["trace", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address"],
   default: {
     trace: "multiregion",
     regions: 10,
@@ -51,8 +51,9 @@ const cfg = {
   timeoutMs: Number(argv["timeout-ms"]),
 };
 // The architecture label: the dgw modes are what run.sh started the
-// controller with; envoy-gateway and istio are their own lines.
-const mode = cfg.system === "dgw" ? argv.mode : cfg.system;
+// controller with; envoy-gateway and istio are their own lines. A variant
+// suffix (e.g. the smith window, "k250") makes its own line and CSVs.
+const mode = (cfg.system === "dgw" ? argv.mode : cfg.system) + (argv.variant ? `-${argv.variant}` : "");
 
 const world = traces.generate(cfg.trace, cfg.regions, cfg.seed);
 const routeKind = world.routes[0].kind;
@@ -389,6 +390,14 @@ const preloadMs = await preload();
 console.log(
   `preload: trace=${cfg.trace} regions=${cfg.regions} mode=${mode} in ${preloadMs.toFixed(0)}ms ` +
     `(lds=${taps.lds.events} rds=${taps.rds.events} eds=${taps.eds.events} status_writes=${stack.statusEvents})`,
+);
+// Persist the cold-start measurement before the changesets run: a changeset
+// timeout aborts the point, and its per-changeset rows (which also carry
+// preload_ms) are then never written.
+csvAppend(
+  `${cfg.out}/E5-preload-raw.csv`,
+  ["trace", "mode", "regions", "preload_ms"],
+  [cfg.trace, mode, cfg.regions, preloadMs.toFixed(0)],
 );
 
 for (const [name, fn] of Object.entries(CHANGESETS[cfg.trace])) {

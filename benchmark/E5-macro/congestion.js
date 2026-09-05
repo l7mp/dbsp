@@ -31,7 +31,7 @@ const dgw = require("../lib/dgwstack.js");
 const traces = require("../lib/traces.js");
 
 const argv = minimist(process.argv.slice(2), {
-  string: ["trace", "system", "mode", "out", "handshake", "eg-handshake", "xds-address"],
+  string: ["trace", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address"],
   default: {
     trace: "multiregion-l4",
     regions: 10,
@@ -57,7 +57,7 @@ const cfg = {
   out: argv.out,
   timeoutMs: Number(argv["timeout-ms"]),
 };
-const mode = cfg.system === "dgw" ? argv.mode : cfg.system;
+const mode = (cfg.system === "dgw" ? argv.mode : cfg.system) + (argv.variant ? `-${argv.variant}` : "");
 const rng = mulberry32(cfg.seed);
 
 const world = traces.generate(cfg.trace, cfg.regions, cfg.seed);

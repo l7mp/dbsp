@@ -59,6 +59,7 @@ const cfg = {
 
 const stack = new dgw.Stack({
   mode: cfg.mode,
+  smithK: argv["smith-k"],
   apiPort: Number(argv["api-port"]),
   xdsPort: Number(argv["xds-port"]),
 });

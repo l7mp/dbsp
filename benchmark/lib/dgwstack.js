@@ -129,6 +129,11 @@ class Stack {
       smithK: opts.smithK !== undefined ? Number(opts.smithK) : 2,
     });
     for (const src of spec.sources) {
+      // The misc tick source is not a cluster binding: it keeps its own
+      // group and routes to the misc connector.
+      if (src.apiGroup === "misc.connector.dcontroller.io") {
+        continue;
+      }
       src.apiGroup = VIEW_GROUP;
       src.version = "v1alpha1";
     }
