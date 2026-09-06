@@ -15,6 +15,28 @@ entries:
     version: 0.0.0
   - apiVersion: v2
     appVersion: latest
+    created: "2026-09-06T19:22:05.21110884Z"
+    description: Delta-controller, a declarative incremental Kubernetes controller
+      runtime built on DBSP
+    digest: caee31dfc0a0886c69d813fa997a33064425284e0784703a47b6c66decda373e
+    home: https://github.com/l7mp/dbsp
+    keywords:
+    - kubernetes
+    - controller
+    - operator
+    - incremental
+    - dbsp
+    maintainers:
+    - name: rg0now
+    name: dcontroller
+    sources:
+    - https://github.com/l7mp/dbsp
+    type: application
+    urls:
+    - https://l7mp.github.io/dbsp/dcontroller/dcontroller-0.0.0-dev.bd88888.tgz
+    version: 0.0.0-dev.bd88888
+  - apiVersion: v2
+    appVersion: latest
     created: "2026-09-03T12:30:02.378964986Z"
     description: Delta-controller, a declarative incremental Kubernetes controller
       runtime built on DBSP
@@ -35,4 +57,4 @@ entries:
     urls:
     - https://l7mp.github.io/dbsp/dcontroller/dcontroller-0.0.0-dev.6821195.tgz
     version: 0.0.0-dev.6821195
-generated: "2026-09-03T12:30:02.377683193Z"
+generated: "2026-09-06T19:22:05.210559917Z"
