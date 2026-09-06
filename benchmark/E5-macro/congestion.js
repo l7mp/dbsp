@@ -127,7 +127,17 @@ for (const key of picks) {
     metadata: { name: cur.metadata.name, namespace: cur.metadata.namespace },
     status:
       cur.kind === "Gateway"
-        ? { conditions: [{ type: "Accepted", status: "False", reason: "Tampered", message: "bench tamper" }] }
+        ? {
+            conditions: [{
+              type: "Accepted",
+              status: "False",
+              reason: "Tampered",
+              message: "bench tamper",
+              // The CRD requires a transition time on every condition; the
+              // value is process noise (drift comparison strips it).
+              lastTransitionTime: new Date().toISOString(),
+            }],
+          }
         : { parents: [] },
   };
   stack.tamperStatus(cur.kind, doc);

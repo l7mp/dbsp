@@ -12,6 +12,8 @@
 #   SCALE=full ./run.sh paper profile (server)
 #   EG=no ./run.sh      skip the envoy-gateway points
 #   RENDER=no ./run.sh  skip chart rendering
+#   KEEP_RESULTS=yes    keep results/ (partial re-runs: delete the files
+#                       being re-measured first, or their rows duplicate)
 #
 # Phases: 1 convergence grid, 2 disturbance rejection, 3 corners,
 # 4 embedded ablation + fan-out + storm, 5 derived tables + render.
@@ -78,7 +80,9 @@ fi
 
 note() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$PROGRESS"; }
 
-rm -f results/*.csv results/requests-*.log
+if [ "${KEEP_RESULTS:-no}" != yes ]; then
+    rm -f results/*.csv results/requests-*.log
+fi
 mkdir -p results
 : > "$PROGRESS"
 
