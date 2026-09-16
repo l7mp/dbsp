@@ -9,7 +9,6 @@ import (
 )
 
 // convertDeltaToZSet converts a source delta into an input Z-set while maintaining source cache.
-// This mirrors the old dcontroller ConvertDeltaToZSet semantics (without pipeline reconciler bits).
 func (p *baseProducer) convertDeltaToZSet(delta kobject.Delta) (zset.ZSet, error) {
 	deltaObj := kobject.DeepCopy(delta.Object)
 	gvk := deltaObj.GetObjectKind().GroupVersionKind()

@@ -23,7 +23,8 @@ import (
 
 var _ = Describe("Kubernetes consumers", func() {
 	It("updates and deletes objects with updater", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
 
 		scheme := kruntime.NewScheme()
@@ -31,6 +32,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		u, err := NewUpdater(Config{Name: "test-updater", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
 
 		add := map[string]any{
 			"apiVersion": "v1",
@@ -44,6 +46,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 
 		Expect(u.Consume(ctx, out("out", add, 1))).To(Succeed())
+		waitIdle(u.baseConsumer)
 
 		obj := keyObject(gvk, "default", "cfg")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -67,6 +70,7 @@ var _ = Describe("Kubernetes consumers", func() {
 			docWeight{doc: add, w: -1},
 			docWeight{doc: upsert, w: 1},
 		))).To(Succeed())
+		waitIdle(u.baseConsumer)
 
 		obj = keyObject(gvk, "default", "cfg")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -82,6 +86,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(labels).To(HaveKeyWithValue("y", "2"))
 
 		Expect(u.Consume(ctx, out("out", upsert, -1))).To(Succeed())
+		waitIdle(u.baseConsumer)
 
 		obj = keyObject(gvk, "default", "cfg")
 		err = c.Get(ctx, client.ObjectKeyFromObject(obj), obj)
@@ -89,7 +94,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("updater update patches metadata status and body from the pair diff", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
 
 		old := map[string]any{
@@ -117,6 +123,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		u, err := NewUpdater(Config{Name: "test-updater-status", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
 
 		upsert := map[string]any{
 			"apiVersion": "apps/v1",
@@ -138,6 +145,7 @@ var _ = Describe("Kubernetes consumers", func() {
 			docWeight{doc: old, w: -1},
 			docWeight{doc: upsert, w: 1},
 		))).To(Succeed())
+		waitIdle(u.baseConsumer)
 
 		obj := keyObject(gvk, "default", "app")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -171,7 +179,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("splits the pair diff between the main patch and the status subresource", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
 
 		old := map[string]any{
@@ -196,6 +205,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		u, err := NewUpdater(Config{Name: "test-updater-payload-status", Client: recording, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
 
 		upsert := map[string]any{
 			"apiVersion": "apps/v1",
@@ -214,6 +224,7 @@ var _ = Describe("Kubernetes consumers", func() {
 			docWeight{doc: old, w: -1},
 			docWeight{doc: upsert, w: 1},
 		))).To(Succeed())
+		waitIdle(u.baseConsumer)
 
 		// One main patch carrying only the spec change, one status patch
 		// carrying only the status change.
@@ -233,7 +244,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("patches and unpatches objects with patcher", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
 
 		scheme := kruntime.NewScheme()
@@ -252,6 +264,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		p, err := NewPatcher(Config{Name: "test-patcher", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = p.pump.Run(ctx) }()
 
 		patchUpsert := map[string]any{
 			"apiVersion": "apps/v1",
@@ -264,6 +277,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 
 		Expect(p.Consume(ctx, out("out", patchUpsert, 1))).To(Succeed())
+		waitIdle(p.baseConsumer)
 
 		obj := keyObject(gvk, "default", "app")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -287,6 +301,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 
 		Expect(p.Consume(ctx, out("out", patchDelete, -1))).To(Succeed())
+		waitIdle(p.baseConsumer)
 
 		obj = keyObject(gvk, "default", "app")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -300,7 +315,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("patcher upsert does not overwrite unrelated fields", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Service"}
 
 		scheme := kruntime.NewScheme()
@@ -319,6 +335,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		p, err := NewPatcher(Config{Name: "test-patcher-no-clobber", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = p.pump.Run(ctx) }()
 
 		patchUpsert := map[string]any{
 			"apiVersion": "v1",
@@ -333,6 +350,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 
 		Expect(p.Consume(ctx, out("out", patchUpsert, 1))).To(Succeed())
+		waitIdle(p.baseConsumer)
 
 		obj := keyObject(gvk, "default", "svc")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -349,7 +367,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("patcher upsert and delete patch metadata status and body", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
 
 		scheme := kruntime.NewScheme()
@@ -373,6 +392,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		p, err := NewPatcher(Config{Name: "test-patcher-status", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = p.pump.Run(ctx) }()
 
 		upsert := map[string]any{
 			"apiVersion": "apps/v1",
@@ -391,6 +411,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 
 		Expect(p.Consume(ctx, out("out", upsert, 1))).To(Succeed())
+		waitIdle(p.baseConsumer)
 
 		obj := keyObject(gvk, "default", "app")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -439,6 +460,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 
 		Expect(p.Consume(ctx, out("out", deletePatch, -1))).To(Succeed())
+		waitIdle(p.baseConsumer)
 
 		obj = keyObject(gvk, "default", "app")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -469,7 +491,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("collapses mixed add and delete for one key into one patch update", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
 
 		scheme := kruntime.NewScheme()
@@ -494,6 +517,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		p, err := NewPatcher(Config{Name: "test-patcher-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = p.pump.Run(ctx) }()
 
 		oldDoc := map[string]any{
 			"apiVersion": "apps/v1",
@@ -530,6 +554,7 @@ var _ = Describe("Kubernetes consumers", func() {
 			docWeight{doc: newDoc, w: 1},
 			docWeight{doc: oldDoc, w: -1},
 		))).To(Succeed())
+		waitIdle(p.baseConsumer)
 
 		obj := keyObject(gvk, "default", "app")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -540,7 +565,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("patches view-object status inline through the main merge patch", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "test.view.dcontroller.io", Version: "v1alpha1", Kind: "HealthView"}
 
 		scheme := kruntime.NewScheme()
@@ -557,6 +583,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		p, err := NewPatcher(Config{Name: "test-patcher-view-status", Client: recording, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = p.pump.Run(ctx) }()
 
 		doc := map[string]any{
 			"apiVersion": "test.view.dcontroller.io/v1alpha1",
@@ -566,6 +593,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 
 		Expect(p.Consume(ctx, out("out", doc, 1))).To(Succeed())
+		waitIdle(p.baseConsumer)
 
 		// Views have no status subresource: the status rides the main patch.
 		Expect(recording.statusPatches).To(BeEmpty())
@@ -581,14 +609,20 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("patcher never creates: a write to a missing object is reported and dropped", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
 
 		scheme := kruntime.NewScheme()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		p, err := NewPatcher(Config{Name: "test-patcher-no-create", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
+		rt := dbspruntime.NewRuntime("", logr.Discard())
+		errCh := make(chan dbspruntime.Error, 8)
+		rt.SetErrorChannel(errCh)
+
+		p, err := NewPatcher(Config{Name: "test-patcher-no-create", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: rt})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = p.pump.Run(ctx) }()
 
 		doc := map[string]any{
 			"apiVersion": "v1",
@@ -597,9 +631,11 @@ var _ = Describe("Kubernetes consumers", func() {
 			"data":       map[string]any{"a": "1"},
 		}
 
-		err = p.Consume(ctx, out("out", doc, 1))
-		Expect(err).To(HaveOccurred())
-		Expect(apierrors.IsNotFound(err) || err != nil).To(BeTrue())
+		// A refused write is the plant's decision: it is reported through
+		// the runtime error channel and dropped, never retried.
+		Expect(p.Consume(ctx, out("out", doc, 1))).To(Succeed())
+		waitIdle(p.baseConsumer)
+		Eventually(errCh, time.Second).Should(Receive())
 
 		obj := keyObject(gvk, "default", "ghost")
 		Expect(apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue(),
@@ -607,7 +643,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("updater recreates an owned object deleted out of band", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
 
 		scheme := kruntime.NewScheme()
@@ -615,6 +652,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		u, err := NewUpdater(Config{Name: "test-updater-resurrect", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
 
 		oldDoc := map[string]any{
 			"apiVersion": "v1",
@@ -635,6 +673,7 @@ var _ = Describe("Kubernetes consumers", func() {
 			docWeight{doc: oldDoc, w: -1},
 			docWeight{doc: newDoc, w: 1},
 		))).To(Succeed())
+		waitIdle(u.baseConsumer)
 
 		obj := keyObject(gvk, "default", "gen")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -644,7 +683,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("updater create falls back to a patch when the object already exists", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
 
 		scheme := kruntime.NewScheme()
@@ -659,6 +699,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		u, err := NewUpdater(Config{Name: "test-updater-exists", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
 
 		doc := map[string]any{
 			"apiVersion": "v1",
@@ -668,6 +709,7 @@ var _ = Describe("Kubernetes consumers", func() {
 		}
 
 		Expect(u.Consume(ctx, out("out", doc, 1))).To(Succeed())
+		waitIdle(u.baseConsumer)
 
 		obj := keyObject(gvk, "default", "cfg")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -683,7 +725,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("rejects key multiplicity instead of selecting a representative", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
 
 		scheme := kruntime.NewScheme()
@@ -691,6 +734,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		u, err := NewUpdater(Config{Name: "test-updater-multiplicity", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
 
 		d1 := map[string]any{
 			"apiVersion": "v1",
@@ -717,7 +761,8 @@ var _ = Describe("Kubernetes consumers", func() {
 	})
 
 	It("retries unreachable writes until the plant answers", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
 
 		scheme := kruntime.NewScheme()
@@ -726,6 +771,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		u, err := NewUpdater(Config{Name: "test-updater-retry", Client: failing, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
 
 		doc := map[string]any{
 			"apiVersion": "v1",
@@ -734,13 +780,10 @@ var _ = Describe("Kubernetes consumers", func() {
 			"data":       map[string]any{"a": "1"},
 		}
 
-		// The first attempt fails before the plant; the write stays pending
-		// and the retry lands it. An unreachable failure is not an error:
-		// the command is still owed to the plant.
+		// The first attempt fails before the plant, so the job stays in the
+		// queue and the backoff retry lands it. An unreachable failure is
+		// not an error: the command is still owed to the plant.
 		Expect(u.Consume(ctx, out("out", doc, 1))).To(Succeed())
-
-		obj := keyObject(gvk, "default", "late")
-		Expect(apierrors.IsNotFound(base.Get(ctx, client.ObjectKeyFromObject(obj), obj))).To(BeTrue())
 
 		Eventually(func() error {
 			o := keyObject(gvk, "default", "late")
@@ -748,8 +791,177 @@ var _ = Describe("Kubernetes consumers", func() {
 		}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
 	})
 
+	It("absorbs a correction re-emitted while the write is pending", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "cfg")
+		seed.Object = map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+			"data":       map[string]any{"a": "1"},
+		}
+		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
+		failing := &failingClient{Client: base, remaining: 1, err: apierrors.NewTooManyRequests("throttled", 0)}
+
+		u, err := NewUpdater(Config{Name: "test-updater-reemit", Client: failing, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
+
+		// The outstanding correction a reconciled topic re-emits on every
+		// step until the plant confirms it.
+		correction := func() dbspruntime.Event {
+			return outMany("out",
+				docWeight{doc: map[string]any{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+					"data":       map[string]any{"a": "1"},
+				}, w: -1},
+				docWeight{doc: map[string]any{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+					"data":       map[string]any{"a": "2"},
+				}, w: 1},
+			)
+		}
+
+		// The first delivery is throttled, so the job stays owed; the
+		// re-emission composes onto it instead of piling up beside it.
+		Expect(u.Consume(ctx, correction())).To(Succeed())
+		Expect(u.Consume(ctx, correction())).To(Succeed())
+
+		waitIdle(u.baseConsumer)
+
+		obj := keyObject(gvk, "default", "cfg")
+		Expect(base.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		got, ok, err := unstructured.NestedString(obj.Object, "data", "a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("2"))
+
+		// The duplicate is actuated exactly once and nothing is left owed.
+		Consistently(func() int {
+			return failing.applied
+		}, time.Second, 50*time.Millisecond).Should(Equal(1))
+	})
+
+	It("supersedes an outstanding correction instead of reporting multiplicity", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "cfg")
+		seed.Object = map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+			"data":       map[string]any{"a": "1"},
+		}
+		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
+		failing := &failingClient{Client: base, remaining: 1, err: apierrors.NewTooManyRequests("throttled", 0)}
+
+		rt := dbspruntime.NewRuntime("", logr.Discard())
+		errCh := make(chan dbspruntime.Error, 8)
+		rt.SetErrorChannel(errCh)
+
+		u, err := NewUpdater(Config{Name: "test-updater-supersede", Client: failing, OutputName: "out", TargetGVK: gvk, Runtime: rt})
+		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
+
+		correction := func(want string) dbspruntime.Event {
+			return outMany("out",
+				docWeight{doc: map[string]any{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+					"data":       map[string]any{"a": "1"},
+				}, w: -1},
+				docWeight{doc: map[string]any{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+					"data":       map[string]any{"a": want},
+				}, w: 1},
+			)
+		}
+
+		// The desired state moves on while the first write is still owed.
+		// Two corrections for one object are one job, the later target
+		// winning: this is supersession, not the key multiplicity that a
+		// single delta carrying two candidates would be.
+		Expect(u.Consume(ctx, correction("2"))).To(Succeed())
+		Expect(u.Consume(ctx, correction("3"))).To(Succeed())
+
+		waitIdle(u.baseConsumer)
+
+		obj := keyObject(gvk, "default", "cfg")
+		Expect(base.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		got, ok, err := unstructured.NestedString(obj.Object, "data", "a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("3"), "the later target wins")
+		Expect(failing.applied).To(Equal(1), "two corrections for one object are one write")
+		Consistently(errCh, 200*time.Millisecond).ShouldNot(Receive(),
+			"a superseded correction is not key multiplicity")
+	})
+
+	It("drops an outstanding correction the pipeline takes back", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
+
+		scheme := kruntime.NewScheme()
+		seed := keyObject(gvk, "default", "cfg")
+		seed.Object = map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+			"data":       map[string]any{"a": "1"},
+		}
+		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(seed).Build()
+		failing := &failingClient{Client: base, remaining: 1, err: apierrors.NewTooManyRequests("throttled", 0)}
+
+		u, err := NewUpdater(Config{Name: "test-updater-cancel", Client: failing, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
+		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
+
+		at := func(v string) map[string]any {
+			return map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "cfg", "namespace": "default"},
+				"data":       map[string]any{"a": v},
+			}
+		}
+
+		// Move to "2", then back to "1" before the throttled write lands:
+		// the job composes to identity and there is nothing left to write.
+		Expect(u.Consume(ctx, outMany("out", docWeight{doc: at("1"), w: -1}, docWeight{doc: at("2"), w: 1}))).To(Succeed())
+		Expect(u.Consume(ctx, outMany("out", docWeight{doc: at("2"), w: -1}, docWeight{doc: at("1"), w: 1}))).To(Succeed())
+
+		// Whether the emitter had already picked the first correction up
+		// or not, composing the two leaves identity, so the job is gone
+		// and the plant is never written.
+		waitIdle(u.baseConsumer)
+		Consistently(func() int {
+			return failing.applied
+		}, 500*time.Millisecond, 50*time.Millisecond).Should(BeZero())
+		obj := keyObject(gvk, "default", "cfg")
+		Expect(base.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
+		got, _, err := unstructured.NestedString(obj.Object, "data", "a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal("1"))
+	})
+
 	It("collapses mixed add and delete for one key into one updater upsert", func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
 
 		scheme := kruntime.NewScheme()
@@ -768,6 +980,7 @@ var _ = Describe("Kubernetes consumers", func() {
 
 		u, err := NewUpdater(Config{Name: "test-updater-collapse", Client: c, OutputName: "out", TargetGVK: gvk, Runtime: dbspruntime.NewRuntime("", logr.Discard())})
 		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = u.pump.Run(ctx) }()
 
 		oldDoc := map[string]any{
 			"apiVersion": "v1",
@@ -792,6 +1005,7 @@ var _ = Describe("Kubernetes consumers", func() {
 			docWeight{doc: newDoc, w: 1},
 			docWeight{doc: oldDoc, w: -1},
 		))).To(Succeed())
+		waitIdle(u.baseConsumer)
 
 		obj := keyObject(gvk, "default", "cfg")
 		Expect(c.Get(ctx, client.ObjectKeyFromObject(obj), obj)).To(Succeed())
@@ -801,6 +1015,13 @@ var _ = Describe("Kubernetes consumers", func() {
 		Expect(version).To(Equal("219"))
 	})
 })
+
+// waitIdle waits until the write path has applied everything it owes: the
+// emitter runs on its own goroutine, so a fed event lands asynchronously.
+func waitIdle(c *baseConsumer) {
+	GinkgoHelper()
+	Eventually(c.pump.Idle, 5*time.Second, 5*time.Millisecond).Should(BeTrue())
+}
 
 type docWeight struct {
 	doc map[string]any
@@ -858,10 +1079,12 @@ func decodePatch(patch client.Patch, obj client.Object) map[string]any {
 }
 
 // failingClient fails every write with the given error until the remaining
-// counter runs out, then forwards.
+// counter runs out, then forwards. applied counts the writes that reached
+// the wrapped client.
 type failingClient struct {
 	client.Client
 	remaining int
+	applied   int
 	err       error
 }
 
@@ -870,6 +1093,7 @@ func (c *failingClient) Patch(ctx context.Context, obj client.Object, patch clie
 		c.remaining--
 		return c.err
 	}
+	c.applied++
 	return c.Client.Patch(ctx, obj, patch, opts...)
 }
 
@@ -878,6 +1102,7 @@ func (c *failingClient) Create(ctx context.Context, obj client.Object, opts ...c
 		c.remaining--
 		return c.err
 	}
+	c.applied++
 	return c.Client.Create(ctx, obj, opts...)
 }
 

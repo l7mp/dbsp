@@ -65,12 +65,10 @@ kubernetes.watch("services", { gvk: "v1/Service" }, (entries) => {
 ## Egress: Patcher and Updater
 
 The two consumers bind an output topic to a target kind, `kubernetes.<verb>(topic, {gvk})`, and
-differ in how much of the object they claim to own. Neither ever reads the cluster: the write side
-has no Get, no List, and no feedback loop. Each consumer accumulates the deltas whose writes have
-not reached the plant yet and retries with backoff until the apiserver accepts them, so pending is
-always "the latest desired state minus what the plant already took".
+differ only in the ownership model: Updater can create, modify or delete an object, while Patcher
+can only ever modify the specified fields of an *existing* object.
 
-**Patcher** (`kubernetes.patch`) applies each folded (old, new) pair as an RFC 7386 merge patch.
+**Patcher** (`kubernetes.patch`) applies each (old, new) pair as an RFC 7386 merge patch.
 Only the fields present in the document are touched, so the pipeline can own an annotation or a
 status condition while leaving everything else on the object to its other owners. A patcher never
 creates or deletes an object: a decorator has no business bringing an object back.

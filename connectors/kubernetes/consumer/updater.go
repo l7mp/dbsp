@@ -25,7 +25,6 @@ func NewUpdater(cfg Config) (*Updater, error) {
 		return nil, err
 	}
 	b.owns = true
-	b.retryFlush = b.flushLocked
 	return &Updater{baseConsumer: b}, nil
 }
 

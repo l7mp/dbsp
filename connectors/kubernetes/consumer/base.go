@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net"
-	"sync"
 	"syscall"
 	"time"
 
@@ -26,15 +25,17 @@ import (
 	"github.com/l7mp/dbsp/engine/datamodel"
 
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
-	"github.com/l7mp/dbsp/engine/zset"
 )
 
-// Retry backoff for unreachable-plant failures: exponential from the
-// initial delay to the cap, reset whenever a flush leaves nothing pending.
-// Assigning the template copies it, giving each consumer a fresh schedule.
+// Retry schedule for unreachable-plant failures: exponential with jitter
+// from the initial delay to the cap, the same shape the producer's watch
+// reconnect uses. The jitter keeps the consumers of a throttled apiserver
+// from retrying in lockstep. Assigning the template copies it, so every
+// stall starts from a fresh schedule.
 var retryBackoff = wait.Backoff{
 	Duration: time.Second,
 	Factor:   2,
+	Jitter:   0.1,
 	Cap:      30 * time.Second,
 	Steps:    math.MaxInt32,
 }
@@ -61,8 +62,8 @@ type Config struct {
 // baseConsumer is the shared write path. The connector choice declares ownership (owns): an
 // Updater owns the objects it writes, so it creates them when absent and deletes them on
 // retraction; a Patcher decorates somebody else's objects, so it only ever patches fields and
-// never creates/deletes objects. Updates are RFC 7386 merge patches of the folded (old, new)
-// pair.
+// never creates/deletes objects. Updates are RFC 7386 merge patches of the (old, new) pair the
+// write path derives per object.
 type baseConsumer struct {
 	*dbspruntime.BaseConsumer
 
@@ -73,16 +74,9 @@ type baseConsumer struct {
 	log        logr.Logger
 	owns       bool
 
-	// writeM serializes plant writes with the retry timer. pending holds
-	// the deltas whose writes have not reached the plant yet: unreachable
-	// failures stay in and are retried with backoff, everything else
-	// leaves the set the moment the plant answers.
-	writeM     sync.Mutex
-	pending    zset.ZSet
-	retryCtx   context.Context
-	retryArmed bool
-	backoff    wait.Backoff
-	retryFlush func(ctx context.Context) error
+	// pump is the write path: Consume feeds it the output deltas as
+	// outstanding jobs, its emitter drains them into the apiserver.
+	pump *dbspruntime.WritePump
 }
 
 // MarshalJSON provides a stable machine-readable representation.
@@ -136,184 +130,45 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 		targetGVK:    cfg.TargetGVK,
 		converter:    converter,
 		log:          log,
-		pending:      zset.New(),
-		retryCtx:     context.Background(),
-		backoff:      retryBackoff,
 	}
+
+	b.pump = dbspruntime.NewWritePump(dbspruntime.WritePumpConfig{
+		Adapter: b,
+		Report:  b.HandleError,
+		NewBackoff: func() dbspruntime.Backoff {
+			schedule := retryBackoff
+			return &schedule
+		},
+		Logger: log,
+	})
 
 	return b, nil
 }
 
-// start is the shared event loop for all consumers. consume is called for
-// every event received on the subscriber channel. Consume errors are
-// non-critical: they are reported via the runtime error channel and the
-// consumer continues processing subsequent events.
+// start is the shared event loop for all consumers: the emitter drains
+// the write pump in the background while consume takes every event off the
+// subscriber channel. Consume errors are non-critical: they are reported
+// via the runtime error channel and the consumer continues processing
+// subsequent events.
 func (c *baseConsumer) start(ctx context.Context, consume dbspruntime.ConsumeHandler) error {
-	c.writeM.Lock()
-	c.retryCtx = ctx
-	c.writeM.Unlock()
+	go func() {
+		if err := c.pump.Run(ctx); err != nil {
+			c.HandleError(err)
+		}
+	}()
+
 	return c.Run(ctx, consume)
 }
 
-// keyOf is the connector's key function π: the plant identity a write to
-// this document would address. Documents that name no target are skipped.
-func (c *baseConsumer) keyOf(doc datamodel.Document) (string, error) {
-	obj, err := c.converter.ToObject(doc)
-	if err != nil {
-		return "", err
+// consume feeds one output event into the write pump: adapt, pair by
+// plant key, absorb into the outstanding jobs. It never touches the
+// apiserver, so a plant that stops answering cannot stall the circuit
+// publishing to this topic.
+func (c *baseConsumer) consume(_ context.Context, out dbspruntime.Event) error {
+	if err := c.pump.Feed(out.Data); err != nil {
+		return fmt.Errorf("consumer %s: %w", c.Name(), err)
 	}
-	if normalizeResultObject(obj, c.targetGVK) == nil {
-		return "", nil
-	}
-	return client.ObjectKeyFromObject(obj).String(), nil
-}
-
-// consume folds the event into the pending set and flushes it: the shared
-// Consume implementation behind the Patcher and the Updater.
-func (c *baseConsumer) consume(ctx context.Context, out dbspruntime.Event) error {
-	c.writeM.Lock()
-	defer c.writeM.Unlock()
-	c.pending = c.pending.Add(out.Data)
-	return c.flushLocked(ctx)
-}
-
-// flushLocked folds the pending set into per-key pairs and writes each.
-// Unreachable writes return to the pending set and arm the retry timer;
-// refused writes and fold rejections are reported and dropped.
-func (c *baseConsumer) flushLocked(ctx context.Context) error {
-	work := c.pending
-	c.pending = zset.New()
-
-	pairs, kerrs := zset.Fold(work, c.keyOf)
-	errs := make([]error, 0, len(kerrs))
-	for _, ke := range kerrs {
-		errs = append(errs, fmt.Errorf("consumer %s: fold: %w", c.Name(), ke))
-	}
-
-	unreachable := false
-	suggested := time.Duration(0)
-	for _, p := range pairs {
-		outcome, err := c.applyPair(ctx, p)
-		switch outcome {
-		case Applied:
-		case Refused:
-			errs = append(errs, err)
-		case Unreachable:
-			if p.Old != nil {
-				c.pending.Insert(p.Old, -1)
-			}
-			if p.New != nil {
-				c.pending.Insert(p.New, 1)
-			}
-			unreachable = true
-			if secs, ok := apierrors.SuggestsClientDelay(err); ok {
-				if d := time.Duration(secs) * time.Second; d > suggested {
-					suggested = d
-				}
-			}
-			c.log.V(1).Info("plant unreachable, write pending", "object", p.Key, "error", err.Error())
-		}
-	}
-
-	if unreachable {
-		c.armRetryLocked(suggested)
-	} else {
-		c.backoff = retryBackoff
-	}
-
-	return errors.Join(errs...)
-}
-
-// armRetryLocked schedules the retry flush: exponential backoff from the
-// initial delay to the cap, stretched further when the plant suggested a
-// delay of its own. Retrying is not optional: an unreachable failure left
-// the plant unchanged, so no feedback event will ever re-tick the loop on
-// its account.
-func (c *baseConsumer) armRetryLocked(suggested time.Duration) {
-	if c.retryArmed {
-		return
-	}
-
-	delay := c.backoff.Step()
-	if suggested > delay {
-		delay = suggested
-	}
-
-	c.retryArmed = true
-	time.AfterFunc(delay, func() {
-		c.writeM.Lock()
-		defer c.writeM.Unlock()
-		c.retryArmed = false
-		ctx := c.retryCtx
-		if ctx == nil || ctx.Err() != nil {
-			return
-		}
-		if err := c.retryFlush(ctx); err != nil {
-			c.HandleError(err)
-		}
-	})
-}
-
-// applyPair writes one folded pair. The delta shape picks the edge: a full
-// pair is an update, a bare assertion is a create (owner) or a
-// first-decoration patch, a bare retraction is a delete (owner) or a
-// field-clearing patch.
-func (c *baseConsumer) applyPair(ctx context.Context, p zset.Pair) (ApplyResult, error) {
-	oldObj, err := c.pairObject(p.Old)
-	if err != nil {
-		return Refused, fmt.Errorf("consumer %s: %s: %w", c.Name(), p.Key, err)
-	}
-	newObj, err := c.pairObject(p.New)
-	if err != nil {
-		return Refused, fmt.Errorf("consumer %s: %s: %w", c.Name(), p.Key, err)
-	}
-
-	mode := "update"
-	switch {
-	case newObj == nil:
-		mode = "retract"
-	case oldObj == nil:
-		mode = "assert"
-	}
-	target := newObj
-	if target == nil {
-		target = oldObj
-	}
-	dbspruntime.LogFlowApply(c.log, "consumer.apply", "consumer", c.String(),
-		"apply", c.outputName, "", p.Key, pairWeight(p), func() string {
-			return kobject.DumpContent(target.UnstructuredContent())
-		}, "mode", mode)
-
-	switch {
-	case newObj == nil:
-		return c.applyRetract(ctx, oldObj)
-	case oldObj == nil && c.owns:
-		return c.applyCreate(ctx, newObj, true)
-	default:
-		return c.applyUpdate(ctx, oldObj, newObj, c.owns)
-	}
-}
-
-func pairWeight(p zset.Pair) zset.Weight {
-	if p.New == nil {
-		return -1
-	}
-	return 1
-}
-
-func (c *baseConsumer) pairObject(doc datamodel.Document) (kobject.Object, error) {
-	if doc == nil {
-		return nil, nil
-	}
-	obj, err := c.converter.ToObject(doc)
-	if err != nil {
-		return nil, err
-	}
-	normalized := normalizeResultObject(obj, c.targetGVK)
-	if normalized == nil {
-		return nil, fmt.Errorf("document names no target object")
-	}
-	return normalized, nil
+	return nil
 }
 
 // applyUpdate patches the target with the merge diff of the pair. Foreign
@@ -321,12 +176,12 @@ func (c *baseConsumer) pairObject(doc datamodel.Document) (kobject.Object, error
 // never wrote. When the target is gone and the consumer owns it, the
 // object is recreated (resurrection is the feature for generated objects);
 // a decorator reports and drops.
-func (c *baseConsumer) applyUpdate(ctx context.Context, oldObj, newObj kobject.Object, allowCreate bool) (ApplyResult, error) {
+func (c *baseConsumer) applyUpdate(ctx context.Context, oldObj, newObj kobject.Object, allowCreate bool) (dbspruntime.ApplyResult, error) {
 	view := isViewObject(newObj)
 	key := client.ObjectKeyFromObject(newObj).String()
 	ps, err := writePatches(oldObj, newObj, view)
 	if err != nil {
-		return Refused, fmt.Errorf("consumer %s: diff %s: %w", c.Name(), key, err)
+		return dbspruntime.Refused, fmt.Errorf("consumer %s: diff %s: %w", c.Name(), key, err)
 	}
 
 	if len(ps.main) > 0 {
@@ -335,7 +190,7 @@ func (c *baseConsumer) applyUpdate(ctx context.Context, oldObj, newObj kobject.O
 			if allowCreate {
 				return c.applyCreate(ctx, newObj, false)
 			}
-			return Refused, fmt.Errorf("consumer %s: patch %s: %w", c.Name(), key, err)
+			return dbspruntime.Refused, fmt.Errorf("consumer %s: patch %s: %w", c.Name(), key, err)
 		}
 		if err != nil {
 			return classifyWriteError(err), fmt.Errorf("consumer %s: patch %s: %w", c.Name(), key, err)
@@ -352,14 +207,14 @@ func (c *baseConsumer) applyUpdate(ctx context.Context, oldObj, newObj kobject.O
 		}
 	}
 
-	return Applied, nil
+	return dbspruntime.Applied, nil
 }
 
 // applyCreate creates the asserted object. On AlreadyExists the create
 // falls back to a patch of all asserted fields exactly once: the delta
 // carried no old state, so there is nothing to diff against and the whole
 // assertion is applied.
-func (c *baseConsumer) applyCreate(ctx context.Context, newObj kobject.Object, retryAsPatch bool) (ApplyResult, error) {
+func (c *baseConsumer) applyCreate(ctx context.Context, newObj kobject.Object, retryAsPatch bool) (dbspruntime.ApplyResult, error) {
 	view := isViewObject(newObj)
 	key := client.ObjectKeyFromObject(newObj).String()
 
@@ -390,26 +245,26 @@ func (c *baseConsumer) applyCreate(ctx context.Context, newObj kobject.Object, r
 		}
 	}
 
-	return Applied, nil
+	return dbspruntime.Applied, nil
 }
 
 // applyRetract handles a bare retraction: the owner deletes the object,
 // the decorator clears the fields it held. A missing target means the
 // retraction is moot either way.
-func (c *baseConsumer) applyRetract(ctx context.Context, oldObj kobject.Object) (ApplyResult, error) {
+func (c *baseConsumer) applyRetract(ctx context.Context, oldObj kobject.Object) (dbspruntime.ApplyResult, error) {
 	key := client.ObjectKeyFromObject(oldObj).String()
 
 	if c.owns {
 		if err := c.client.Delete(ctx, identityObject(oldObj)); err != nil && !apierrors.IsNotFound(err) {
 			return classifyWriteError(err), fmt.Errorf("consumer %s: delete %s: %w", c.Name(), key, err)
 		}
-		return Applied, nil
+		return dbspruntime.Applied, nil
 	}
 
 	view := isViewObject(oldObj)
 	ps, err := writePatches(oldObj, nil, view)
 	if err != nil {
-		return Refused, fmt.Errorf("consumer %s: diff %s: %w", c.Name(), key, err)
+		return dbspruntime.Refused, fmt.Errorf("consumer %s: diff %s: %w", c.Name(), key, err)
 	}
 
 	if len(ps.main) > 0 {
@@ -425,7 +280,7 @@ func (c *baseConsumer) applyRetract(ctx context.Context, oldObj kobject.Object) 
 		}
 	}
 
-	return Applied, nil
+	return dbspruntime.Applied, nil
 }
 
 // patch sends one merge patch to the main resource or the status
@@ -442,7 +297,7 @@ func (c *baseConsumer) patch(ctx context.Context, target kobject.Object, body ma
 	return c.client.Patch(ctx, obj, client.RawPatch(types.MergePatchType, raw))
 }
 
-// patchSet is the wire form of one folded pair: the main and status merge
+// patchSet is the wire form of one pair: the main and status merge
 // patches.
 type patchSet struct {
 	main   map[string]any
@@ -531,63 +386,25 @@ func identityObject(obj kobject.Object) *unstructured.Unstructured {
 // than silently retried, because a retry loop hides it while a report
 // surfaces it, and only one of those is diagnosable. Client-side rejections
 // (a write the client refuses to even send) land here too.
-func classifyWriteError(err error) ApplyResult {
+func classifyWriteError(err error) dbspruntime.ApplyResult {
 	if err == nil {
-		return Applied
+		return dbspruntime.Applied
 	}
 	if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) ||
 		apierrors.IsTooManyRequests(err) || apierrors.IsServiceUnavailable(err) ||
 		apierrors.IsInternalError(err) {
-		return Unreachable
+		return dbspruntime.Unreachable
 	}
 	if _, ok := apierrors.SuggestsClientDelay(err); ok {
-		return Unreachable
+		return dbspruntime.Unreachable
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return Unreachable
+		return dbspruntime.Unreachable
 	}
-	return Refused
-}
-
-func normalizeResultObject(obj kobject.Object, target schema.GroupVersionKind) kobject.Object {
-	doc := obj.UnstructuredContent()
-
-	meta, ok := doc["metadata"]
-	if !ok {
-		return nil
-	}
-	metaMap, ok := meta.(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	name, ok := metaMap["name"]
-	if !ok {
-		return nil
-	}
-	nameStr, ok := name.(string)
-	if !ok || nameStr == "" {
-		return nil
-	}
-
-	namespaceStr := ""
-	if namespace, ok := metaMap["namespace"]; ok {
-		nsStr, ok := namespace.(string)
-		if !ok {
-			return nil
-		}
-		namespaceStr = nsStr
-	}
-
-	ret := kobject.New()
-	kobject.SetContent(ret, doc)
-	ret.SetGroupVersionKind(target)
-	ret.SetName(nameStr)
-	ret.SetNamespace(namespaceStr)
-	return ret
+	return dbspruntime.Refused
 }
 
 func isViewObject(obj client.Object) bool {

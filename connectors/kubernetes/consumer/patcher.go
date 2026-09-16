@@ -9,7 +9,7 @@ import (
 
 // Patcher applies output deltas to objects it does not own: it maintains
 // the fields the pipeline writes on somebody else's objects. It patches
-// the merge diff of each folded (old, new) pair, clears its fields on
+// the merge diff of each (old, new) pair, clears its fields on
 // retraction, and never creates or deletes an object: a missing target is
 // reported and dropped, because a decorator has no business bringing an
 // object back.
@@ -26,7 +26,6 @@ func NewPatcher(cfg Config) (*Patcher, error) {
 		return nil, err
 	}
 	b.owns = false
-	b.retryFlush = b.flushLocked
 	return &Patcher{baseConsumer: b}, nil
 }
 

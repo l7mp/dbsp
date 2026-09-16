@@ -12,6 +12,7 @@ import (
 
 	"github.com/l7mp/dbsp/engine/datamodel"
 	"github.com/l7mp/dbsp/engine/datamodel/unstructured"
+	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -46,17 +47,21 @@ type resourceOps struct {
 	deletes []string
 }
 
-// classify nets a Z-set delta into resource operations through the keyed fold
-// (zset.Fold, the same netting the Kubernetes write path applies), keyed by
-// the resource's self-assigned name. Per name the fold yields one effective
-// op: an asserted document is upserted as its typed resource, a bare
-// retraction deletes the name. Keys violating the functional-delta contract
-// or failing to decode are omitted from the result and reported. The result
-// is deterministic: names are visited in sorted order.
-func classify(entry typeEntry, data zset.ZSet) (resourceOps, []zset.KeyError) {
-	pairs, kerrs := zset.Fold(data, func(doc datamodel.Document) (string, error) {
-		_, name, err := decodeDocument(entry, doc)
-		return name, err
+// classify nets a Z-set delta into resource operations through the shared
+// keyed pairing (runtime.PairByKey, the same re-indexing the Kubernetes
+// write path applies), keyed by the resource's self-assigned name. Per name
+// the pairing yields one effective op: an asserted document is upserted as
+// its typed resource, a bare retraction deletes the name. Names carrying
+// several distinct documents, and documents that fail to decode, are
+// omitted from the result and reported. The result is deterministic: names
+// are visited in sorted order.
+func classify(entry typeEntry, data zset.ZSet) (resourceOps, []dbspruntime.KeyError) {
+	pairs, kerrs := dbspruntime.PairByKey(data, func(doc datamodel.Document) (string, any, error) {
+		res, name, err := decodeDocument(entry, doc)
+		if err != nil {
+			return "", nil, err
+		}
+		return name, res, nil
 	})
 
 	ops := resourceOps{upserts: map[string]types.Resource{}}
@@ -65,12 +70,7 @@ func classify(entry typeEntry, data zset.ZSet) (resourceOps, []zset.KeyError) {
 			ops.deletes = append(ops.deletes, p.Key)
 			continue
 		}
-		res, _, err := decodeDocument(entry, p.New)
-		if err != nil {
-			kerrs = append(kerrs, zset.KeyError{Key: p.Key, Err: err})
-			continue
-		}
-		ops.upserts[p.Key] = res
+		ops.upserts[p.Key] = p.New.(types.Resource)
 	}
 	return ops, kerrs
 }
@@ -79,7 +79,7 @@ func classify(entry typeEntry, data zset.ZSet) (resourceOps, []zset.KeyError) {
 // a Setter's SetResources: the fold's assertions. Retracted-only names are
 // simply absent (deletion is by omission). The returned map is never nil, so
 // an empty event correctly clears the type.
-func snapshot(entry typeEntry, data zset.ZSet) (map[string]types.Resource, []zset.KeyError) {
+func snapshot(entry typeEntry, data zset.ZSet) (map[string]types.Resource, []dbspruntime.KeyError) {
 	ops, kerrs := classify(entry, data)
 	return ops.upserts, kerrs
 }

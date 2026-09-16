@@ -98,6 +98,12 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
+		// The consumer emits from its own goroutine: Consume only records
+		// what the plant is owed, Start is what pays it.
+		runCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		go func() { _ = u.Start(runCtx) }()
+
 		doc := map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
@@ -164,6 +170,10 @@ var _ = Describe("Kubernetes connectors over envtest", func() {
 			Runtime:    dbspruntime.NewRuntime("", logr.Discard()),
 		})
 		Expect(err).NotTo(HaveOccurred())
+
+		runCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		go func() { _ = p.Start(runCtx) }()
 
 		patch := map[string]any{
 			"apiVersion": "apps/v1",
