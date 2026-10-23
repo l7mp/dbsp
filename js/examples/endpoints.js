@@ -8,8 +8,6 @@ aggregate.compile(
         ]},
         { "@groupBy": ["$.services.metadata.name", "$.pods.status.podIP"] },
         { "@project": {
-            apiVersion: "endpointsdemo.view.dcontroller.io/v1alpha1",
-            kind:       "Endpoints",
             metadata:   { name: "$.key", namespace: "default" },
             endpoints:  "$.values",
         }},
@@ -37,9 +35,17 @@ publish("services", [
     [{ metadata: { name: "db-svc"  }, spec: { selector: { app: "db"  } } }, 1],
 ]);
 
+setInterval(() => {}, 100);
+
 publish("pods", [
     [{ metadata: { name: "nginx-2", labels: { app: "web" } }, status: { podIP: "10.0.0.2" } }, -1],
     [{ metadata: { name: "nginx-2", labels: { app: "web" } }, status: { podIP: "10.0.0.4" } }, 1],
+]);
+
+setInterval(() => {}, 100);
+
+publish("pods", [
+    [{ metadata: { name: "nginx-1", labels: { app: "web" } }, status: { podIP: "10.0.0.1" } }, -1],
 ]);
 
 setInterval(() => exit(), 1000);
