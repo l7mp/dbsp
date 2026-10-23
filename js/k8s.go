@@ -12,7 +12,6 @@ import (
 	enginespec "github.com/l7mp/dbsp/engine/spec"
 
 	"github.com/dop251/goja"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -20,7 +19,6 @@ import (
 	k8sconsumer "github.com/l7mp/dbsp/connectors/kubernetes/consumer"
 	k8sproducer "github.com/l7mp/dbsp/connectors/kubernetes/producer"
 	k8sruntime "github.com/l7mp/dbsp/connectors/kubernetes/runtime"
-	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
 )
 
 // describeCall summarises the arguments of a goja call, for use in error
@@ -290,23 +288,6 @@ func (v *VM) parseGVK(raw string) (schema.GroupVersionKind, error) {
 		return schema.GroupVersionKind{}, err
 	}
 	return gvk, nil
-}
-
-func (v *VM) k8sRESTMapping(gk schema.GroupKind, version string) (*meta.RESTMapping, error) {
-	krt, err := v.ensureK8sRuntime()
-	if err != nil {
-		return nil, err
-	}
-
-	mapping, err := krt.GetRESTMapper().RESTMapping(gk, version)
-	if err != nil {
-		if !v.k8sNativeAvailable && !viewv1a1.IsViewGroup(gk.Group) {
-			return nil, fmt.Errorf("native Kubernetes resources unavailable: kubeconfig is missing, only view resources can be used")
-		}
-		return nil, fmt.Errorf("resolve GVK for %s/%s: %w", gk.String(), version, err)
-	}
-
-	return mapping, nil
 }
 
 func (v *VM) ensureK8sViewDiscovery(gvk schema.GroupVersionKind) error {

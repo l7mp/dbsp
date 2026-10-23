@@ -151,10 +151,7 @@ func NewVMWithOptions(opts Options) (*VM, error) {
 	}
 	v.defaultInst = newAmbientInstance(v, v.runtime)
 	v.runtime.SetErrorChannel(v.defaultInst.errCh)
-	if err := v.registerConnectorFactories(); err != nil {
-		cancel()
-		return nil, err
-	}
+	v.registerConnectorFactories()
 	v.logger.V(1).Info("vm created")
 
 	v.loop.Start()
@@ -518,7 +515,7 @@ func (v *VM) waitRuntimeStop(timeout time.Duration) error {
 	}
 }
 
-func (v *VM) recordRuntimeError(err error) {
+func (v *VM) recordRuntimeError(err error) { //nolint:unused // The only writer of firstRuntimeErrOut; see waitRuntimeStop.
 	v.errMu.Lock()
 	if v.firstRuntimeErrOut == nil {
 		v.firstRuntimeErrOut = err

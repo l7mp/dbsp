@@ -365,15 +365,6 @@ func allFieldValues(z zset.ZSet, path ...string) []string {
 	return vals
 }
 
-func contains(xs []string, x string) bool {
-	for _, e := range xs {
-		if e == x {
-			return true
-		}
-	}
-	return false
-}
-
 func restConfigFromGeneratedKubeconfig(cfg *clientcmdapi.Config) (*rest.Config, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("kubeconfig is nil")

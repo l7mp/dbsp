@@ -134,7 +134,7 @@ func (p *LogProducer) Start(ctx context.Context) error {
 	for {
 		err := p.stream(ctx)
 		if ctx.Err() != nil {
-			return nil //nolint:nilerr
+			return nil
 		}
 		if err != nil {
 			p.HandleError(fmt.Errorf("log stream: %w", err))

@@ -166,7 +166,7 @@ func (s *APIServer) runServerInstance(ctx context.Context) error {
 			}
 		}()
 
-		go func() {
+		go func() { //nolint:gosec // ctx is already done here, the shutdown needs a live context.
 			<-ctx.Done()
 			if err := s.insecureServer.Shutdown(context.Background()); err != nil {
 				s.log.Error(err, "failed to shutdown HTTP server")

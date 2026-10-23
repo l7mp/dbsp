@@ -221,18 +221,6 @@ func (v *VM) registerViewGVKList(gvks []schema.GroupVersionKind) error {
 	return nil
 }
 
-// unregisterViewGVKList removes view GVKs from the runtime's API server.
-func (v *VM) unregisterViewGVKList(gvks []schema.GroupVersionKind) error {
-	krt, err := v.ensureK8sRuntime()
-	if err != nil {
-		return err
-	}
-	if api := krt.GetAPIServer(); api != nil {
-		api.UnregisterGVKs(gvks)
-	}
-	return nil
-}
-
 func (v *VM) k8sRuntimeUnregisterViews(call goja.FunctionCall) (goja.Value, error) {
 	gvks, err := decodeViewGVKList(call.Argument(0))
 	if err != nil {

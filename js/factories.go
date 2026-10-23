@@ -11,13 +11,12 @@ import (
 // factories, their environments closed over this VM (the host-owned k8s
 // runtime and the script-started xDS servers). Every created runtime
 // gets its own connector registry populated from them.
-func (v *VM) registerConnectorFactories() error {
+func (v *VM) registerConnectorFactories() {
 	v.factories = []dbspruntime.ConnectorFactory{
 		misc.NewFactory(),
 		xds.NewFactory(xds.Env{Server: v.lookupXDSServer}),
 		k8sconn.NewFactory(k8sconn.Env{Runtime: v.ensureK8sRuntime}),
 	}
-	return nil
 }
 
 // lookupXDSServer resolves a script-started (host-owned) egress server.

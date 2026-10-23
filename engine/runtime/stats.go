@@ -27,13 +27,13 @@ type RuntimeStats struct {
 	HeapAllocBytes  uint64  `json:"heapAllocBytes"`
 	HeapSysBytes    uint64  `json:"heapSysBytes"`
 	TotalAllocBytes uint64  `json:"totalAllocBytes"`
-	NumGC           uint32  `json:"numGC"`
+	NumGC           uint32  `json:"numGC"` //nolint:tagliatelle // Published name, parsed by the benchmark drivers.
 	GCPauseTotalMs  float64 `json:"gcPauseTotalMs"`
 	// Process CPU time and peak RSS, from getrusage (zero where the
 	// platform has no rusage).
 	CPUUserSeconds   float64 `json:"cpuUserSeconds"`
 	CPUSystemSeconds float64 `json:"cpuSystemSeconds"`
-	MaxRSSBytes      uint64  `json:"maxRSSBytes"`
+	MaxRSSBytes      uint64  `json:"maxRSSBytes"` //nolint:tagliatelle // Published name, parsed by the benchmark drivers.
 }
 
 // Process-wide counters, for events raised outside any runtime.

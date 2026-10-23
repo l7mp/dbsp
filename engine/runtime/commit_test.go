@@ -30,7 +30,7 @@ func distinctQuery() *compiler.Query {
 
 // startRuntime commits the query with the given transforms and options and
 // starts the runtime; the returned stop function tears it down.
-func startRuntime(name string, specs []transform.TransformSpec, opts runtime.CommitOptions) (*runtime.Runtime, runtime.Publisher, <-chan runtime.Event, func()) {
+func startRuntime(name string, specs []transform.TransformSpec, opts runtime.CommitOptions) (runtime.Publisher, <-chan runtime.Event, func()) {
 	rt := runtime.NewRuntime(name, logr.Discard())
 	_, err := rt.CommitCircuit(name, distinctQuery(), specs, opts)
 	Expect(err).NotTo(HaveOccurred())
@@ -42,7 +42,7 @@ func startRuntime(name string, specs []transform.TransformSpec, opts runtime.Com
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- rt.Start(ctx) }()
-	return rt, pub, sub.GetChannel(), func() {
+	return pub, sub.GetChannel(), func() {
 		cancel()
 		Eventually(errCh, time.Second).Should(Receive(BeNil()))
 	}
@@ -75,7 +75,7 @@ var _ = Describe("CommitCircuit", func() {
 			Consistently(ch, 200*time.Millisecond).ShouldNot(Receive())
 		}
 
-		steps := [][2]int64{}
+		steps := make([][2]int64, 0, 3)
 		Expect(pub.Publish(runtime.Event{Name: "A", Data: deltaOf(map[*unstructured.Unstructured]int{a: 1})})).To(Succeed())
 		steps = append(steps, recv())
 		Expect(pub.Publish(runtime.Event{Name: "A", Data: deltaOf(map[*unstructured.Unstructured]int{b: 1})})).To(Succeed())
@@ -96,9 +96,9 @@ var _ = Describe("CommitCircuit", func() {
 		// The theorem behind the commit contract, Q^Δ = D ∘ Q ∘ ∫: the
 		// plain commit (snapshot adapters) and the incrementalized commit
 		// must be indistinguishable on the bus.
-		_, pubA, chA, stopA := startRuntime("commit-adapted", nil, runtime.CommitOptions{Compiled: true})
+		pubA, chA, stopA := startRuntime("commit-adapted", nil, runtime.CommitOptions{Compiled: true})
 		defer stopA()
-		_, pubI, chI, stopI := startRuntime("commit-incremental",
+		pubI, chI, stopI := startRuntime("commit-incremental",
 			[]transform.TransformSpec{{Name: "Incrementalizer"}}, runtime.CommitOptions{Compiled: true})
 		defer stopI()
 
@@ -112,7 +112,7 @@ var _ = Describe("CommitCircuit", func() {
 		// Compiled == false: no adapters. The snapshot program runs on the
 		// raw deltas, so the duplicate insert IS emitted again - exactly
 		// the behavior the default protects compiled circuits from.
-		_, pub, sub, stop := startRuntime("commit-raw", nil, runtime.CommitOptions{})
+		pub, sub, stop := startRuntime("commit-raw", nil, runtime.CommitOptions{})
 		defer stop()
 
 		var out runtime.Event
@@ -130,7 +130,7 @@ var _ = Describe("CommitCircuit", func() {
 		// integrated state and ships the LEVEL - the second insert emits
 		// both documents.
 		ins := []string{"A"}
-		_, pub, sub, stop := startRuntime("commit-partial", nil,
+		pub, sub, stop := startRuntime("commit-partial", nil,
 			runtime.CommitOptions{AdaptInputs: &ins, AdaptOutputs: &[]string{}})
 		defer stop()
 

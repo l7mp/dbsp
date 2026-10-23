@@ -283,7 +283,7 @@ var _ = Describe("Write queue", func() {
 		Expect(q.idle()).To(BeFalse(), "a taken job is still owed until it settles")
 
 		q.restore("a", j)
-		j, _ = q.take("a")
+		_, _ = q.take("a")
 		q.done()
 		Expect(q.idle()).To(BeTrue())
 	})

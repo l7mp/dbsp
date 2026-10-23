@@ -234,20 +234,6 @@ func (p *baseProducer) allowEvent(t watch.EventType, oldObj, newObj *unstructure
 	return true
 }
 
-func (p *baseProducer) allowObject(obj *unstructured.Unstructured) bool {
-	if len(p.predicates) == 0 {
-		return true
-	}
-
-	for _, pred := range p.predicates {
-		if !pred.Create(crevent.TypedCreateEvent[client.Object]{Object: obj}) {
-			return false
-		}
-	}
-
-	return true
-}
-
 func (p *baseProducer) newListObject() *unstructured.UnstructuredList {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(p.sourceGVK)

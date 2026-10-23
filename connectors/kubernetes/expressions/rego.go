@@ -61,7 +61,7 @@ func regoEval(args []any) (any, error) {
 
 	entry := prepare(source)
 	if entry.err != nil {
-		return regoResult(nil, entry.err), nil
+		return regoResult(nil, entry.err), nil //nolint:nilerr // A compile error is a result, not a failure.
 	}
 	if args[2] == nil {
 		// Compile check only.
