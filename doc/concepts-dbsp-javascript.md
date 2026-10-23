@@ -57,6 +57,10 @@ Available modules and globals include:
 - `assert` (built-in helper module)
 - `fs` and `fs.promises` (read/write filesystem access)
 - `timers/promises` (`setTimeout(ms, value)`)
+- `fetch`, `serve`, `Headers`, `Request`, `Response`, `AbortController` and `AbortSignal` (HTTP
+  client and server, a subset of WHATWG fetch plus a Deno-style `serve`; also `require("http")`,
+  which adds the `encodePath` template tag)
+- `btoa` and `atob` (base64 of Latin1 strings, e.g. for Basic auth)
 - `@dbsp/test` (lightweight testing helpers, including `sleep`)
 - `log` (structured logging wrapper around the vendored `pino/browser` build)
 
@@ -78,6 +82,70 @@ fs.writeFileSync("result.json", JSON.stringify({ ok: true }), "utf8");
 await setTimeout(10);
 assert.strictEqual(fs.existsSync("result.json"), true);
 ```
+
+### HTTP clients with `fetch`
+
+`fetch(input, init)` follows the WHATWG standard closely enough that a REST connector written
+against it also runs on Node 18+, Deno and Bun. `init` takes `method`, `headers`, `body` (a string,
+`ArrayBuffer`, typed array, `Buffer` or `URLSearchParams`; JSON goes through `JSON.stringify`),
+`signal` and `tls`. An HTTP error status resolves with `ok === false`; a transport error rejects
+with `TypeError("fetch failed")` carrying the cause, and an abort rejects with the signal's
+reason, so `AbortSignal.timeout(ms)` is the timeout idiom. Redirects are followed. Certificate
+verification is on by default and can be switched off per request with
+`tls: { rejectUnauthorized: false }`, or for every request with `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+`input` is a string, a `URL` or a `Request`. Streaming bodies, `FormData` and cookies are not
+supported.
+
+REST paths need their segments URI-encoded: `encodePath` encodes every interpolated value and
+leaves the literal parts alone. Concatenate the result to the base URL rather than resolving it
+with `new URL(path, base)`, since the `URL` class normalizes the path, decoding `%2F` and dropping
+trailing slashes.
+
+```js
+const { encodePath } = require("http");
+
+subscribe("policies", async (entries) => {
+  for (const [p, weight] of entries) {
+    const url = BASE + encodePath`/api/policies/${p.vhost}/${p.name}`;
+    const res = await fetch(url, {
+      method: weight > 0 ? "PUT" : "DELETE",
+      headers: { authorization: "Basic " + btoa("guest:guest"), "content-type": "application/json" },
+      body: weight > 0 ? JSON.stringify(p.definition) : undefined,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) console.error(`${p.name}: HTTP ${res.status}`);
+  }
+});
+```
+
+`js/examples/fetch-weather.js` feeds a REST API into a pipeline.
+
+### HTTP servers with `serve`
+
+`serve(options, handler)` answers HTTP requests the way `Deno.serve` does, so handlers also run on
+Deno and Bun: the handler gets a `Request` and an info object (`info.remoteAddr`) and returns a
+`Response`, or a Promise of one. `Response.json(data, init)` builds a JSON answer. The options are
+`port` (default 8000, 0 picks a free port), `hostname` (default `127.0.0.1`), `cert` and `key`
+(PEM strings; both given means HTTPS, which Kubernetes admission webhooks require), `onListen(addr)`
+(default: log the address), `onError(err)` (the `Response` for a handler that threw; default: log
+and answer 500), and `signal` (an `AbortSignal` that shuts the server down). The returned server
+has `addr`, `shutdown()`, which stops accepting and resolves once the in-flight requests are
+answered, and `finished`, which resolves at the same time. Closing the VM, `exit()` included, closes
+every server.
+
+Handlers run on the event loop like every other callback, one at a time; a handler that awaits
+(a `fetch`, a pipeline result) lets the others run meanwhile.
+
+```js
+serve({ port: 8080 }, async (req) => {
+  if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+  publish("events", [[await req.json(), 1]]);
+  return Response.json({ accepted: true }, { status: 202 });
+});
+```
+
+`js/examples/serve-pirate.js` serves a pipeline: each request fetches a joke, runs it through a
+circuit, and answers with what comes out.
 
 ## The execution model
 

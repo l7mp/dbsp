@@ -66,6 +66,9 @@ type VM struct {
 	xdsMu      sync.Mutex
 	xdsServers map[string]*xds.Server
 
+	// httpClients carry the requests of the @dbsp/http transport.
+	httpClients httpClients
+
 	// The runtimes created through runtime.create, by name; the default
 	// runtime is not among them and every runtime is private.
 	instMu    sync.Mutex
@@ -185,6 +188,7 @@ func (v *VM) Close() {
 	v.closeOnce.Do(func() {
 		v.logger.V(1).Info("vm shutdown requested")
 		v.cancelVM()
+		v.httpClients.closeIdle()
 		if v.loop != nil {
 			v.loop.Terminate()
 		}
@@ -649,6 +653,7 @@ func (v *VM) injectGlobals() error {
 	registerFSModule(v, requireRegistry)
 	registerNodeAliases(requireRegistry)
 	registerTimersPromisesModule(v, requireRegistry)
+	registerHTTPModule(v, requireRegistry)
 	v.require = requireRegistry.Enable(v.rt)
 	gojaconsole.Enable(v.rt)
 	if err := v.rt.Set("process", require.Require(v.rt, "process")); err != nil {
@@ -660,6 +665,7 @@ func (v *VM) injectGlobals() error {
 	gojabuffer.Enable(v.rt)
 	gojaurl.Enable(v.rt)
 	installTextEncodingGlobals(v.rt)
+	installHTTPGlobals(v.rt)
 
 	sqlObj, aggObj, circuitObj, err := v.defaultInst.makeCompileObjects()
 	if err != nil {

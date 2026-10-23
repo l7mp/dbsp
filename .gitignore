@@ -17,6 +17,8 @@ connectors/kubernetes/bin/
 !benchmark/**/*.js
 !js/examples/join_project.js
 !js/examples/endpoints.js
+!js/examples/fetch-weather.js
+!js/examples/serve-pirate.js
 !js/stdlib/**/*.js
 !js/stdlib/**/package.json
 !js/stdlib/**/LICENSE

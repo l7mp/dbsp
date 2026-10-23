@@ -404,6 +404,53 @@ if (typeof TextDecoder === "undefined") {
     }
   };
 }
+if (typeof btoa === "undefined") {
+  globalThis.btoa = (input) => {
+    const s = String(input);
+    const bytes = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c > 255) throw new TypeError("btoa: the string contains characters outside of the Latin1 range");
+      bytes[i] = c;
+    }
+    return Buffer.from(bytes).toString("base64");
+  };
+}
+if (typeof atob === "undefined") {
+  globalThis.atob = (input) => {
+    const bytes = Buffer.from(String(input), "base64");
+    let s = "";
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return s;
+  };
+}
+`)
+	if err != nil {
+		panic(rt.NewGoError(err))
+	}
+}
+
+// installHTTPGlobals defines fetch, serve, Headers, Request, Response,
+// AbortController and AbortSignal as lazy globals: the first touch loads the
+// http stdlib module and replaces the getter with the exported value, so
+// scripts that never use HTTP do not need the stdlib on disk.
+func installHTTPGlobals(rt *goja.Runtime) {
+	_, err := rt.RunString(`
+for (const name of ["fetch", "serve", "Headers", "Request", "Response", "AbortController", "AbortSignal"]) {
+  if (name in globalThis) continue;
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    enumerable: false,
+    get() {
+      const value = require("http")[name];
+      Object.defineProperty(globalThis, name, { value, writable: true, configurable: true, enumerable: false });
+      return value;
+    },
+    set(value) {
+      Object.defineProperty(globalThis, name, { value, writable: true, configurable: true, enumerable: false });
+    },
+  });
+}
 `)
 	if err != nil {
 		panic(rt.NewGoError(err))
