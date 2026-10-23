@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ type runtimeInstance struct {
 
 	mu         sync.Mutex
 	errHandler goja.Callable
+	failed     error
 	started    bool
 	closed     bool
 	cancel     context.CancelFunc
@@ -115,6 +117,9 @@ func (inst *runtimeInstance) start() error {
 	if inst.closed {
 		return fmt.Errorf("runtime %q is closed", inst.name)
 	}
+	if inst.failed != nil {
+		return fmt.Errorf("runtime %q failed: %w", inst.name, inst.failed)
+	}
 	if inst.started {
 		return nil
 	}
@@ -124,7 +129,7 @@ func (inst *runtimeInstance) start() error {
 	go func() {
 		defer close(inst.done)
 		if err := inst.rt.Start(ctx); err != nil && ctx.Err() == nil {
-			inst.vm.logger.Error(err, "runtime failed", "runtime", inst.name)
+			inst.fail(err)
 		}
 	}()
 	return nil
@@ -162,31 +167,72 @@ func (inst *runtimeInstance) close() {
 // forwardErrors drains the runtime's error channel into its onError
 // handler, falling back to the VM default when none is set.
 func (inst *runtimeInstance) forwardErrors() {
-	v := inst.vm
 	for {
 		select {
-		case <-v.ctx.Done():
+		case <-inst.vm.ctx.Done():
 			return
 		case rtErr := <-inst.errCh:
-			inst.mu.Lock()
-			h := inst.errHandler
-			inst.mu.Unlock()
-			if h == nil {
-				v.emitDefaultRuntimeError(rtErr)
-				continue
-			}
-			rtErrCopy := rtErr
-			v.schedule(func() {
-				payload := map[string]any{
-					"origin":  rtErrCopy.Origin,
-					"message": rtErrCopy.Err.Error(),
-				}
-				if _, err := h(goja.Undefined(), v.rt.ToValue(payload)); err != nil {
-					v.logger.Error(err, "runtime onError callback failed", "runtime", inst.name)
-				}
-			})
+			inst.deliver(rtErr, false)
 		}
 	}
+}
+
+// deliver hands one error to the onError handler as {origin, message,
+// critical}, or prints it when no handler is set. A handler that throws
+// escalates the error to critical: the default runtime fails the script,
+// any other runtime fails alone.
+func (inst *runtimeInstance) deliver(rtErr dbspruntime.Error, critical bool) {
+	v := inst.vm
+	inst.mu.Lock()
+	h := inst.errHandler
+	inst.mu.Unlock()
+	if h == nil {
+		v.emitDefaultRuntimeError(rtErr)
+		return
+	}
+	v.schedule(func() {
+		payload := map[string]any{
+			"origin":   rtErr.Origin,
+			"message":  rtErr.Err.Error(),
+			"critical": critical,
+		}
+		_, err := h(goja.Undefined(), v.rt.ToValue(payload))
+		if err == nil {
+			return
+		}
+		switch {
+		case inst == v.defaultInst:
+			v.recordRuntimeError(fmt.Errorf("runtime.onError callback failed: %w", err))
+		case critical:
+			v.logger.Error(err, "runtime onError callback failed", "runtime", inst.name)
+		default:
+			inst.fail(dbspruntime.Error{Origin: rtErr.Origin, Err: fmt.Errorf("onError callback failed: %w", err)})
+		}
+	})
+}
+
+// fail stops a created runtime on its first critical error and reports it
+// to the onError handler with critical set. The exit status is unaffected:
+// only the default runtime decides it.
+func (inst *runtimeInstance) fail(err error) {
+	inst.mu.Lock()
+	if inst.failed != nil {
+		inst.mu.Unlock()
+		return
+	}
+	inst.failed = err
+	cancel := inst.cancel
+	inst.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+
+	inst.vm.logger.Error(err, "runtime failed", "runtime", inst.name)
+	var rtErr dbspruntime.Error
+	if !errors.As(err, &rtErr) {
+		rtErr = dbspruntime.Error{Origin: inst.name, Err: err}
+	}
+	inst.deliver(rtErr, true)
 }
 
 func (inst *runtimeInstance) jsObject() (*goja.Object, error) {

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
@@ -19,7 +20,11 @@ type Runnable interface {
 	Start(ctx context.Context) error
 }
 
-// Manager controls runnable lifecycles, including dynamic add/remove.
+// Manager controls runnable lifecycles, including dynamic add/remove. A
+// runnable whose Start returns an error while the manager runs is critical:
+// the manager stops every runnable and Start returns that error as an Error
+// whose Origin is the runnable's name. A runnable returning nil, or returning after it
+// was stopped or the manager's context ended, is a normal exit.
 type Manager interface {
 	Add(Runnable) error
 	Stop(Runnable)
@@ -37,6 +42,7 @@ type manager struct {
 	names   map[string]bool
 	started bool
 	ctx     context.Context
+	cancel  context.CancelFunc
 	items   []*managed
 	wg      sync.WaitGroup
 	errMu   sync.Mutex
@@ -111,11 +117,15 @@ func (m *manager) Stop(r Runnable) {
 	}
 }
 
-// Start runs until ctx is cancelled and all started runnables have returned.
+// Start runs until ctx is cancelled or a runnable fails, and all started
+// runnables have returned.
 func (m *manager) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	m.mu.Lock()
 	m.started = true
 	m.ctx = ctx
+	m.cancel = cancel
 	for _, item := range m.items {
 		m.startOneLocked(item)
 	}
@@ -154,12 +164,13 @@ func (m *manager) startOneLocked(item *managed) {
 	go func(r Runnable, done chan struct{}) {
 		defer m.wg.Done()
 		defer close(done)
-		if err := r.Start(child); err != nil {
+		if err := r.Start(child); err != nil && child.Err() == nil && !errors.Is(err, context.Canceled) {
 			m.errMu.Lock()
 			if m.err == nil {
-				m.err = err
+				m.err = Error{Origin: r.Name(), Err: err}
 			}
 			m.errMu.Unlock()
+			m.cancel()
 		}
 	}(item.r, item.done)
 }

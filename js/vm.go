@@ -166,10 +166,11 @@ func NewVMWithOptions(opts Options) (*VM, error) {
 
 	go func() {
 		v.logger.V(1).Info("runtime manager started")
+		// The default runtime decides the exit status: its critical error
+		// ends the VM and fails the script.
 		err := v.runtime.Start(ctx)
-		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
-			v.logger.Error(err, "runtime failed")
-			v.Close()
+		if err != nil && ctx.Err() == nil {
+			v.recordRuntimeError(fmt.Errorf("runtime failed: %w", err))
 		}
 		v.logger.V(1).Info("runtime manager stopped")
 		v.runtimeDone <- err
@@ -369,6 +370,9 @@ func (v *VM) runSourceAsModule(name, src string) error {
 	case err := <-done:
 		return err
 	case <-v.ctx.Done():
+		if err := v.firstRuntimeError(); err != nil {
+			return err
+		}
 		return v.ctx.Err()
 	}
 }
@@ -515,13 +519,16 @@ func (v *VM) waitRuntimeStop(timeout time.Duration) error {
 	}
 }
 
-func (v *VM) recordRuntimeError(err error) { //nolint:unused // The only writer of firstRuntimeErrOut; see waitRuntimeStop.
+// recordRuntimeError fails the script with err, the first one wins, and
+// closes the VM. It is called from event-loop callbacks too, and closing
+// waits for the loop to stop, so the close runs on its own goroutine.
+func (v *VM) recordRuntimeError(err error) {
 	v.errMu.Lock()
 	if v.firstRuntimeErrOut == nil {
 		v.firstRuntimeErrOut = err
 	}
 	v.errMu.Unlock()
-	v.Close()
+	go v.Close()
 }
 
 func (v *VM) firstRuntimeError() error {

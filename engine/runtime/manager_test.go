@@ -2,6 +2,8 @@ package runtime_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -86,6 +88,53 @@ var _ = Describe("Manager", func() {
 		Expect(m.Add(r2)).To(Succeed())
 		Eventually(r2Started, time.Second).Should(Receive())
 
+		cancel()
+		Eventually(errCh, time.Second).Should(Receive(BeNil()))
+	})
+
+	It("stops everything on a critical runnable error", func() {
+		m := runtime.NewManager()
+		sibling := make(chan struct{})
+		Expect(m.Add(&namedRunnable{name: "sibling", fn: func(ctx context.Context) error {
+			<-ctx.Done()
+			close(sibling)
+			return nil
+		}})).To(Succeed())
+		boom := errors.New("boom")
+		Expect(m.Add(&namedRunnable{name: "broken", fn: func(context.Context) error { return boom }})).To(Succeed())
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- m.Start(context.Background()) }()
+
+		var err error
+		Eventually(errCh, time.Second).Should(Receive(&err))
+		Expect(sibling).To(BeClosed())
+		Expect(err).To(MatchError(boom))
+		var rtErr runtime.Error
+		Expect(errors.As(err, &rtErr)).To(BeTrue())
+		Expect(rtErr.Origin).To(Equal("broken"))
+	})
+
+	It("ignores errors of stopped runnables and cancellations", func() {
+		m := runtime.NewManager()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		Expect(m.Add(&namedRunnable{name: "canceled", fn: func(context.Context) error {
+			return fmt.Errorf("wrapped: %w", context.Canceled)
+		}})).To(Succeed())
+		stoppable := &namedRunnable{name: "stoppable", fn: func(ctx context.Context) error {
+			<-ctx.Done()
+			return errors.New("error on the way out")
+		}}
+		Expect(m.Add(stoppable)).To(Succeed())
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- m.Start(ctx) }()
+		Consistently(errCh, 100*time.Millisecond).ShouldNot(Receive())
+
+		m.Stop(stoppable)
+		Consistently(errCh, 100*time.Millisecond).ShouldNot(Receive())
 		cancel()
 		Eventually(errCh, time.Second).Should(Receive(BeNil()))
 	})

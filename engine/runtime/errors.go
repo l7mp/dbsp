@@ -2,9 +2,11 @@ package runtime
 
 import "fmt"
 
-// Error is a non-critical runtime error with component origin context.
-// It is sent on the Runtime error channel and allows callers to observe
-// transient errors from individual components without stopping the runtime.
+// Error is a runtime error with component origin context. A non-critical
+// error is sent on the Runtime error channel and lets callers observe
+// transient errors of individual components without stopping the runtime;
+// a critical one, a component whose Start failed, is returned by Start and
+// stops the runtime.
 type Error struct {
 	// Origin identifies the component that reported the error, e.g.
 	// "circuit/Foo→Bar" or "kubernetes-consumer/my-svc".

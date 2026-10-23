@@ -62,7 +62,7 @@ function buildReadyStatus(generation, errorRing) {
     };
 }
 
-function buildNotReadyStatus(generation, err) {
+function buildNotReadyStatus(generation, err, message = "failed to initialize operator") {
     return {
         conditions: [
             {
@@ -71,7 +71,7 @@ function buildNotReadyStatus(generation, err) {
                 reason: "NotReady",
                 observedGeneration: generation,
                 lastTransitionTime: new Date().toISOString(),
-                message: "failed to initialize operator",
+                message,
             },
         ],
         lastErrors: [formatError(err)],

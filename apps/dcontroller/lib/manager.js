@@ -141,23 +141,26 @@ class DControllerManager {
     }
 
     // onOperatorError records one operator runtime error and degrades the
-    // operator's status.
+    // operator's status; a critical error has stopped the operator's
+    // runtime, which makes the operator NotReady.
     onOperatorError(name, payload) {
         const state = this.operators.get(name);
         if (!state) {
             return;
         }
-        const { origin, message } = payload;
+        const { origin, message, critical } = payload;
         state.errors.push(`[${origin}] ${message}`);
 
         this.log.error({
-            event_type: "operator_runtime_error",
+            event_type: critical ? "operator_runtime_failed" : "operator_runtime_error",
             topic: name,
             origin,
             message,
-        }, "operator runtime error");
+        }, critical ? "operator runtime failed" : "operator runtime error");
 
-        this.publishStatus(name, buildReadyStatus(state.generation, state.errors));
+        this.publishStatus(name, critical
+            ? buildNotReadyStatus(state.generation, `[${origin}] ${message}`, "operator runtime failed")
+            : buildReadyStatus(state.generation, state.errors));
     }
 
     publishFailedStatus(operatorDoc, err) {
