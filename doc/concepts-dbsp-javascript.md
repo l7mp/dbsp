@@ -400,6 +400,9 @@ named codec, and returns a new entries array with the decoded fields merged in.
 
 `format.auto` detects the encoding of each line heuristically (JSON, YAML, or CSV).
 
+`format.toYAML(entries)` goes the other way: it serializes each document as YAML (keys sorted) into
+the `"line"` field of a new document, keeping the weights.
+
 These functions are pure transforms — they have no side effects and do not interact with the
 pub/sub bus. They are most useful inside producer callbacks, where the return value is automatically
 published:

@@ -1,10 +1,11 @@
 // Package spec defines the serialized runtime format: the single shape a
-// DBSP runtime freezes into and loads from. An operator is a frozen
-// runtime: the dcontroller Operator CRD's spec is RuntimeSpec itself, so a
-// frozen runtime is an Operator document (apiVersion dcontroller.io/v1alpha1,
-// kind Operator, its name and this spec), and a spec saved by one frontend
-// (a JavaScript freezer, a hand-written YAML) loads unchanged through the
-// other (kubectl apply + dcontroller, or a Go host calling Runtime.Load).
+// DBSP runtime freezes into and loads from. A frozen runtime is a
+// RuntimeSpec, and the dcontroller Operator CRD's spec is the same type, so a
+// spec saved by one frontend (a JavaScript freezer, a hand-written YAML) loads
+// unchanged through the other (dcontroller, as the spec of an Operator, or a
+// Go host calling Runtime.Load, which names the runtime itself). Custom
+// expression operators registered from JavaScript (expression.register)
+// cannot be frozen.
 //
 // The package is connector-agnostic: sources and targets name resources by
 // group/version/kind, and the resource GROUP routes the binding to a

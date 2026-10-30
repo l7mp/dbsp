@@ -759,6 +759,9 @@ func (v *VM) injectGlobals() error {
 	if err := fmtObj.Set("yaml", v.wrap(v.formatYAML)); err != nil {
 		return err
 	}
+	if err := fmtObj.Set("toYAML", v.wrap(v.formatToYAML)); err != nil {
+		return err
+	}
 	if err := fmtObj.Set("csv", v.wrap(v.formatCSV)); err != nil {
 		return err
 	}

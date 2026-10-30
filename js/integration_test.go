@@ -519,6 +519,23 @@ await assert.rejects(Promise.reject(new Error("boom")));
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("round-trips documents through format.toYAML and format.yaml", func() {
+		vm, err := NewVM(logr.Discard())
+		Expect(err).NotTo(HaveOccurred())
+		defer vm.Close()
+
+		err = runScriptAsModule(vm, `
+const assert = require("assert");
+const out = format.toYAML([[{ b: 1, a: { c: "x" } }, 2]]);
+assert.strictEqual(out.length, 1);
+assert.strictEqual(out[0][0].line, "a:\n    c: x\nb: 1\n");
+assert.strictEqual(out[0][1], 2);
+const back = format.yaml(out);
+assert.strictEqual(JSON.stringify(back[0][0]), JSON.stringify({ a: { c: "x" }, b: 1 }));
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("supports node:-prefixed core module aliases", func() {
 		vm, err := NewVM(logr.Discard())
 		Expect(err).NotTo(HaveOccurred())
