@@ -1,10 +1,10 @@
-go 1.26.0
+go 1.27.0
 
 use (
+	./apps/dcontroller
 	./connectors/kubernetes
 	./connectors/misc
 	./connectors/xds
-	./apps/dcontroller
 	./engine
 	./js
 )

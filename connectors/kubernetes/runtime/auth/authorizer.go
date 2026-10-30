@@ -89,3 +89,14 @@ func (a *CompositeAuthorizer) Authorize(ctx context.Context, attr authorizer.Att
 
 	return authorizer.DecisionAllow, "", nil
 }
+
+// ConditionsAwareAuthorize returns the unconditional decision of Authorize: the authorizer is not
+// conditions-aware.
+func (a *CompositeAuthorizer) ConditionsAwareAuthorize(ctx context.Context, attr authorizer.Attributes) authorizer.ConditionsAwareDecision {
+	return authorizer.ConditionsAwareDecisionFromParts(a.Authorize(ctx, attr))
+}
+
+// EvaluateConditions fails closed: the authorizer never issues conditional decisions.
+func (a *CompositeAuthorizer) EvaluateConditions(_ context.Context, _ authorizer.ConditionsAwareDecision, _ authorizer.ConditionsData) (authorizer.Decision, string, error) {
+	return authorizer.DecisionDeny, "", authorizer.ErrorConditionEvaluationNotSupported
+}
