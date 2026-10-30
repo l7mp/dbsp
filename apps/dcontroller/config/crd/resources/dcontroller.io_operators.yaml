@@ -107,11 +107,14 @@ spec:
                           controller (engine/spec):\n\n\t{\"name\": \"Incrementalizer\"}\n\t{\"name\":
                           \"Reconciler\", \"pairs\": [[\"observed\", \"status\"],
                           ...]}\n\t{\"name\": \"SmithPredictor\", \"pairs\": [...],
-                          \"k\": 2}\n\t{\"name\": \"Distincter\", \"key\": <expression>}\n\nPairs
-                          name topics (or input_/output_ node IDs; bare names are\ncanonicalized),
-                          the SmithPredictor's k is its dead time in circuit\nsteps,
-                          and the optional Distincter key turns the plain distinct
-                          into\ndistinct_pi."
+                          \"k\": 2}\n\t{\"name\": \"DualRateSmith\", \"pairs\": [...],
+                          \"k\": 10, \"tick\": \"Tick\"}\n\t{\"name\": \"Distincter\",
+                          \"key\": <expression>}\n\nPairs name topics (or input_/output_
+                          node IDs; bare names are\ncanonicalized). The SmithPredictor's
+                          k is its dead time in circuit\nsteps; the DualRateSmith's
+                          k is its compensation window in ticks and\ntick names the
+                          clock input the transform injects (default \"Tick\").\nThe
+                          optional Distincter key turns the plain distinct into distinct_pi."
                         properties:
                           k:
                             type: integer
@@ -130,6 +133,8 @@ spec:
                                 type: string
                               type: array
                             type: array
+                          tick:
+                            type: string
                         required:
                         - name
                         type: object

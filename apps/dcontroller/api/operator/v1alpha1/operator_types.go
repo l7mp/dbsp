@@ -3,6 +3,8 @@ package v1alpha1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/l7mp/dbsp/engine/spec"
 )
 
 func init() {
@@ -40,25 +42,8 @@ type Operator struct {
 	Status OperatorStatus `json:"status,omitempty"`
 }
 
-// OperatorSpec defines the desired state of an operator: the serialized
-// runtime it loads as.
-type OperatorSpec struct {
-	// Sources are the bindings feeding the runtime's streams.
-	//
-	// +optional
-	Sources []Source `json:"sources,omitempty"`
-
-	// Circuits are the runtime's circuits.
-	//
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=255
-	Circuits []CircuitSpec `json:"circuits"`
-
-	// Targets are the bindings consuming the runtime's streams.
-	//
-	// +optional
-	Targets []Target `json:"targets,omitempty"`
-}
+// OperatorSpec defines the desired state of an operator: the serialized runtime it loads as.
+type OperatorSpec = spec.RuntimeSpec
 
 // +kubebuilder:object:root=true
 
