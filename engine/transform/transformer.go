@@ -39,23 +39,27 @@ func New(typ TransformerType, args ...any) (Transformer, error) {
 	case Incrementalizer:
 		return NewIncrementalizer(), nil
 	case Reconciler:
-		pairs, err := parseReconcilerArgs(args)
+		pairs, enabled, err := parseReconcilerArgs(args)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", Reconciler, err)
 		}
-		return NewReconciler(pairs...), nil
+		return &reconciler{pairs: pairs, enabled: enabled}, nil
 	case SmithPredictor:
-		k, _, pairs, err := parseSmithArgs(args)
+		k, _, enabled, pairs, err := parseSmithArgs(args)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", SmithPredictor, err)
 		}
-		return NewSmithPredictor(k, pairs...), nil
+		t := NewSmithPredictor(k, pairs...).(*smithPredictor)
+		t.enabled = enabled
+		return t, nil
 	case DualRateSmith:
-		k, tick, pairs, err := parseSmithArgs(args)
+		k, tick, enabled, pairs, err := parseSmithArgs(args)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", DualRateSmith, err)
 		}
-		return NewDualRateSmith(k, tick, pairs...), nil
+		t := NewDualRateSmith(k, tick, pairs...).(*dualRateSmith)
+		t.enabled = enabled
+		return t, nil
 	case Distincter:
 		key, err := parseDistincterArgs(args)
 		if err != nil {
@@ -70,21 +74,20 @@ func New(typ TransformerType, args ...any) (Transformer, error) {
 	}
 }
 
-func parseReconcilerArgs(args []any) ([]ReconcilerPair, error) {
-	if len(args) == 0 {
-		return nil, nil
+func parseReconcilerArgs(args []any) ([]ReconcilerPair, bool, error) {
+	var pairs []ReconcilerPair
+	enabled := true
+	for i, arg := range args {
+		switch v := arg.(type) {
+		case []ReconcilerPair:
+			pairs = v
+		case Enabled:
+			enabled = bool(v)
+		default:
+			return nil, false, fmt.Errorf("arg %d: expected []ReconcilerPair or Enabled, got %T", i, arg)
+		}
 	}
-
-	if len(args) != 1 {
-		return nil, fmt.Errorf("expected zero args or one []ReconcilerPair argument")
-	}
-
-	pairs, ok := args[0].([]ReconcilerPair)
-	if !ok {
-		return nil, fmt.Errorf("expected []ReconcilerPair argument, got %T", args[0])
-	}
-
-	return pairs, nil
+	return pairs, enabled, nil
 }
 
 func parseDistincterArgs(args []any) (expression.Expression, error) {
@@ -186,21 +189,24 @@ func (t *Chain) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
 	return current, nil
 }
 
-func parseSmithArgs(args []any) (int, string, []ReconcilerPair, error) {
+func parseSmithArgs(args []any) (int, string, bool, []ReconcilerPair, error) {
 	var pairs []ReconcilerPair
 	k := 0
 	tick := ""
+	enabled := true
 	for i, arg := range args {
 		switch v := arg.(type) {
 		case int:
 			k = v
 		case string:
 			tick = v
+		case Enabled:
+			enabled = bool(v)
 		case []ReconcilerPair:
 			pairs = v
 		default:
-			return 0, "", nil, fmt.Errorf("arg %d: expected int, string or []ReconcilerPair, got %T", i, arg)
+			return 0, "", false, nil, fmt.Errorf("arg %d: expected int, string, Enabled or []ReconcilerPair, got %T", i, arg)
 		}
 	}
-	return k, tick, pairs, nil
+	return k, tick, enabled, pairs, nil
 }

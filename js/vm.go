@@ -681,6 +681,9 @@ func (v *VM) injectGlobals() error {
 	if err := v.rt.Set("aggregate", aggObj); err != nil {
 		return err
 	}
+	if err := v.rt.Set("transform", v.makeTransformObject()); err != nil {
+		return fmt.Errorf("inject transform: %w", err)
+	}
 	if err := v.rt.Set("circuit", circuitObj); err != nil {
 		return err
 	}
@@ -807,6 +810,9 @@ func (v *VM) injectGlobals() error {
 	}
 	if err := runtimeObj.Set("aggregate", aggObj); err != nil {
 		return err
+	}
+	if err := runtimeObj.Set("transform", v.rt.Get("transform")); err != nil {
+		return fmt.Errorf("inject runtime.transform: %w", err)
 	}
 	if err := runtimeObj.Set("circuit", circuitObj); err != nil {
 		return err

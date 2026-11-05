@@ -89,7 +89,7 @@ var _ = Describe("DualRateSmith", func() {
 
 		outEdges := drs.EdgesTo("output_u")
 		Expect(outEdges).To(HaveLen(1))
-		Expect(outEdges[0].From).To(Equal("_drs_output_u_acc"))
+		Expect(outEdges[0].From).To(Equal("_drs_output_u_out"))
 	})
 
 	It("rejects a window smaller than one tick", func() {

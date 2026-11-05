@@ -31,9 +31,12 @@ var _ = Describe("Reconciler", func() {
 		Expect(rec.Node("_rec_output_pod_delay")).NotTo(BeNil())
 		Expect(rec.Node("_rec_output_pod_delay").Kind()).To(Equal(operator.KindDelay))
 
+		// The output sits behind the loop's switch, closed by default.
+		Expect(rec.Node("_rec_output_pod_switch").Kind()).To(Equal(operator.KindSwitch))
+		Expect(rec.Node("_rec_output_pod_switch").Operator.(*operator.Switch).Closed()).To(BeTrue())
 		outEdges := rec.EdgesTo("output_pod")
 		Expect(outEdges).To(HaveLen(1))
-		Expect(outEdges[0].From).To(Equal("_rec_output_pod_acc"))
+		Expect(outEdges[0].From).To(Equal("_rec_output_pod_out"))
 
 		subEdges := rec.EdgesTo("_rec_output_pod_sub")
 		Expect(subEdges).To(HaveLen(2))
@@ -98,7 +101,7 @@ var _ = Describe("Reconciler", func() {
 
 		outEdges := rec.EdgesTo("output_x")
 		Expect(outEdges).To(HaveLen(1))
-		Expect(outEdges[0].From).To(Equal("_rec_output_x_acc"))
+		Expect(outEdges[0].From).To(Equal("_rec_output_x_out"))
 
 		sumIn := rec.EdgesTo(sumID)
 		Expect(sumIn).To(HaveLen(2))

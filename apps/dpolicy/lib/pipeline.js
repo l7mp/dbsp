@@ -65,9 +65,14 @@ function buildPrograms(options = {}) {
 // harness drives the input streams and reads every output through the
 // runtime handle.
 function buildOperatorSpec(options = {}) {
+  const k8sBindings = options.bindings === "kubernetes";
+  // The loop's initial mode: a manual bootstrap (options.bootstrap ===
+  // "manual") starts the loop open, the switch behind the loop transform
+  // passing nothing until Pipeline.enable(true) closes it. Open and sotw
+  // modes have no loop to switch.
+  const loopEnable = options.bootstrap === "manual" ? { enabled: false } : {};
   const programs = buildPrograms(options);
   const { constraintKinds, violationViews } = programs.params;
-  const k8sBindings = options.bindings === "kubernetes";
 
   const viewStreams = [
     "PolicyView",
@@ -104,10 +109,11 @@ function buildOperatorSpec(options = {}) {
         `ConstraintStatusObserved_${kind}`,
         `ConstraintStatus_${kind}`,
       ]),
+      ...loopEnable,
     });
   } else if (options.smith) {
     // The dead-time compensated loop: same closed-loop pairs, but the
-    // DualRateSmith actuates every correction exactly once and retires
+    // DualRateSmith actuates every correction once per window and retires
     // the loop's own watch echoes through a wall-clock window - commands
     // enter on the event clock and expire k ticks later. Controller mode
     // only, like the Reconciler. k is the compensation window in ticks.
@@ -123,6 +129,7 @@ function buildOperatorSpec(options = {}) {
       ]),
       k,
       tick: "Tick",
+      ...loopEnable,
     });
   }
 
@@ -191,6 +198,8 @@ class Pipeline {
     this.spec = buildOperatorSpec(options);
     this.handle = runtime.create(this.stem, this.spec);
     this.handle.start();
+    // The loop transform of the audit circuit, the leg the switch is on.
+    this.loop = options.smith ? "DualRateSmith" : options.reconcile ? "Reconciler" : null;
     this.topics = topicsFor(this.constraintKinds);
   }
 
@@ -202,6 +211,53 @@ class Pipeline {
       throw new Error(`pipeline.observe: unknown layer ${layer}; use input or audit`);
     }
     this.handle.observe(layer, fn);
+  }
+
+  // enable sets the loop's mode: true closes the loop (automatic mode),
+  // false opens it (manual mode), by the switch behind the loop transform
+  // of the audit circuit; the transfer is bumpless. Returns the number of
+  // loops switched.
+  enable(on) {
+    if (!this.loop) {
+      throw new Error("pipeline.enable: this mode has no closed loop");
+    }
+    return this.handle.transform("audit", this.loop).enable(on);
+  }
+
+  // bootstrapManual closes a loop built with bootstrap "manual" once the
+  // loop circuit's streams, its inputs and the statuses it writes, have
+  // been quiet for quietMs. Resolves with the milliseconds from the call
+  // to the switch.
+  bootstrapManual(quietMs) {
+    const t0 = performance.now();
+    let last = t0;
+    let done = false;
+    for (const topic of [
+      "PolicyView",
+      "TargetView",
+      ...this.constraintKinds.map((kind) => `ConstraintStatusObserved_${kind}`),
+      ...this.constraintKinds.map((kind) => `ConstraintStatus_${kind}`),
+    ]) {
+      this.handle.subscribe(topic, (entries) => {
+        if (!done) {
+          last = performance.now();
+        }
+        return entries;
+      });
+    }
+    return new Promise((resolve) => {
+      const poll = () => {
+        const idle = performance.now() - last;
+        if (idle < quietMs) {
+          setTimeout(poll, Math.max(50, quietMs - idle));
+          return;
+        }
+        done = true;
+        this.enable(true);
+        resolve(performance.now() - t0);
+      };
+      setTimeout(poll, quietMs);
+    });
   }
 
   close() {

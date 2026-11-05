@@ -35,9 +35,11 @@ import (
 // Incrementalizer; the gate's product is a per-step block of the
 // incremental form and must never be expanded by incrementalization.
 type dualRateSmith struct {
-	k     int
-	tick  string
-	pairs []ReconcilerPair
+	k    int
+	tick string
+	// enabled is the initial position of the loop's switch (see Enabled).
+	enabled bool
+	pairs   []ReconcilerPair
 }
 
 // DefaultTickInput is the logical name of the clock input the DualRateSmith
@@ -53,7 +55,7 @@ func NewDualRateSmith(k int, tick string, pairs ...ReconcilerPair) Transformer {
 	if tick == "" {
 		tick = DefaultTickInput
 	}
-	return &dualRateSmith{k: k, tick: tick, pairs: pairs}
+	return &dualRateSmith{k: k, tick: tick, enabled: true, pairs: pairs}
 }
 
 func (t *dualRateSmith) Name() TransformerType { return DualRateSmith }
@@ -98,7 +100,7 @@ func (t *dualRateSmith) Transform(c *circuit.Circuit) (*circuit.Circuit, error) 
 	}
 
 	for _, p := range pairs {
-		if err := injectDualRateLoop(clone, p, t.k, tickID); err != nil {
+		if err := injectDualRateLoop(clone, p, t.k, tickID, t.enabled); err != nil {
 			return nil, err
 		}
 	}
@@ -106,9 +108,9 @@ func (t *dualRateSmith) Transform(c *circuit.Circuit) (*circuit.Circuit, error) 
 	return clone, nil
 }
 
-func injectDualRateLoop(c *circuit.Circuit, pair ReconcilerPair, k int, tickID string) error {
+func injectDualRateLoop(c *circuit.Circuit, pair ReconcilerPair, k int, tickID string, closed bool) error {
 	prefix := "_drs_" + pair.OutputID
-	core, err := injectPredictorCore(c, pair, prefix, "dualrate")
+	core, err := injectPredictorCore(c, pair, prefix, "dualrate", closed)
 	if err != nil {
 		return err
 	}

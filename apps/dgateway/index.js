@@ -42,6 +42,12 @@ function runHelp() {
   console.log("                               the default client budget)");
   console.log("      [--tick-period <ms>]     the window read-out clock's period, the");
   console.log("                               window's quantum (smith mode; default 1000)");
+  console.log("      [--bootstrap auto|manual] auto (default): the loop is closed from the first");
+  console.log("                               write; manual: the loop runs open until the");
+  console.log("                               operator has been quiet for --switch-quiet-ms,");
+  console.log("                               then closes (reconciler and smith)");
+  console.log("      [--switch-quiet-ms <ms>] the quiet period that ends a manual bootstrap");
+  console.log("                               (default 15000)");
 }
 
 function runController() {
@@ -85,9 +91,20 @@ function runController() {
     throw new Error(`--smith-window must be a positive duration in ms, got ${argv["smith-window"]}`);
   }
 
+  // The bootstrap of a closed loop: auto closes it from the first write,
+  // manual runs it open until the operator has been quiet for the switch
+  // period, then closes it (manual/automatic mode, bumpless).
+  const bootstrap = String(argv.bootstrap || "auto");
+  if (!["auto", "manual"].includes(bootstrap)) {
+    throw new Error(`--bootstrap must be auto or manual, got ${argv.bootstrap}`);
+  }
+  const quietMs = Number(argv["switch-quiet-ms"] || 15000);
+  const closedLoop = loopMode === "reconciler" || loopMode === "smith";
+
   const pipeline = compilePipeline({
     bindings: "kubernetes",
     addressPool: argv["address-pool"],
+    bootstrap: closedLoop ? bootstrap : "auto",
     reconcile: loopMode === "reconciler",
     sotw: loopMode === "sotw",
     smith: loopMode === "smith",
@@ -105,7 +122,12 @@ function runController() {
       pipeline.observe(layer, (e) => console.log(`[debug:${layer}]`, JSON.stringify(e)));
     }
   }
-  logger.info(`delta-gateway controller started (mode ${loopMode})`);
+  if (closedLoop && bootstrap === "manual") {
+    pipeline.bootstrapManual(quietMs).then((ms) => {
+      logger.info(`bootstrap: loop closed after ${Math.round(ms)}ms (${quietMs}ms of quiet)`);
+    });
+  }
+  logger.info(`delta-gateway controller started (mode ${loopMode}${closedLoop ? `, bootstrap ${bootstrap}` : ""})`);
 }
 
 if (mode === "help") {

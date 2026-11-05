@@ -95,6 +95,7 @@ const (
 	KindSelect            // Select: σ filter.
 	KindProject           // Project: π projection.
 	KindUnwind            // Unwind: array flatten.
+	KindSwitch            // Switch: pass-through or empty, by a position the host sets.
 
 	// Bilinear operator (three-term expansion).
 	KindCartesian // CartesianProduct: A × B.
@@ -132,6 +133,8 @@ func (k Kind) String() string {
 		return "H_func"
 	case KindNoOp:
 		return "noop"
+	case KindSwitch:
+		return "switch"
 	case KindNegate:
 		return "negate"
 	case KindLinearCombination:

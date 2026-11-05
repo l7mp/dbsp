@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/go-logr/logr"
 
 	"github.com/l7mp/dbsp/engine/compiler"
 	"github.com/l7mp/dbsp/engine/executor"
+	"github.com/l7mp/dbsp/engine/operator"
+	"github.com/l7mp/dbsp/engine/transform"
 	"github.com/l7mp/dbsp/engine/zset"
 )
 
@@ -246,6 +249,31 @@ func (c *Circuit) getObserver() executor.ObserverFunc {
 // Reset clears executor state.
 func (c *Circuit) Reset() {
 	c.exec.Reset()
+}
+
+// SetEnabled sets the position of the switches the given loop transform
+// injected (operator.Switch, one per reconciled pair): true closes the
+// loops, false opens them. It returns the number of switches set; the
+// position is read at the next step.
+func (c *Circuit) SetEnabled(typ transform.TransformerType, on bool) (int, error) {
+	prefix, ok := transform.LoopPrefix(typ)
+	if !ok {
+		return 0, fmt.Errorf("transform %s has no switch", typ)
+	}
+	n := 0
+	for _, node := range c.exec.Circuit().Nodes() {
+		// The Reconciler's jacket is injected before incrementalization,
+		// which suffixes every node it keeps.
+		id := strings.TrimSuffix(node.ID, "^Δ")
+		if !strings.HasPrefix(id, prefix) || !strings.HasSuffix(id, "_switch") {
+			continue
+		}
+		if s, ok := node.Operator.(*operator.Switch); ok {
+			s.SetClosed(on)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (c *Circuit) buildStepInputs(folded map[string]zset.ZSet) map[string]zset.ZSet {

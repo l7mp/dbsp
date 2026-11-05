@@ -91,7 +91,11 @@ func (in *CircuitSpec) DeepCopyInto(out *CircuitSpec) {
 	out.Graph = copyRaw(in.Graph)
 	out.Transforms = nil
 	for _, t := range in.Transforms {
-		cp := transform.TransformSpec{Name: t.Name, K: t.K}
+		cp := transform.TransformSpec{Name: t.Name, K: t.K, Tick: t.Tick}
+		if t.Enabled != nil {
+			enabled := *t.Enabled
+			cp.Enabled = &enabled
+		}
 		for _, p := range t.Pairs {
 			cp.Pairs = append(cp.Pairs, append([]string{}, p...))
 		}

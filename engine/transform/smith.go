@@ -29,15 +29,17 @@ import (
 // jacket is injected directly in delta form, with dist^Δ placed as its
 // compiled shape (z⁻¹ then ∫ feeding the distinct H function).
 type smithPredictor struct {
-	k     int
-	pairs []ReconcilerPair
+	k int
+	// enabled is the initial position of the loop's switch (see Enabled).
+	enabled bool
+	pairs   []ReconcilerPair
 }
 
 // NewSmithPredictor creates a Smith dead-time compensator transform with
 // compensation window k for the given input/output pairs. With no pairs,
 // self-referential pairs are auto-detected exactly as for the Reconciler.
 func NewSmithPredictor(k int, pairs ...ReconcilerPair) Transformer {
-	return &smithPredictor{k: k, pairs: pairs}
+	return &smithPredictor{k: k, enabled: true, pairs: pairs}
 }
 
 func (t *smithPredictor) Name() TransformerType { return SmithPredictor }
@@ -71,7 +73,7 @@ func (t *smithPredictor) Transform(c *circuit.Circuit) (*circuit.Circuit, error)
 	}
 
 	for _, p := range pairs {
-		if err := injectSmithLoop(clone, p, t.k); err != nil {
+		if err := injectSmithLoop(clone, p, t.k, t.enabled); err != nil {
 			return nil, err
 		}
 	}
@@ -90,7 +92,7 @@ type loopCore struct {
 
 // injectPredictorCore injects the shared predictor skeleton for one pair;
 // kind prefixes the error messages ("smith" or "dualrate").
-func injectPredictorCore(c *circuit.Circuit, pair ReconcilerPair, prefix, kind string) (loopCore, error) {
+func injectPredictorCore(c *circuit.Circuit, pair ReconcilerPair, prefix, kind string, closed bool) (loopCore, error) {
 	inputNode := c.Node(pair.InputID)
 	outputNode := c.Node(pair.OutputID)
 	if inputNode == nil {
@@ -223,19 +225,23 @@ func injectPredictorCore(c *circuit.Circuit, pair ReconcilerPair, prefix, kind s
 		{distDelayID, distIntID, 0},
 		{distIntID, distID, 0},
 		{distNoopID, distID, 1},
-		{core.accID, pair.OutputID, 0},
 	} {
 		if err := wire(w.from, w.to, w.port); err != nil {
 			return loopCore{}, err
 		}
 	}
+	// The output: U behind the loop's switch (see injectModeSwitch), with
+	// the prediction delta as the feedback.
+	if err := injectModeSwitch(c, prefix, kind, predID, core.delayID, distID, closed, pair.OutputID); err != nil {
+		return loopCore{}, err
+	}
 
 	return core, nil
 }
 
-func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int) error {
+func injectSmithLoop(c *circuit.Circuit, pair ReconcilerPair, k int, closed bool) error {
 	prefix := "_smith_" + pair.OutputID
-	core, err := injectPredictorCore(c, pair, prefix, "smith")
+	core, err := injectPredictorCore(c, pair, prefix, "smith", closed)
 	if err != nil {
 		return err
 	}

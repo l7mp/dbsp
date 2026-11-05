@@ -14,6 +14,7 @@ import (
 
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 	"github.com/l7mp/dbsp/engine/spec"
+	"github.com/l7mp/dbsp/engine/transform"
 )
 
 // runtime.create(name[, spec]) constructs a private, named, idle DBSP
@@ -235,6 +236,26 @@ func (inst *runtimeInstance) fail(err error) {
 	inst.deliver(rtErr, true)
 }
 
+// transformSpec returns the entry of the named transform of a circuit of
+// the loaded spec.
+func (inst *runtimeInstance) transformSpec(circuitName, name string) (transform.TransformSpec, bool) {
+	var op spec.RuntimeSpec
+	if err := json.Unmarshal(inst.rawSpec, &op); err != nil {
+		return transform.TransformSpec{}, false
+	}
+	for _, c := range op.Circuits {
+		if c.Name != circuitName {
+			continue
+		}
+		for _, t := range c.Transforms {
+			if t.Name == name {
+				return t, true
+			}
+		}
+	}
+	return transform.TransformSpec{}, false
+}
+
 func (inst *runtimeInstance) jsObject() (*goja.Object, error) {
 	v := inst.vm
 	obj := v.rt.NewObject()
@@ -262,6 +283,20 @@ func (inst *runtimeInstance) jsObject() (*goja.Object, error) {
 	subObj := obj.Get("subscribe").ToObject(v.rt)
 	_ = subObj.Set("once", v.wrap(inst.subscribeOnce))
 	_ = obj.Set("observe", v.wrap(inst.observe))
+	// transform(circuit, name) is the handle of one transform entry of a
+	// loaded circuit, the leg a closed loop's switch is flipped by.
+	_ = obj.Set("transform", v.wrap(func(call goja.FunctionCall) (goja.Value, error) {
+		if len(call.Arguments) < 2 {
+			return nil, fmt.Errorf("runtime.transform(circuitName, transformName) requires both names")
+		}
+		circuitName := call.Argument(0).String()
+		name := call.Argument(1).String()
+		spec, ok := inst.transformSpec(circuitName, name)
+		if !ok {
+			return nil, fmt.Errorf("runtime.transform: circuit %q has no transform %q", circuitName, name)
+		}
+		return (&transformHandle{vm: v, spec: spec, inst: inst, circuitName: circuitName}).jsObject(), nil
+	}))
 	_ = obj.Set("onError", v.wrap(inst.onError))
 	_ = obj.Set("stats", v.wrap(inst.stats))
 

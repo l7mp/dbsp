@@ -164,6 +164,20 @@ func (h *circuitHandle) recordTransform(entry transform.TransformSpec) error {
 	return nil
 }
 
+// bindTransform records a transform handle's entry and binds the handle
+// to this circuit at that position of the chain.
+func (h *circuitHandle) bindTransform(th *transformHandle) error {
+	if th.circuit != nil || th.inst != nil {
+		return fmt.Errorf("transform %s is already bound to a circuit", th.spec.Name)
+	}
+	if err := h.recordTransform(th.spec); err != nil {
+		return err
+	}
+	th.circuit = h
+	th.index = len(h.transformSpecs) - 1
+	return nil
+}
+
 // doTransformChain records a list of transform entries; commit builds
 // the canonical chain over everything recorded.
 func (h *circuitHandle) doTransformChain(raw []any) error {
@@ -173,6 +187,12 @@ func (h *circuitHandle) doTransformChain(raw []any) error {
 	for i, el := range raw {
 		if _, ok := el.(string); ok {
 			return fmt.Errorf("transform list entry %d: expected a {name, ...} object, got a string", i)
+		}
+		if th, ok := transformHandleOf(el); ok {
+			if err := h.bindTransform(th); err != nil {
+				return fmt.Errorf("transform list entry %d: %w", i, err)
+			}
+			continue
 		}
 		var entry transform.TransformSpec
 		data, err := json.Marshal(el)
@@ -303,6 +323,16 @@ func (h *circuitHandle) jsObject() *goja.Object {
 		arg := call.Argument(0)
 		if list, ok := arg.Export().([]any); ok {
 			if err := h.doTransformChain(list); err != nil {
+				return nil, err
+			}
+			return obj, nil
+		}
+
+		// A transform handle (transform.create) binds to this circuit:
+		// its enable() addresses the chain entry, and the running loop
+		// after the commit.
+		if th, ok := transformHandleOf(arg); ok {
+			if err := h.bindTransform(th); err != nil {
 				return nil, err
 			}
 			return obj, nil

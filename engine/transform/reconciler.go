@@ -16,10 +16,12 @@ type ReconcilerPair struct {
 
 type reconciler struct {
 	pairs []ReconcilerPair
+	// enabled is the initial position of the loop's switch (see Enabled).
+	enabled bool
 }
 
 func NewReconciler(pairs ...ReconcilerPair) Transformer {
-	return &reconciler{pairs: pairs}
+	return &reconciler{pairs: pairs, enabled: true}
 }
 
 func (t *reconciler) Name() TransformerType { return Reconciler }
@@ -50,7 +52,7 @@ func (t *reconciler) Transform(c *circuit.Circuit) (*circuit.Circuit, error) {
 	}
 
 	for _, p := range pairs {
-		if err := injectReconcilerLoop(clone, p); err != nil {
+		if err := injectReconcilerLoop(clone, p, t.enabled); err != nil {
 			return nil, err
 		}
 	}
@@ -80,7 +82,10 @@ func detectSelfReferentialPairs(c *circuit.Circuit) []ReconcilerPair {
 	return pairs
 }
 
-func injectReconcilerLoop(c *circuit.Circuit, pair ReconcilerPair) error {
+// injectReconcilerLoop wraps one output with the reconciler jacket
+// U = ∫(δD − δY) behind the loop's switch (see injectModeSwitch), in the
+// given initial position.
+func injectReconcilerLoop(c *circuit.Circuit, pair ReconcilerPair, closed bool) error {
 	inputNode := c.Node(pair.InputID)
 	outputNode := c.Node(pair.OutputID)
 	if inputNode == nil {
@@ -169,9 +174,5 @@ func injectReconcilerLoop(c *circuit.Circuit, pair ReconcilerPair) error {
 	if err := c.AddEdge(circuit.NewEdge(accID, delayID, 0)); err != nil {
 		return fmt.Errorf("reconciler: wire acc→delay: %w", err)
 	}
-	if err := c.AddEdge(circuit.NewEdge(accID, pair.OutputID, 0)); err != nil {
-		return fmt.Errorf("reconciler: wire acc→output: %w", err)
-	}
-
-	return nil
+	return injectModeSwitch(c, prefix, "reconciler", predID, delayID, pair.InputID, closed, pair.OutputID)
 }

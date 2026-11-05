@@ -92,6 +92,7 @@ const STATUS_PAIRS = [
   ["GatewayStatusObserved", "GatewayStatus"],
   ["HTTPRouteStatusObserved", "HTTPRouteStatus"],
 ];
+const STATUSES = ["GatewayClassStatus", "GatewayStatus", "HTTPRouteStatus"];
 
 // buildOperatorSpec assembles the serialized runtime: three circuits
 // meeting on the internal view and observed streams. With bindings
@@ -104,6 +105,11 @@ const STATUS_PAIRS = [
 // loading.
 function buildOperatorSpec(options = {}) {
   const k8sBindings = options.bindings === "kubernetes";
+  // The loop's initial mode: a manual bootstrap (options.bootstrap ===
+  // "manual") starts the loop open, the switch behind the loop transform
+  // passing nothing until Pipeline.enable(true) closes it. Open and sotw
+  // modes have no loop to switch.
+  const loopEnable = options.bootstrap === "manual" ? { enabled: false } : {};
 
   // State-of-the-world mode runs the same programs with empty transform
   // chains: the engine commits them with the snapshot adapters
@@ -123,24 +129,23 @@ function buildOperatorSpec(options = {}) {
     // feedback (the self-contained tests have no plant, so U would never
     // quiesce there); the xDS circuit stays open loop either way - Envoy
     // state is not observed (yet).
-    k8sTransforms.push({ name: "Reconciler", pairs: STATUS_PAIRS });
+    k8sTransforms.push({ name: "Reconciler", pairs: STATUS_PAIRS, ...loopEnable });
   } else if (options.smith) {
     // The dead-time compensated loop: same closed-loop pairs, but the
-    // DualRateSmith actuates every correction exactly once and retires
+    // DualRateSmith actuates every correction once per window and retires
     // the loop's own watch echoes through a wall-clock window - commands
-    // enter on the event clock and expire k ticks later, so the window
-    // is k seconds at the default tick and event floods never age it.
+    // enter on the event clock and expire k ticks later, so the window is
+    // k seconds at the default tick and event floods never age it.
     // Controller mode only, like the Reconciler. k is the compensation
     // window in ticks and must be given.
     const k = Number(options.smithK);
     if (!Number.isInteger(k) || k < 1) {
       throw new Error(`pipeline: smith mode needs an integer window k >= 1 ticks, got ${options.smithK}`);
     }
-    k8sTransforms.push({ name: "DualRateSmith", pairs: STATUS_PAIRS, k, tick: "Tick" });
+    k8sTransforms.push({ name: "DualRateSmith", pairs: STATUS_PAIRS, k, tick: "Tick", ...loopEnable });
   }
 
   const programs = buildPrograms(options);
-  const STATUSES = ["GatewayClassStatus", "GatewayStatus", "HTTPRouteStatus"];
   const XDS_STREAMS = ["XdsListeners", "XdsRouteConfigurations", "XdsClusters", "XdsEndpoints"];
   // The window read-out clock: a misc Tick source in pulse mode (one
   // empty document asserted per period) feeding the tick input the
@@ -211,6 +216,8 @@ class Pipeline {
     this.spec = buildOperatorSpec(options);
     this.handle = runtime.create(this.stem, this.spec);
     this.handle.start();
+    // The loop transform of the k8s circuit, the leg the switch is on.
+    this.loop = options.smith ? "DualRateSmith" : options.reconcile ? "Reconciler" : null;
     this.topics = TOPICS;
   }
 
@@ -221,6 +228,48 @@ class Pipeline {
       throw new Error(`pipeline.observe: unknown layer ${layer}; use input, k8s or xds`);
     }
     this.handle.observe(layer, fn);
+  }
+
+  // enable sets the loop's mode: true closes the loop (automatic mode),
+  // false opens it (manual mode), by the switch behind the loop transform
+  // of the k8s circuit; the transfer is bumpless. Returns the number of
+  // loops switched.
+  enable(on) {
+    if (!this.loop) {
+      throw new Error("pipeline.enable: this mode has no closed loop");
+    }
+    return this.handle.transform("k8s", this.loop).enable(on);
+  }
+
+  // bootstrapManual closes a loop built with bootstrap "manual" once the
+  // loop circuit's streams, its inputs and the statuses it writes, have
+  // been quiet for quietMs. Resolves with the milliseconds from the call
+  // to the switch.
+  bootstrapManual(quietMs) {
+    const t0 = performance.now();
+    let last = t0;
+    let done = false;
+    for (const topic of [...VIEWS, ...OBSERVED, ...STATUSES]) {
+      this.handle.subscribe(topic, (entries) => {
+        if (!done) {
+          last = performance.now();
+        }
+        return entries;
+      });
+    }
+    return new Promise((resolve) => {
+      const poll = () => {
+        const idle = performance.now() - last;
+        if (idle < quietMs) {
+          setTimeout(poll, Math.max(50, quietMs - idle));
+          return;
+        }
+        done = true;
+        this.enable(true);
+        resolve(performance.now() - t0);
+      };
+      setTimeout(poll, quietMs);
+    });
   }
 
   close() {

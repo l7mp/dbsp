@@ -17,19 +17,24 @@ import (
 //	{"name": "Reconciler", "pairs": [["observed", "status"], ...]}
 //	{"name": "SmithPredictor", "pairs": [...], "k": 2}
 //	{"name": "DualRateSmith", "pairs": [...], "k": 10, "tick": "Tick"}
+//	{"name": "Reconciler", "pairs": [...], "enabled": false}
 //	{"name": "Distincter", "key": <expression>}
 //
 // Pairs name topics (or input_/output_ node IDs; bare names are
 // canonicalized). The SmithPredictor's k is its dead time in circuit
 // steps; the DualRateSmith's k is its compensation window in ticks and
 // tick names the clock input the transform injects (default "Tick").
-// The optional Distincter key turns the plain distinct into distinct_pi.
+// The optional enabled of a Reconciler, SmithPredictor or DualRateSmith
+// is the initial position of the loop's switch (see Enabled); absent, the
+// loop starts closed. The optional Distincter key turns the plain distinct
+// into distinct_pi.
 type TransformSpec struct {
-	Name  string          `json:"name"`
-	Pairs [][]string      `json:"pairs,omitempty"`
-	K     int             `json:"k,omitempty"`
-	Tick  string          `json:"tick,omitempty"`
-	Key   json.RawMessage `json:"key,omitempty"`
+	Name    string          `json:"name"`
+	Pairs   [][]string      `json:"pairs,omitempty"`
+	K       int             `json:"k,omitempty"`
+	Tick    string          `json:"tick,omitempty"`
+	Enabled *bool           `json:"enabled,omitempty"`
+	Key     json.RawMessage `json:"key,omitempty"`
 }
 
 // Spec parses the wire entry into the Spec accepted by New and NewChain.
@@ -59,6 +64,9 @@ func (ts TransformSpec) Spec() (Spec, error) {
 			}
 			args = append(args, pairs)
 		}
+		if ts.Enabled != nil {
+			args = append(args, Enabled(*ts.Enabled))
+		}
 	case SmithPredictor:
 		if len(ts.Pairs) > 0 {
 			pairs, err := parseSpecPairs(typ, ts.Pairs)
@@ -68,6 +76,9 @@ func (ts TransformSpec) Spec() (Spec, error) {
 			args = append(args, pairs)
 		}
 		args = append(args, ts.K)
+		if ts.Enabled != nil {
+			args = append(args, Enabled(*ts.Enabled))
+		}
 	case DualRateSmith:
 		if len(ts.Pairs) > 0 {
 			pairs, err := parseSpecPairs(typ, ts.Pairs)
@@ -77,6 +88,9 @@ func (ts TransformSpec) Spec() (Spec, error) {
 			args = append(args, pairs)
 		}
 		args = append(args, ts.K, ts.Tick)
+		if ts.Enabled != nil {
+			args = append(args, Enabled(*ts.Enabled))
+		}
 	case Rewriter:
 		return Spec{}, fmt.Errorf("transform %s: not a user-facing transform", typ)
 	default:

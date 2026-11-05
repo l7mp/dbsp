@@ -215,6 +215,9 @@ func (e *Executor) observe(observer ObserverFunc, node *circuit.Node, values map
 	observer(node, snapshotValues, e.schedule, position)
 }
 
+// Circuit returns the circuit the executor runs.
+func (e *Executor) Circuit() *circuit.Circuit { return e.circuit }
+
 // Reset resets all operator state to its zero value.
 func (e *Executor) Reset() {
 	for _, node := range e.circuit.Nodes() {

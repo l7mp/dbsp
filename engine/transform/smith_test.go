@@ -83,7 +83,7 @@ var _ = Describe("SmithPredictor", func() {
 
 		outEdges := sm.EdgesTo("output_u")
 		Expect(outEdges).To(HaveLen(1))
-		Expect(outEdges[0].From).To(Equal("_smith_output_u_acc"))
+		Expect(outEdges[0].From).To(Equal("_smith_output_u_out"))
 
 		Expect(sm.Validate()).To(BeEmpty())
 	})

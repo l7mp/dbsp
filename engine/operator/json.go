@@ -22,6 +22,7 @@ type jsonOp struct {
 	KeyExpr    json.RawMessage            `json:"keyExpr,omitempty"`
 	ValueExpr  json.RawMessage            `json:"valueExpr,omitempty"`
 	Distinct   bool                       `json:"distinct,omitempty"`
+	Open       bool                       `json:"open,omitempty"`
 	Fields     map[string]json.RawMessage `json:"fields,omitempty"`
 	LeftNS     string                     `json:"leftNs,omitempty"`
 	RightNS    string                     `json:"rightNs,omitempty"`
@@ -148,6 +149,8 @@ func UnmarshalOperator(data []byte) (Operator, error) {
 		return NewDistinctH(), nil
 	case "noop":
 		return NewNoOp(), nil
+	case "switch":
+		return NewSwitch(!p.Open), nil
 	case "negate":
 		return NewNegate(), nil
 	case "plus":

@@ -1,10 +1,12 @@
 package runtime
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/go-logr/logr"
 	"github.com/l7mp/dbsp/engine/executor"
+	"github.com/l7mp/dbsp/engine/transform"
 )
 
 // Runtime combines a shared PubSub and a runnable Manager.
@@ -106,6 +108,24 @@ func (rt *Runtime) SetCircuitObserver(name string, observer executor.ObserverFun
 
 	target.SetObserver(observer)
 	return true
+}
+
+// SetCircuitEnabled sets the switches of the given loop transform in the
+// named circuit (see Circuit.SetEnabled) and returns the number set.
+func (rt *Runtime) SetCircuitEnabled(name string, typ transform.TransformerType, on bool) (int, error) {
+	rt.mu.RLock()
+	r, ok := rt.runnables[name]
+	rt.mu.RUnlock()
+	if !ok {
+		return 0, fmt.Errorf("circuit %q not found", name)
+	}
+	c, ok := r.(interface {
+		SetEnabled(transform.TransformerType, bool) (int, error)
+	})
+	if !ok {
+		return 0, fmt.Errorf("component %q is not a circuit", name)
+	}
+	return c.SetEnabled(typ, on)
 }
 
 // SetErrorChannel wires a channel that receives non-critical ComponentErrors

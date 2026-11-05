@@ -42,6 +42,12 @@ function runHelp() {
   console.log("                                    in wall time (smith mode; default 10000)");
   console.log("      [--tick-period <ms>]          the window read-out clock's period, the");
   console.log("                                    window's quantum (smith mode; default 1000)");
+  console.log("      [--bootstrap auto|manual]     auto (default): the loop is closed from");
+  console.log("                                    the first write; manual: the loop runs");
+  console.log("                                    open until the operator has been quiet");
+  console.log("                                    for --switch-quiet-ms, then closes");
+  console.log("      [--switch-quiet-ms <ms>]      the quiet period that ends a manual");
+  console.log("                                    bootstrap (default 15000)");
   console.log("      [--debug]                     attach layer observers (events on stdout)");
 }
 
@@ -87,8 +93,18 @@ function runController() {
   if (loopMode === "smith" && !(windowMs > 0)) {
     throw new Error(`--smith-window must be a positive duration in ms, got ${argv["smith-window"]}`);
   }
+  // The bootstrap of a closed loop: auto closes it from the first write,
+  // manual runs it open until the operator has been quiet for the switch
+  // period, then closes it (manual/automatic mode, bumpless).
+  const bootstrap = String(argv.bootstrap || "auto");
+  if (!["auto", "manual"].includes(bootstrap)) {
+    throw new Error(`--bootstrap must be auto or manual, got ${argv.bootstrap}`);
+  }
+  const quietMs = Number(argv["switch-quiet-ms"] || 15000);
+  const closedLoop = loopMode === "reconciler" || loopMode === "smith";
   const pipeline = compilePipeline({
     bindings: "kubernetes",
+    bootstrap: closedLoop ? bootstrap : "auto",
     constraintKinds,
     violationLimit: argv["violation-limit"] ? Number(argv["violation-limit"]) : undefined,
     violationViews,
@@ -122,7 +138,12 @@ function runController() {
     return entries;
   });
 
-  logger.info(`dpolicy controller started (mode ${loopMode}); auditing ${constraintKinds.join(", ")}`);
+  if (closedLoop && bootstrap === "manual") {
+    pipeline.bootstrapManual(quietMs).then((ms) => {
+      logger.info(`bootstrap: loop closed after ${Math.round(ms)}ms (${quietMs}ms of quiet)`);
+    });
+  }
+  logger.info(`dpolicy controller started (mode ${loopMode}${closedLoop ? `, bootstrap ${bootstrap}` : ""}); auditing ${constraintKinds.join(", ")}`);
 }
 
 if (mode === "help") {
