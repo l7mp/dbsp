@@ -25,11 +25,12 @@ const minimist = require("minimist");
 const fs = require("fs");
 const { csvAppend, mulberry32 } = require("../lib/measure.js");
 const { K8sStack, TAMPER_KINDS } = require("../lib/k8sstack.js");
+const { objKey } = require("../lib/dgwstack.js");
 const dgw = require("../lib/dgwstack.js");
 const traces = require("../lib/traces.js");
 
 const argv = minimist(process.argv.slice(2), {
-  string: ["trace", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address"],
+  string: ["trace", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address", "bootstrap"],
   default: {
     trace: "multiregion-l4",
     regions: 10,
@@ -44,6 +45,13 @@ const argv = minimist(process.argv.slice(2), {
     "xds-address": "",
     out: "results",
     "timeout-ms": 30000,
+    // Bootstrap, as the controller was started: "manual" (default) runs
+    // the preload with the loop open and lets the controller close it on
+    // quiet; "auto" runs the loop closed from the first write (the
+    // cold-start measurement). switch-quiet-ms is the controller's switch
+    // period.
+    bootstrap: "manual",
+    "switch-quiet-ms": 15000,
   },
 });
 const cfg = {
@@ -107,6 +115,16 @@ if (cfg.system !== "dgw") {
   );
 }
 await stack.settle(1500, cfg.timeoutMs * 10);
+// A manual bootstrap: the controller (started with --bootstrap manual)
+// ran the preload with the loop open and closes it by itself once its
+// inputs have been quiet for its switch period; wait out twice that
+// period of quiet, so that the switch and whatever it found to correct
+// are behind us before measuring.
+if (cfg.system === "dgw" && argv.bootstrap !== "auto" && ["reconciler", "smith"].includes(argv.mode)) {
+  const t0 = performance.now();
+  await stack.settle(2 * Number(argv["switch-quiet-ms"]), cfg.timeoutMs * 10);
+  console.log(`bootstrap: loop closed by the controller, quiet after ${(performance.now() - t0).toFixed(0)}ms`);
+}
 
 // The oracle: every tamperable statused object's converged status.
 // (The stack also watches kinds with statuses nobody disturbs or heals
@@ -199,12 +217,53 @@ if (fs.existsSync(tracePath)) {
   fs.rmSync(tracePath);
 }
 
+// --- Per-object healing episodes. Every status event the watch delivers
+// is compared with the oracle: an object that stops matching opens an
+// episode (it is observed wrong), the next matching event closes it. The
+// episode's length is the time the object was observably wrong, whatever
+// tampered it and however often; an open loop never closes one. The
+// episodes feed the time-to-heal distribution of E5-disturb-heal-*.csv. ---
+const healPath = `${cfg.out}/E5-disturb-heal-${mode}-${variant}.csv`;
+if (fs.existsSync(healPath)) {
+  fs.rmSync(healPath);
+}
+const wrongSince = new Map();
+const episodes = [];
+let currentRound = 0;
+const runStart = performance.now();
+for (const topic of ["bench.watch.gateway", "bench.watch.route"]) {
+  subscribe(topic, (entries) => {
+    const now = performance.now();
+    for (const [doc, w] of entries) {
+      if (w <= 0 || !doc?.status) {
+        continue;
+      }
+      const key = objKey(doc);
+      if (!oracle.has(key)) {
+        continue;
+      }
+      const ok = dgw.normalizeStatus(doc.status) === oracle.get(key);
+      if (!ok && !wrongSince.has(key)) {
+        wrongSince.set(key, { at: now, round: currentRound });
+      } else if (ok && wrongSince.has(key)) {
+        const ep = wrongSince.get(key);
+        wrongSince.delete(key);
+        episodes.push(now - ep.at);
+        csvAppend(healPath, ["wrong_at_ms", "round", "key", "heal_ms"],
+          [(ep.at - runStart).toFixed(0), ep.round, key, (now - ep.at).toFixed(1)]);
+      }
+    }
+    return entries;
+  });
+}
+
 const burstRound = Math.floor(cfg.rounds / 2);
 let cumNoise = 0;
 const drifts = [];
 let healedRound = -1;
 
 for (let t = 1; t <= cfg.rounds; t++) {
+  currentRound = t;
   await churn();
 
   if (cfg.burst > 0) {
@@ -235,6 +294,26 @@ for (let t = 1; t <= cfg.rounds; t++) {
 }
 
 // --- Summary. ---
+// Episodes still open at the end never healed within the run.
+const never = wrongSince.size;
+for (const [key, ep] of wrongSince) {
+  csvAppend(healPath, ["wrong_at_ms", "round", "key", "heal_ms"],
+    [(ep.at - runStart).toFixed(0), ep.round, key, -1]);
+}
+{
+  const sorted = [...episodes].sort((a, b) => a - b);
+  const q = (p) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : NaN);
+  csvAppend(
+    `${cfg.out}/E5-disturb-heal-summary.csv`,
+    ["mode", "variant", "episodes", "healed", "never", "median_ms", "p95_ms", "max_ms"],
+    [mode, variant, sorted.length + never, sorted.length, never,
+      q(0.5).toFixed(1), q(0.95).toFixed(1), (sorted.length ? sorted[sorted.length - 1] : NaN).toFixed(1)],
+  );
+  console.log(
+    `E5 disturb heal mode=${mode} ${variant}: episodes=${sorted.length + never} healed=${sorted.length} ` +
+      `never=${never} median=${q(0.5).toFixed(0)}ms p95=${q(0.95).toFixed(0)}ms`,
+  );
+}
 const half = drifts.slice(Math.floor(drifts.length / 2));
 const meanDrift = half.reduce((a, x) => a + x, 0) / (half.length || 1);
 const maxDrift = drifts.reduce((a, x) => Math.max(a, x), 0);

@@ -38,7 +38,7 @@ const { K8sStack } = require("../lib/k8sstack.js");
 const dgw = require("../lib/dgwstack.js");
 
 const argv = minimist(process.argv.slice(2), {
-  string: ["case", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address", "churn"],
+  string: ["case", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address", "bootstrap", "churn"],
   default: {
     case: "mega-vhost",
     system: "dgw",
@@ -54,6 +54,13 @@ const argv = minimist(process.argv.slice(2), {
     reps: 10,
     out: "results",
     "timeout-ms": 120000,
+    // Bootstrap, as the controller was started: "manual" (default) runs
+    // the preload with the loop open and lets the controller close it on
+    // quiet; "auto" runs the loop closed from the first write (the
+    // cold-start measurement). switch-quiet-ms is the controller's switch
+    // period.
+    bootstrap: "manual",
+    "switch-quiet-ms": 15000,
   },
 });
 const cfg = {
@@ -166,6 +173,16 @@ async function converge(expectedRoutes) {
     );
   }
   await stack.settle(1500, cfg.timeoutMs * 5);
+  // A manual bootstrap: the controller (started with --bootstrap manual)
+  // ran the preload with the loop open and closes it by itself once its
+  // inputs have been quiet for its switch period; wait out twice that
+  // period of quiet, so that the switch and whatever it found to correct
+  // are behind us before measuring.
+  if (cfg.system === "dgw" && argv.bootstrap !== "auto" && ["reconciler", "smith"].includes(argv.mode)) {
+    const t0 = performance.now();
+    await stack.settle(2 * Number(argv["switch-quiet-ms"]), cfg.timeoutMs * 5);
+    console.log(`bootstrap: loop closed by the controller, quiet after ${(performance.now() - t0).toFixed(0)}ms`);
+  }
 }
 
 // --- mega-vhost: 1 gateway, K routes, shared backend. ---

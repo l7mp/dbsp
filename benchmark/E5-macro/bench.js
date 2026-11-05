@@ -25,7 +25,7 @@ const dgw = require("../lib/dgwstack.js");
 const traces = require("../lib/traces.js");
 
 const argv = minimist(process.argv.slice(2), {
-  string: ["trace", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address"],
+  string: ["trace", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address", "bootstrap"],
   default: {
     trace: "multiregion",
     regions: 10,
@@ -38,6 +38,13 @@ const argv = minimist(process.argv.slice(2), {
     "xds-address": "",
     out: "results",
     "timeout-ms": 60000,
+    // Bootstrap, as the controller was started: "manual" (default) runs
+    // the preload with the loop open and lets the controller close it on
+    // quiet; "auto" runs the loop closed from the first write (the
+    // cold-start measurement). switch-quiet-ms is the controller's switch
+    // period.
+    bootstrap: "manual",
+    "switch-quiet-ms": 15000,
   },
 });
 const cfg = {
@@ -387,6 +394,16 @@ const CHANGESETS = {
 
 // --- Run. ---
 const preloadMs = await preload();
+// A manual bootstrap: the controller (started with --bootstrap manual)
+// ran the preload with the loop open and closes it by itself once its
+// inputs have been quiet for its switch period; wait out twice that
+// period of quiet, so that the switch and whatever it found to correct
+// are behind us before measuring.
+if (cfg.system === "dgw" && argv.bootstrap !== "auto" && ["reconciler", "smith"].includes(argv.mode)) {
+  const t0 = performance.now();
+  await stack.settle(2 * Number(argv["switch-quiet-ms"]), cfg.timeoutMs * 10);
+  console.log(`bootstrap: loop closed by the controller, quiet after ${(performance.now() - t0).toFixed(0)}ms`);
+}
 console.log(
   `preload: trace=${cfg.trace} regions=${cfg.regions} mode=${mode} in ${preloadMs.toFixed(0)}ms ` +
     `(lds=${taps.lds.events} rds=${taps.rds.events} eds=${taps.eds.events} status_writes=${stack.statusEvents})`,

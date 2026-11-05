@@ -31,7 +31,7 @@ const dgw = require("../lib/dgwstack.js");
 const traces = require("../lib/traces.js");
 
 const argv = minimist(process.argv.slice(2), {
-  string: ["trace", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address"],
+  string: ["trace", "system", "mode", "variant", "out", "handshake", "eg-handshake", "xds-address", "bootstrap"],
   default: {
     trace: "multiregion-l4",
     regions: 10,
@@ -45,6 +45,13 @@ const argv = minimist(process.argv.slice(2), {
     "xds-address": "",
     out: "results",
     "timeout-ms": 30000,
+    // Bootstrap, as the controller was started: "manual" (default) runs
+    // the preload with the loop open and lets the controller close it on
+    // quiet; "auto" runs the loop closed from the first write (the
+    // cold-start measurement). switch-quiet-ms is the controller's switch
+    // period.
+    bootstrap: "manual",
+    "switch-quiet-ms": 15000,
   },
 });
 const cfg = {
@@ -86,6 +93,16 @@ await stack.waitUntil(
   "preload xDS convergence",
 );
 await stack.settle(1500, cfg.timeoutMs * 10);
+// A manual bootstrap: the controller (started with --bootstrap manual)
+// ran the preload with the loop open and closes it by itself once its
+// inputs have been quiet for its switch period; wait out twice that
+// period of quiet, so that the switch and whatever it found to correct
+// are behind us before measuring.
+if (cfg.system === "dgw" && argv.bootstrap !== "auto" && ["reconciler", "smith"].includes(argv.mode)) {
+  const t0 = performance.now();
+  await stack.settle(2 * Number(argv["switch-quiet-ms"]), cfg.timeoutMs * 10);
+  console.log(`bootstrap: loop closed by the controller, quiet after ${(performance.now() - t0).toFixed(0)}ms`);
+}
 
 const oracle = new Map();
 for (const [key, doc] of stack.latest) {
@@ -146,14 +163,21 @@ for (const key of picks) {
 // The tamper patches travel through the driver's own (unthrottled)
 // patcher and land asynchronously: drift() is still zero right after
 // issuing them, and the stack's activity clock still points at the
-// preload. First wait for the disturbance to become visible  -  this also
-// arms the activity clock  -  then confirm the heal: drift must be zero
-// AND stay zero through a quiet window (a mid-burst dip cannot confirm,
-// because the ongoing tamper/heal watch traffic keeps the window open).
-// The heal clock stops at the stack's last watch activity on
-// confirmation  -  the last heal write landing is the last event before
-// the quiet window.
-await stack.waitUntil(() => drift() > 0, cfg.timeoutMs, "tamper visible");
+// preload. First wait for the disturbance to become visible: drift, or
+// the tampered versions themselves (one status event per target), since
+// a loop faster than the watch heals a small burst before any drift is
+// ever observed. This also arms the activity clock. Then confirm the
+// heal: drift must be zero AND stay zero through a quiet window (a
+// mid-burst dip cannot confirm, because the ongoing tamper/heal watch
+// traffic keeps the window open). The heal clock stops at the stack's
+// last watch activity on confirmation  -  the last heal write landing is
+// the last event before the quiet window.
+const events0 = stack.statusEvents;
+await stack.waitUntil(
+  () => drift() > 0 || stack.statusEvents >= events0 + picks.length,
+  cfg.timeoutMs,
+  "tamper visible",
+);
 for (;;) {
   await stack.waitUntil(() => drift() === 0, cfg.timeoutMs * 10, "congestion heal");
   await stack.settle(1000, cfg.timeoutMs * 10);
