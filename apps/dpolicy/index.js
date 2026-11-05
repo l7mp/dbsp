@@ -108,6 +108,7 @@ function runController() {
 
 if (mode === "help") {
   runHelp();
+  exit();
 } else if (mode === "test") {
   require("./tests.js");
 } else if (mode === "controller") {
