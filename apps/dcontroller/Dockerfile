@@ -9,7 +9,7 @@
 
 ###########
 # Build the dbsp runtime binary.
-FROM --platform=$BUILDPLATFORM docker.io/golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM docker.io/golang:1.27-alpine AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
