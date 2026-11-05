@@ -9,6 +9,8 @@
 //   w3  transient completeness: violations with lifetime L - detected?
 //   w4  policy rollout: one new constraint over the converged inventory
 //   w5  churn storm: violation ramp at a fixed event rate, per-event lag
+//   w6  congestion: one flip corrects every constraint; heal time and the
+//       epoch window for the request-log count of the SUT's writes
 //
 // Run through run.sh (which boots the harness and the contender); direct:
 //
@@ -35,6 +37,14 @@ const argv = minimist(process.argv.slice(2), {
     timeout: 600000,
     out: "E6-policy-audit/results/e6.csv",
     handshake: "/tmp/gk-serve/handshake.json",
+    // Bootstrap, as dpolicy was started: "manual" (default) converges the
+    // baseline with the loop open and lets the controller close it on
+    // quiet; "auto" runs the loop closed from the first write (the
+    // cold-start measurement). switch-quiet-ms is the controller's switch
+    // period. A variant suffix labels its own line.
+    bootstrap: "manual",
+    "switch-quiet-ms": 20000,
+    variant: "",
   },
 });
 
@@ -154,13 +164,40 @@ async function w5(stack, ctx) {
   await stack.waitCount("c0", ctx.base, ctx.timeout, "w5 cleanup");
 }
 
-const WORKLOADS = { w1, w2, w3, w4, w5 };
+// w6: congestion, the window ladder's direct measure. One compliance flip
+// changes the count of every constraint at once: as many status
+// corrections as the corpus has constraints (the param column), queued
+// behind the contender's client budget (run.sh throttles dpolicy to the
+// realistic one). Per rep: the heal time until every required-labels
+// constraint carries the new count, with the rep's epoch window in extra,
+// so that summarize.py counts the SUT's writes in the request log (writes
+// per correction: one is exactly-once actuation). Duplicates still queued
+// behind the throttle land after the heal, so the window closes only after
+// a quiet period.
+const W6_QUIET_MS = 3000;
+async function w6(stack, ctx) {
+  for (let rep = 0; rep < ctx.reps; rep++) {
+    const probe = stack.violatingPod(`probe-w6-${rep}`);
+    const start = Date.now();
+    const t0 = performance.now();
+    stack.lastActivity = t0;
+    stack.addPod(probe);
+    const at = await stack.waitCountAll(ctx.base + 1, ctx.timeout, `w6 heal ${rep}`);
+    await stack.settle(W6_QUIET_MS, ctx.timeout, `w6 settle ${rep}`);
+    row(ctx, "w6", rep, stack.correctionsPerFlip, at - t0, `${start}:${Date.now()}`);
+    stack.removePod(probe);
+    await stack.waitCountAll(ctx.base, ctx.timeout, `w6 clear ${rep}`);
+    await stack.settle(W6_QUIET_MS, ctx.timeout, `w6 clear settle ${rep}`);
+  }
+}
+
+const WORKLOADS = { w1, w2, w3, w4, w5, w6 };
 
 // --- main -------------------------------------------------------------------
 
 async function main() {
   const ctx = {
-    mode: String(argv.mode),
+    mode: String(argv.mode) + (argv.variant ? `-${argv.variant}` : ""),
     n: Number(argv.n),
     p: Number(argv.p),
     reps: Number(argv.reps),
@@ -172,7 +209,8 @@ async function main() {
     timeout: Number(argv.timeout),
     out: String(argv.out),
   };
-  const workloads = String(argv.workloads).split(",").map((w) => w.trim());
+  // "none" runs the baseline convergence only (the cold-start points).
+  const workloads = String(argv.workloads).split(",").map((w) => w.trim()).filter((w) => w && w !== "none");
   for (const w of workloads) {
     if (!WORKLOADS[w]) {
       throw new Error(`unknown workload ${w}`);
@@ -192,6 +230,16 @@ async function main() {
   const at = await stack.waitCount("c0", ctx.base, ctx.timeout, "baseline convergence");
   console.log(`[e6] baseline converged in ${Math.round(at - t0)}ms`);
   row(ctx, "preload", 0, "", at - t0);
+  // A manual bootstrap: dpolicy (started with --bootstrap manual)
+  // converged the baseline with the loop open and closes it by itself
+  // once its inputs have been quiet for its switch period; wait out twice
+  // that period of quiet before the workloads.
+  if (String(argv.mode).startsWith("dpolicy") && argv.bootstrap !== "auto") {
+    const t0 = performance.now();
+    stack.lastActivity = t0;
+    await stack.settle(2 * Number(argv["switch-quiet-ms"]), ctx.timeout, "bootstrap");
+    console.log(`[e6] bootstrap: loop closed by the controller, quiet after ${Math.round(performance.now() - t0)}ms`);
+  }
 
   for (const w of workloads) {
     console.log(`[e6] workload ${w}`);

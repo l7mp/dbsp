@@ -12,9 +12,9 @@ each running as its own process.
 
 - `dpolicy` - the dpolicy controller (reconciled, violation views off),
   spawned by run.sh against the plant's kubeconfig.
-- `dpolicy-smith` - the same controller with `--mode smith`: the Smith
-  dead-time compensator replaces the Reconciler on the status outputs
-  (exactly-once actuation, watch echoes retired by content).
+- `dpolicy-smith` - the same controller with `--mode smith`: the dual-rate
+  Smith compensator replaces the Reconciler on the status outputs, at a
+  window of `SMITH_K_DEFAULT` seconds (the ladder phase sweeps `SMITH_KS`).
 - `gk` - stock Gatekeeper, default audit architecture: every cycle
   re-LISTs the inventory from the API server and re-evaluates everything.
 - `gk-cache` - Gatekeeper with `--audit-from-cache`: the inventory is
@@ -48,6 +48,12 @@ plus the shared instruments below cover everything the workloads need.
   everyone-pays-O(N) case; compare constants and queueing).
 - `w5` **churn storm** - a violation ramp at a fixed event rate; per-event
   lag from the status-count crossings.
+- `w6` **congestion** - one flip corrects every constraint at once (the P
+  required-labels ones and the PSS corpus); heal time until every
+  required-labels constraint carries the new count, and the SUT's writes
+  per correction from the request log. The
+  ladder phase runs it with dpolicy throttled to the realistic client
+  budget (`LADDER_QPS`), from the reconciler (window 0) up `SMITH_KS`.
 
 The `preload` row records baseline convergence (N pods written through the
 driver, then first correct `totalViolations`); it includes the driver's own
@@ -85,7 +91,13 @@ MODES=gk NS=1000 PS=10 WORKLOADS=w1,w3 ./run.sh
 ```
 
 Knobs (env): `MODES`, `NS`, `PS`, `REPS`, `WORKLOADS`, `AUDIT_INTERVAL`
-(Gatekeeper's cycle, seconds), `IDLE_SECS`, `LIFETIMES`, `RATES`, `EVENTS`.
+(Gatekeeper's cycle, seconds), `IDLE_SECS`, `LIFETIMES`, `RATES`, `EVENTS`;
+`SUT_WRITER` (plain|absorb), `SMITH_K_DEFAULT`, `SMITH_KS`; `W2_PS` (the P
+values whose points run the idle workload), `W4_PS` (the P values of the w4
+density points); `LADDER_N`, `LADDER_P`, `LADDER_QPS`, `LADDER_REPS` (the
+congestion ladder); `COLD_NS`, `COLD_TIMEOUT` (the cold-start points).
+`E6_DIR` points run.sh at a copy of this directory (a smoke run that must
+not touch `results/`).
 
 ## Layout
 

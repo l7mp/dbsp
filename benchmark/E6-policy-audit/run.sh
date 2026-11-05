@@ -7,7 +7,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-E6=E6-policy-audit
+E6="${E6_DIR:-E6-policy-audit}"
 DBSP=../js/bin/dbsp
 HARNESS=plant/plant
 GK_BIN="${GK_BIN:-.cache/gatekeeper/bin/gatekeeper}"
@@ -37,6 +37,8 @@ if [ "$SCALE" = full ]; then
     RATES="${RATES:-5}"
     EVENTS="${EVENTS:-100}"
     TIMEOUT="${TIMEOUT:-1800000}"
+    SMITH_KS="${SMITH_KS:-1 2 3 4 5}"
+    SMITH_K_DEFAULT="${SMITH_K_DEFAULT:-5}"
 else
     NS="${NS:-200 1000}"
     W4_NS="${W4_NS:-500 3000}"
@@ -48,8 +50,43 @@ else
     RATES="${RATES:-2}"
     EVENTS="${EVENTS:-20}"
     TIMEOUT="${TIMEOUT:-600000}"
+    SMITH_KS="${SMITH_KS:-1 3}"
+    SMITH_K_DEFAULT="${SMITH_K_DEFAULT:-3}"
 fi
 WORKLOADS="${WORKLOADS:-w1,w2,w3,w4,w5}"
+# W2_PS: the P values whose grid points include the idle workload (the
+# idle table is read at one policy); W4_PS: the P values of the extra w4
+# density points. Both default to the whole grid.
+W2_PS="${W2_PS:-$PS}"
+W4_PS="${W4_PS:-$PS}"
+# The congestion ladder (phase 1): w6 at one inventory size with LADDER_P
+# required-labels constraints, so one flip is LADDER_P status corrections
+# (plus the PSS corpus), dpolicy throttled to the realistic client budget
+# (client-go's default 5 QPS,
+# with an equal burst) so they queue behind it; the window runs from the
+# reconciler (K = 0) up SMITH_KS. The Gatekeeper contenders ride along at
+# their own default budget (the same 5 QPS).
+LADDER_N="${LADDER_N:-1000}"
+LADDER_P="${LADDER_P:-20}"
+LADDER_QPS="${LADDER_QPS:-5}"
+LADDER_BURST="${LADDER_BURST:-$LADDER_QPS}"
+LADDER_REPS="${LADDER_REPS:-$REPS}"
+# The batch bootstrap: dpolicy starts with --bootstrap manual (the loop
+# open) and closes the loop by itself once its inputs have been quiet for
+# SWITCH_QUIET ms; the driver waits the switch out before the workloads.
+# BENCH_BOOTSTRAP=auto starts it with the loop closed from the first
+# write: the cold-start points of phase 0, baseline only, at COLD_NS.
+# The actuator dpolicy writes through: plain (the paper's) or absorb.
+# dpolicy-smith is the dual-rate Smith at SMITH_K_DEFAULT seconds of
+# window; SMITH_KS is the ladder of phase 1.
+SUT_WRITER="${SUT_WRITER:-plain}"
+SWITCH_QUIET="${SWITCH_QUIET:-20000}"
+COLD_NS="${COLD_NS:-$NS}"
+# A cold start runs to this convergence timeout (ms); the first size that
+# does not converge is the mode's wall and ends its line.
+COLD_TIMEOUT="${COLD_TIMEOUT:-$TIMEOUT}"
+BENCH_BOOTSTRAP="${BENCH_BOOTSTRAP:-manual}"
+BENCH_VARIANT="${BENCH_VARIANT:-}"
 PSS="${PSS:-yes}"
 CONSTRAINT_KINDS="K8sRequiredLabels"
 BENCH_PSS_FLAG=""
@@ -115,10 +152,13 @@ run_point() {
 
     local bench_flags=""
     if [ "$mode" = dpolicy ] || [ "$mode" = dpolicy-smith ]; then
-        local loop=reconciler
-        [ "$mode" = dpolicy-smith ] && loop=smith
+        local loop=reconciler k=""
+        [ "$mode" = dpolicy-smith ] && { loop=smith; k=${SUT_SMITH_K:-$SMITH_K_DEFAULT}; }
         KUBECONFIG=$SERVE_DIR/kubeconfig $DBSP ../apps/dpolicy/index.js controller \
             --constraint-kinds "$CONSTRAINT_KINDS" --mode "$loop" \
+            ${k:+--smith-window "$((k * 1000))"} \
+            ${SUT_QPS:+--qps "$SUT_QPS"} ${SUT_BURST:+--burst "$SUT_BURST"} \
+            --bootstrap "$BENCH_BOOTSTRAP" --switch-quiet-ms "$SWITCH_QUIET" --writer "$SUT_WRITER" \
             --no-violation-views > "/tmp/e6-$mode-$n-$p.log" 2>&1 &
         SUT_PID=$!
     else
@@ -131,32 +171,68 @@ run_point() {
     $DBSP $E6/bench.js --mode "$mode" --workloads "$wl" \
         --n "$n" --p "$p" --reps "$REPS" --idle-secs "$IDLE_SECS" \
         --lifetimes "$LIFETIMES" --rate "$RATES" --events "$EVENTS" \
-        --interval "$AUDIT_INTERVAL" \
+        --interval "$AUDIT_INTERVAL" --switch-quiet-ms "$SWITCH_QUIET" \
+        --bootstrap "$BENCH_BOOTSTRAP" ${BENCH_VARIANT:+--variant "$BENCH_VARIANT"} \
         --timeout "$TIMEOUT" --handshake $SERVE_DIR/handshake.json \
         --out $E6/results/e6.csv $bench_flags $BENCH_PSS_FLAG 2>&1 | tee -a "$PROGRESS" || note "mode=$mode N=$n P=$p FAILED"
 
-    # Preserve the point's apiserver request log (W2's API-load source).
-    cp $SERVE_DIR/apiserver-requests.log "$E6/results/requests-$mode-$n-$p.log" 2>/dev/null || true
+    # Preserve the point's apiserver request log (the API-load source of
+    # the idle table and the write counts of the ladder), named like the
+    # driver's mode label.
+    cp $SERVE_DIR/apiserver-requests.log "$E6/results/requests-$mode${BENCH_VARIANT:+-$BENCH_VARIANT}-$n-$p.log" 2>/dev/null || true
 
     cleanup
     trap cleanup EXIT
 }
 
-note "E6 sweep starting: modes=[$MODES] N=[$NS] P=[$PS] workloads=$WORKLOADS interval=${AUDIT_INTERVAL}s"
+note "E6 sweep starting: modes=[$MODES] N=[$NS] P=[$PS] workloads=$WORKLOADS interval=${AUDIT_INTERVAL}s smith window ${SMITH_K_DEFAULT}s"
 note "watch live: tail -f $PROGRESS"
+# Phase 0: cold start, the loop closed from the first write (the bootstrap
+# transient), baseline convergence only, up each mode's wall.
+note "=== phase 0: cold start (N: $COLD_NS) ==="
+for mode in $MODES; do
+    case $mode in dpolicy*) ;; *) continue ;; esac
+    for n in $COLD_NS; do
+        BENCH_BOOTSTRAP=auto BENCH_VARIANT=cold TIMEOUT=$COLD_TIMEOUT run_point "$mode" "$n" 1 none
+        grep -q "^$mode-cold,preload,$n," $E6/results/e6.csv 2>/dev/null ||
+            { note "cold start of $mode at N=$n did not converge: the wall; larger sizes skipped"; break; }
+    done
+done
+# Phase 1: the congestion ladder, w6 only: dpolicy at the realistic budget
+# from the reconciler (K = 0) up the smith windows, the Gatekeeper
+# contenders at their own.
+note "=== phase 1: congestion ladder (N=$LADDER_N P=$LADDER_P, windows: 0 $SMITH_KS; dpolicy at $LADDER_QPS QPS) ==="
+for mode in $MODES; do
+    case $mode in
+        dpolicy)
+            SUT_QPS=$LADDER_QPS SUT_BURST=$LADDER_BURST BENCH_VARIANT=k0 REPS=$LADDER_REPS \
+                run_point dpolicy "$LADDER_N" "$LADDER_P" w6 ;;
+        dpolicy-smith)
+            for K in $SMITH_KS; do
+                SUT_QPS=$LADDER_QPS SUT_BURST=$LADDER_BURST SUT_SMITH_K=$K BENCH_VARIANT=k$K REPS=$LADDER_REPS \
+                    run_point dpolicy-smith "$LADDER_N" "$LADDER_P" w6
+            done ;;
+        *)  REPS=$LADDER_REPS run_point "$mode" "$LADDER_N" "$LADDER_P" w6 ;;
+    esac
+done
+# Phase 2: the grid; the idle workload only at the W2_PS points.
+note "=== phase 2: grid (modes: $MODES; N: $NS; P: $PS) ==="
 for mode in $MODES; do
     for n in $NS; do
         for p in $PS; do
-            run_point "$mode" "$n" "$p"
+            wl=$WORKLOADS
+            case " $W2_PS " in *" $p "*) ;; *) wl=$(echo ",$wl," | sed 's/,w2,/,/; s/^,//; s/,$//') ;; esac
+            run_point "$mode" "$n" "$p" "$wl"
         done
     done
 done
-# Extra density for the W4 rollout curve: intermediate N points, w4 only,
-# so the full workload set is not re-run at these sizes.
+# Phase 3: extra density for the W4 rollout curve: intermediate N points,
+# w4 only, so the full workload set is not re-run at these sizes.
 case ",$WORKLOADS," in *",w4,"*)
+    note "=== phase 3: w4 density (N: $W4_NS; P: $W4_PS) ==="
     for mode in $MODES; do
         for n in $W4_NS; do
-            for p in $PS; do
+            for p in $W4_PS; do
                 run_point "$mode" "$n" "$p" w4
             done
         done

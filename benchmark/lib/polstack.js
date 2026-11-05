@@ -163,6 +163,22 @@ class PolStack {
     this.statusEvents = [];
   }
 
+  // settle resolves once no status tap has seen an event for quietMs; the
+  // activity clock counts from the caller's last reset of lastActivity.
+  async settle(quietMs, timeoutMs, label = "settle") {
+    const t0 = performance.now();
+    for (;;) {
+      const idle = performance.now() - this.lastActivity;
+      if (idle >= quietMs) {
+        return;
+      }
+      if (performance.now() - t0 > timeoutMs) {
+        throw new Error(`${label}: no quiet period of ${quietMs}ms within ${timeoutMs}ms`);
+      }
+      await sleep(Math.max(20, quietMs - idle));
+    }
+  }
+
   // --- corpus -----------------------------------------------------------
 
   // installCorpus applies the bench namespace, the templates and the
@@ -208,6 +224,13 @@ class PolStack {
         ]);
       }
     }
+  }
+
+  // correctionsPerFlip is the number of constraint statuses one compliance
+  // flip changes: every required-labels constraint and, with the PSS corpus
+  // on, every PSS constraint (a violating pod trips them all).
+  get correctionsPerFlip() {
+    return this.constraints.length + (this.pss ? PSS_KINDS.length : 0);
   }
 
   constraint(name) {
@@ -334,6 +357,34 @@ class PolStack {
       timeoutMs,
       label,
     );
+  }
+
+  // waitCountAll resolves with the arrival time of the status event that
+  // completed the set: every required-labels constraint carrying the given
+  // totalViolations (one flip corrects all P of them). Polled over the
+  // latest status per constraint.
+  async waitCountAll(count, timeoutMs, label) {
+    const names = this.constraints.map((c) => c.metadata.name);
+    const deadline = performance.now() + timeoutMs;
+    for (;;) {
+      let last = 0;
+      let done = true;
+      for (const name of names) {
+        const ev = this.latestStatus.get(name);
+        if (!ev || ev.totalViolations !== count) {
+          done = false;
+          break;
+        }
+        last = Math.max(last, ev.at);
+      }
+      if (done) {
+        return last;
+      }
+      if (performance.now() > deadline) {
+        throw new Error(`${label}: not every constraint reached ${count} within ${timeoutMs}ms`);
+      }
+      await sleep(20);
+    }
   }
 }
 

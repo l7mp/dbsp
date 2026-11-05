@@ -70,22 +70,27 @@ def main():
                 if p == ps[-1]:
                     write(f"e6-{wl}-{mode}.csv", ["n", "median_ms", "p95_ms"], data)
 
-    # w3: detection fraction and mean latency vs violation lifetime.
+    # w3: detection fraction and mean latency vs violation lifetime, pooled
+    # over the grid and per policy count (the suffixless file pools).
     for mode in modes:
-        per_l = defaultdict(list)
-        for r in by.get((mode, "w3"), []):
-            per_l[float(r["param"])].append(r)
-        data = []
-        for lifetime, rs in sorted(per_l.items()):
-            detected = [r for r in rs if r["extra"] == "detected"]
-            dts = [float(r["value_ms"]) for r in detected if r["value_ms"]]
-            data.append([
-                lifetime,
-                round(len(detected) / len(rs), 3),
-                round(statistics.mean(dts), 1) if dts else "",
-            ])
-        if data:
-            write(f"e6-w3-{mode}.csv", ["lifetime_s", "detected", "mean_ms"], data)
+        rows_w3 = by.get((mode, "w3"), [])
+        for p in [None] + sorted({int(r["p"]) for r in rows_w3}):
+            per_l = defaultdict(list)
+            for r in rows_w3:
+                if p is None or int(r["p"]) == p:
+                    per_l[float(r["param"])].append(r)
+            data = []
+            for lifetime, rs in sorted(per_l.items()):
+                detected = [r for r in rs if r["extra"] == "detected"]
+                dts = [float(r["value_ms"]) for r in detected if r["value_ms"]]
+                data.append([
+                    lifetime,
+                    round(len(detected) / len(rs), 3),
+                    round(statistics.mean(dts), 1) if dts else "",
+                ])
+            if data:
+                suffix = "" if p is None else f"-p{p}"
+                write(f"e6-w3-{mode}{suffix}.csv", ["lifetime_s", "detected", "mean_ms"], data)
 
     # w5: per-event detection lag (largest N, largest P present).
     for mode in modes:
@@ -101,6 +106,35 @@ def main():
         ]
         if data:
             write(f"e6-w5-{mode}.csv", ["event", "lag_ms"], sorted(data))
+
+    # w6: the congestion table, one row per (mode, n, p): the heal time of
+    # one flip's corrections (param: the constraint statuses a flip changes)
+    # and the SUT's writes per correction, counted in the request log over
+    # each rep's epoch window.
+    cong = []
+    for mode in modes:
+        per_np = defaultdict(list)
+        for r in by.get((mode, "w6"), []):
+            per_np[(int(r["n"]), int(r["p"]))].append(r)
+        for (n, p), rs in sorted(per_np.items()):
+            heals = [float(r["value_ms"]) for r in rs if r["value_ms"]]
+            writes = []
+            for r in rs:
+                start, end = (int(x) for x in r["extra"].split(":"))
+                w = request_window(mode, n, p, start, end, WRITE_VERBS)
+                if w != "":
+                    writes.append(w)
+            if not heals:
+                continue
+            corrections = max(int(float(r["param"])) if r["param"] else p for r in rs)
+            cong.append([mode, n, p, len(rs),
+                         round(statistics.median(heals), 1), round(quantile(heals, 0.95), 1),
+                         sum(writes) if writes else "",
+                         round(statistics.mean(writes) / corrections, 2) if writes else ""])
+    if cong:
+        write("e6-congestion.csv",
+              ["mode", "n", "p", "reps", "heal_ms", "heal_p95_ms", "sut_writes", "per_fix"],
+              cong)
 
     # w2: the idle table - status writes from the driver rows, CPU/RSS from
     # the sampler, API requests from the request log, all sliced to the
@@ -138,9 +172,13 @@ def proc_window(label, start, end):
         statistics.mean(rss) * page_kb / 1024, 1)
 
 
-def request_window(mode, n, p, start, end):
-    """Count SUT requests in the idle window: everything that is neither the
-    driver (e6-driver user agent) nor the apiserver's own loopback."""
+WRITE_VERBS = {"create", "update", "patch", "delete"}
+
+
+def request_window(mode, n, p, start, end, verbs=None):
+    """Count SUT requests in the window: everything that is neither the
+    driver (e6-driver user agent) nor the apiserver's own loopback,
+    restricted to the given verbs when verbs is set."""
     path = os.path.join(RESULTS, f"requests-{mode}-{n}-{p}.log")
     if not os.path.exists(path):
         return ""
@@ -152,6 +190,8 @@ def request_window(mode, n, p, start, end):
             except json.JSONDecodeError:
                 continue
             if ev.get("stage") != "ResponseComplete":
+                continue
+            if verbs is not None and ev.get("verb") not in verbs:
                 continue
             ts = ev.get("stageTimestamp", "")
             ms = parse_epoch_ms(ts)
