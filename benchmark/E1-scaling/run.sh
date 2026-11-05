@@ -39,6 +39,29 @@ else
     REPS="${REPS:-10}" REPS_SLOW="${REPS_SLOW:-3}"
 fi
 
+# from <first-n> <list...> prints the elements of the list not below first-n.
+from() {
+    local first="$1"; shift
+    for n in "$@"; do [ "$n" -ge "$first" ] && echo "$n"; done
+}
+
+# The ratio sweep, the paper's 2x3 figure: k pods per service, k = 1, 10,
+# 100, each column starting at N = k. Every mode takes the long list, up to
+# the pod count Kubernetes supports per cluster; the state-of-the-world
+# modes take fewer reps.
+if [ "${CASES:-ratio}" = ratio ]; then
+    for k in 1 10 100; do
+        for mode in incremental reconciled; do
+            for n in $(from "$k" $NS_FAST); do point ratio "$mode" "$n" "$REPS" --k="$k"; done
+        done
+        for mode in sotw sotw-diff; do
+            for n in $(from "$k" $NS_FAST); do point ratio "$mode" "$n" "$REPS_SLOW" --k="$k"; done
+        done
+    done
+fi
+
+# The legacy cases (CASES=legacy): join, pair and fanout.
+if [ "${CASES:-ratio}" = legacy ]; then
 # join: 1 service, N pods, no aggregation. The headline case.
 for n in $NS_FAST; do point join incremental "$n" "$REPS"; done
 for n in $NS_FAST; do point join reconciled  "$n" "$REPS"; done
@@ -68,6 +91,7 @@ for n in $NS_MID;  do point pair sotw        "$n" "$REPS_SLOW" --indexed; done
 # recompute is linear here too, so both lines share the mid list.
 for n in $NS_MID; do point fanout incremental "$n" "$REPS"; done
 for n in $NS_MID; do point fanout sotw        "$n" "$REPS_SLOW"; done
+fi
 
 if [ "$RENDER" = yes ]; then
     ../render.sh results.org

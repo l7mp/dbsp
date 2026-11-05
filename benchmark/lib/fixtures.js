@@ -11,6 +11,9 @@
 //   fanout: 1 Service selecting all N Pods, with @groupBy. One group of
 //           size N: the output document itself is O(N), which lower-bounds
 //           every mode.
+//   ratio:  N Pods and ceil(N/k) Services, k Pods per Service (pod i
+//           belongs to service ceil(i/k)), with @groupBy per service. The
+//           measured change is a pod IP churn; k = 1 is the pair shape.
 
 // podIP maps an index to a deterministic RFC1918 address.
 function podIP(i) {
@@ -42,7 +45,7 @@ function svc(name, app) {
 // no output and is suppressed before it reaches the output topic).
 // spare extra pods are preloaded in the pair case so that measured deltas
 // (svc additions) find their pod already in the state.
-function base(kase, n, spare) {
+function base(kase, n, spare, k) {
   const pods = [];
   const services = [];
   let matches;
@@ -74,6 +77,15 @@ function base(kase, n, spare) {
       // pair emits one group per service; svc-1 is always among them.
       matches = (d) => d.metadata && d.metadata.name === "svc-1";
       break;
+    case "ratio":
+      for (let i = 1; i <= n; i++) {
+        pods.push(pod(`pod-${i}`, `app-${Math.ceil(i / k)}`, podIP(i)));
+      }
+      for (let s = 1; s <= Math.ceil(n / k); s++) {
+        services.push(svc(`svc-${s}`, `app-${s}`));
+      }
+      matches = (d) => d.metadata && d.metadata.name === "svc-1";
+      break;
     default:
       throw new Error(`unknown case: ${kase}`);
   }
@@ -82,8 +94,12 @@ function base(kase, n, spare) {
 
 // delta returns the j-th measured delta for the case as
 // { topic, doc, matches(outDoc) } where matches identifies the output
-// entry whose arrival marks the delta as landed.
-function delta(kase, n, j) {
+// entry whose arrival marks the delta as landed. The ratio case returns
+// the j-th pod IP churn (j >= 1) as { topic, entries, matches }: pod
+// 1 + ((j - 1) mod n) moves to address podIP(n + j), round robin, and the
+// retraction names the address the pod holds before the churn, its base
+// address on the first round and the address of churn j - n after it.
+function delta(kase, n, j, k) {
   switch (kase) {
     case "join":
     case "fanout": {
@@ -103,6 +119,22 @@ function delta(kase, n, j) {
         topic: "services",
         doc: svc(name, `app-${n + j}`),
         matches: (d) => d.metadata && d.metadata.name === name,
+      };
+    }
+    case "ratio": {
+      const p = 1 + ((j - 1) % n);
+      const app = `app-${Math.ceil(p / k)}`;
+      const oldIP = j <= n ? podIP(p) : podIP(j);
+      const newIP = podIP(n + j);
+      const svcName = `svc-${Math.ceil(p / k)}`;
+      return {
+        topic: "pods",
+        entries: [
+          [pod(`pod-${p}`, app, oldIP), -1],
+          [pod(`pod-${p}`, app, newIP), 1],
+        ],
+        matches: (d) =>
+          d.metadata && d.metadata.name === svcName && Array.isArray(d.endpoints) && d.endpoints.includes(newIP),
       };
     }
     default:

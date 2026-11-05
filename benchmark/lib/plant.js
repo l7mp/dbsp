@@ -18,8 +18,11 @@
 //                loop.
 //
 // Out-of-band tampering (the noise generators) mutates the store directly;
-// in reconciled mode the mutation is also reported on the observed topic,
-// exactly as a Kubernetes watch would report a kubectl edit.
+// when the circuit has an observed topic the mutation is also reported on
+// it, exactly as a Kubernetes watch would report a kubectl edit. With the
+// echo option the snapshot and delta plants report their own writes too
+// (the reconciled plant always does): the watch of a controller that
+// watches the kind it writes.
 
 const { stableStringify } = require("./measure.js");
 
@@ -29,9 +32,13 @@ class Plant {
     this.keyFn = opts.keyFn;
     this.observed = opts.observed || null;
     this.store = new Map(); // key -> { doc, json }
-    this.writes = 0; // objects written (incl. deletes)
+    this.writes = 0; // objects written (incl. deletes), one per key and apply
     this.writeBytes = 0; // serialized bytes written
     this.lastFeedback = 0; // entries fed back on the last step
+    this.echo = !!opts.echo;
+    // touched maps every key written in the current apply to its entry
+    // before the apply (null for an absent key).
+    this.touched = null;
     this.applied = 0; // entries RECEIVED by the applier (actuation volume)
     // Feedback dead time, in ticks: observed-topic publications are held
     // back deadTime tick() calls (0 = immediate, the classical one-step
@@ -59,6 +66,7 @@ class Plant {
 
   applyStep(entries) {
     this.applied += entries.length;
+    this.touched = new Map();
     switch (this.mode) {
       case "sotw":
         this.applySnapshot(entries);
@@ -80,6 +88,21 @@ class Plant {
       default:
         throw new Error(`unknown plant mode: ${this.mode}`);
     }
+    this.writes += this.touched.size;
+    if (this.echo && (this.mode === "sotw" || this.mode === "sotw-diff" || this.mode === "incremental")) {
+      const fb = [];
+      for (const [key, prior] of this.touched) {
+        const cur = this.store.get(key);
+        if (prior && (!cur || cur.json !== prior.json)) {
+          fb.push([prior.doc, -1]);
+        }
+        if (cur && (!prior || prior.json !== cur.json)) {
+          fb.push([cur.doc, 1]);
+        }
+      }
+      this.publishFb(fb);
+    }
+    this.touched = null;
   }
 
   // publishFb sends feedback on the observed topic, delayed by the
@@ -142,28 +165,45 @@ class Plant {
     return d;
   }
 
+  // set and del write one object; the apply counts the distinct keys it
+  // touched, so an update that arrives as a retraction and an insertion is
+  // one write.
   set(key, doc, json) {
+    this.touch(key);
     this.store.set(key, { doc: doc, json: json });
-    this.writes++;
     this.writeBytes += json.length;
   }
 
   del(key) {
+    this.touch(key);
     this.store.delete(key);
-    this.writes++;
   }
 
-  // applySnapshot replaces the whole plant with the received snapshot.
+  touch(key) {
+    if (this.touched && !this.touched.has(key)) {
+      this.touched.set(key, this.store.get(key) || null);
+    }
+  }
+
+  // applySnapshot replaces the whole plant with the received snapshot: every
+  // object of the snapshot is written and every other object is deleted.
   applySnapshot(entries) {
     if (entries.length === 0) {
       return; // A quiescent step is not a resync.
     }
-    this.store.clear();
+    const next = new Map();
     for (const [doc, w] of entries) {
       if (w > 0) {
-        const json = stableStringify(doc);
-        this.set(this.keyFn(doc), doc, json);
+        next.set(this.keyFn(doc), doc);
       }
+    }
+    for (const key of [...this.store.keys()]) {
+      if (!next.has(key)) {
+        this.del(key);
+      }
+    }
+    for (const [key, doc] of next) {
+      this.set(key, doc, stableStringify(doc));
     }
   }
 
@@ -251,12 +291,10 @@ class Plant {
     this.publishFb(fb);
   }
 
-  // report publishes an out-of-band store mutation on the observed topic
-  // (reconciled mode only): the watch reporting external tampering.
+  // report publishes an out-of-band store mutation on the observed topic,
+  // if the circuit has one: the watch reporting external tampering.
   report(fb) {
-    if (this.mode !== "sotw" && this.mode !== "sotw-diff" && this.mode !== "incremental" && fb.length > 0) {
-      this.publishFb(fb);
-    }
+    this.publishFb(fb);
   }
 
   // quiesce settles the reconciliation loop. In reconciled mode the plant
@@ -276,17 +314,15 @@ class Plant {
   // modes.
   async quiesce(_collector, _timeoutMs) {}
 
-  // drift returns the Z-set distance between the plant and the oracle
-  // desired state: sum of absolute weights of (desired - actual), i.e.
-  // missing docs count 1, spurious docs count 1, corrupted docs count 2.
+  // drift returns the number of wrong objects: the keys whose plant content
+  // differs from the oracle desired state, missing, corrupted and spurious
+  // alike.
   drift(oracle) {
     let d = 0;
     for (const [key, json] of oracle) {
       const cur = this.store.get(key);
-      if (!cur) {
+      if (!cur || cur.json !== json) {
         d += 1;
-      } else if (cur.json !== json) {
-        d += 2;
       }
     }
     for (const key of this.store.keys()) {

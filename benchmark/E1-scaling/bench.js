@@ -3,9 +3,14 @@
 // single point and appends one summary row per invocation.
 //
 // Usage:
-//   dbsp bench.js --case=<join|pair|fanout> --mode=<sotw|sotw-diff|incremental|reconciled>
-//                 --n=<N> [--reps=20] [--warmup=3] [--indexed] [--out=results]
+//   dbsp bench.js --case=<ratio|join|pair|fanout> --mode=<sotw|sotw-diff|incremental|reconciled>
+//                 --n=<N> [--k=1] [--reps=20] [--warmup=3] [--indexed] [--out=results]
 //                 [--timeout-ms=120000]
+//
+// The ratio case (N pods, k per service, always the indexed join) measures
+// a pod IP churn: the j-th change moves one pod to a new address, round
+// robin, so the base never changes size. The other cases measure the
+// addition of one object and restore the base by retracting it.
 
 const minimist = require("minimist");
 const fs = require("fs");
@@ -21,6 +26,7 @@ const argv = minimist(process.argv.slice(2), {
     case: "pair",
     mode: "incremental",
     n: 100,
+    k: 1,
     reps: 20,
     warmup: 3,
     indexed: false,
@@ -32,9 +38,10 @@ const cfg = {
   kase: argv.case,
   mode: argv.mode,
   n: Number(argv.n),
+  k: Number(argv.k),
   reps: Number(argv.reps),
   warmup: Number(argv.warmup),
-  indexed: !!argv.indexed,
+  indexed: !!argv.indexed || argv.case === "ratio",
   out: argv.out,
   timeoutMs: Number(argv["timeout-ms"]),
 };
@@ -57,7 +64,7 @@ plant.connect(collector);
 
 // --- Base load: one publish per input topic, so SotW recomputes once. ---
 const spare = cfg.reps + cfg.warmup + 1;
-const b = fixtures.base(cfg.kase, cfg.n, spare);
+const b = fixtures.base(cfg.kase, cfg.n, spare, cfg.k);
 const baseMark = collector.mark();
 const t0 = performance.now();
 publish("pods", b.pods.map((d) => [d, 1]));
@@ -67,13 +74,14 @@ await plant.quiesce(collector, cfg.timeoutMs);
 const baseMs = performance.now() - t0;
 const baseWin = collector.since(baseMark);
 
-// --- Measured deltas: add, await landing, retract, restore base. ---
+// --- Measured deltas: add, await landing, retract, restore base (or, in
+// the ratio case, churn and await landing). ---
 async function oneDelta(j, record) {
-  const d = fixtures.delta(cfg.kase, cfg.n, j);
+  const d = fixtures.delta(cfg.kase, cfg.n, j, cfg.k);
   const mark = collector.mark();
   const w0 = { writes: plant.writes, bytes: plant.writeBytes };
   const ta = performance.now();
-  publish(d.topic, [[d.doc, 1]]);
+  publish(d.topic, d.entries || [[d.doc, 1]]);
   // Landing means the new doc shows up (in the snapshot or the delta).
   await collector.waitEntry(d.matches, 1, cfg.timeoutMs, `add ${j}`);
   const ms = performance.now() - ta;
@@ -85,6 +93,9 @@ async function oneDelta(j, record) {
       writes: plant.writes - w0.writes,
       writeBytes: plant.writeBytes - w0.bytes,
     });
+  }
+  if (cfg.kase === "ratio") {
+    return;
   }
 
   // Retract to restore the base config.
@@ -115,7 +126,7 @@ for (let j = cfg.warmup + 1; j <= cfg.warmup + cfg.reps; j++) {
 // --- Report. ---
 const st = stats(lat);
 const meanOf = (f) => wins.reduce((a, r) => a + f(r), 0) / (wins.length || 1);
-const variant = cfg.indexed ? `${cfg.kase}-idx` : cfg.kase;
+const variant = cfg.kase === "ratio" ? `ratio${cfg.k}` : cfg.indexed ? `${cfg.kase}-idx` : cfg.kase;
 
 if (!fs.existsSync(cfg.out)) {
   fs.mkdirSync(cfg.out);
@@ -142,7 +153,7 @@ for (let i = 0; i < lat.length; i++) {
   csvAppend(
     `${cfg.out}/raw-E1.csv`,
     ["case", "mode", "indexed", "n", "rep", "ms"],
-    [cfg.kase, cfg.mode, cfg.indexed ? 1 : 0, cfg.n, i + 1, lat[i].toFixed(3)],
+    [variant, cfg.mode, cfg.indexed ? 1 : 0, cfg.n, i + 1, lat[i].toFixed(3)],
   );
 }
 

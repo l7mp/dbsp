@@ -49,6 +49,7 @@ function stages(kase, indexed) {
         },
       ];
     case "pair":
+    case "ratio":
     case "fanout":
       return [
         join,
@@ -67,8 +68,12 @@ function stages(kase, indexed) {
 }
 
 // compile builds and validates the circuit for (kase, mode). Returns
-// { circuit, output, observed } where observed is non-null in reconciled
-// mode and names the plant-feedback topic.
+// { circuit, output, observed } where observed names the plant-feedback
+// topic when the circuit has one and is null otherwise. The closed modes
+// read the observed topic; with the watch option every other mode
+// subscribes to it too, as an input the program never reads: the
+// controller watches the kind it writes, and every watch event triggers a
+// step that recomputes the output from the unchanged reference.
 function compile(opts) {
   const kase = opts.case;
   const mode = opts.mode;
@@ -76,7 +81,8 @@ function compile(opts) {
 
   const inputs = ["pods", "services"];
   const closed = mode === "reconciled" || mode === "smith";
-  if (closed) {
+  const observed = closed || !!opts.watch;
+  if (observed) {
     inputs.push(OBSERVED);
   }
 
@@ -122,7 +128,7 @@ function compile(opts) {
   } else {
     c.commit();
   }
-  return { circuit: c, output: OUTPUT, observed: closed ? OBSERVED : null };
+  return { circuit: c, output: OUTPUT, observed: observed ? OBSERVED : null };
 }
 
 module.exports = { compile, OUTPUT, OBSERVED, TICK };
