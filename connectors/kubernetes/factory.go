@@ -198,7 +198,7 @@ func NewFactory(env Env) runtime.ConnectorFactory {
 				return nil, fmt.Errorf("connector client: %w", err)
 			}
 			return k8sconsumer.NewFromSpec(topic, verb, k8sconsumer.Spec{GVK: gvkString(gvk)}, k8sconsumer.Deps{
-				Client: client, GVK: gvk, Runtime: rt, Logger: rt.Logger(),
+				Client: client, GVK: gvk, Runtime: rt, Logger: rt.Logger(), PlainWrites: krt.PlainWrites(),
 			})
 		},
 		Expressions: expressions.Ops(),

@@ -21,11 +21,15 @@ function runHelp() {
   console.log("Usage:");
   console.log("  ./js/bin/dbsp apps/dgateway/index.js test");
   console.log("  ./js/bin/dbsp apps/dgateway/index.js controller [--xds-address <addr>]");
-  console.log("      [--mode reconciler|open|sotw|smith] control-loop architecture (default");
-  console.log("                               reconciler: incremental + reconciler; open:");
-  console.log("                               incremental without the reconciler; sotw:");
-  console.log("                               full recompute; smith: incremental + the");
-  console.log("                               Smith dead-time compensator)");
+  console.log("      [--mode reconciler|open|sotw|smith]");
+  console.log("                               control-loop architecture (default reconciler:");
+  console.log("                               incremental + reconciler; open: incremental");
+  console.log("                               without the reconciler; sotw: full recompute;");
+  console.log("                               smith: incremental + the dual-rate Smith");
+  console.log("                               compensator)");
+  console.log("      [--writer absorb|plain]  the actuator: absorb (default) composes re-emitted");
+  console.log("                               changes into one write per object, plain writes");
+  console.log("                               every emitted change as it arrives");
   console.log("      [--debug]                attach layer observers (events on stdout)");
   console.log("      [--address-pool <cidr>]  assign each gateway a loopback data-plane");
   console.log("                               address from this /16 pool (local runs)");
@@ -53,6 +57,9 @@ function runController() {
     clientOpts.burst = argv.burst !== undefined ? Number(argv.burst) : 2 * clientOpts.qps;
   } else if (argv.burst !== undefined) {
     clientOpts.burst = Number(argv.burst);
+  }
+  if (argv.writer !== undefined) {
+    clientOpts.writer = String(argv.writer);
   }
   kubernetes.runtime.start(clientOpts);
 

@@ -56,6 +56,10 @@ type Config struct {
 	// Runtime is the engine runtime used to create a subscriber.
 	Runtime *dbspruntime.Runtime
 
+	// PlainWrites selects the plain actuator: every emitted change is
+	// written as it arrives, nothing is composed across emissions.
+	PlainWrites bool
+
 	Logger logr.Logger
 }
 
@@ -134,6 +138,7 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 
 	b.pump = dbspruntime.NewWritePump(dbspruntime.WritePumpConfig{
 		Adapter: b,
+		Plain:   cfg.PlainWrites,
 		Report:  b.HandleError,
 		NewBackoff: func() dbspruntime.Backoff {
 			schedule := retryBackoff

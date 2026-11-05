@@ -53,6 +53,13 @@ type Config struct {
 	// disable auth (all requests are allowed). Has no effect when APIServer is nil.
 	Auth *AuthConfig
 
+	// PlainWrites selects the plain actuator for every plant-writing
+	// consumer: each emitted change is written as it arrives and nothing
+	// is composed across emissions, so a re-emitted correction costs a
+	// second write. The default composes re-emissions into one outstanding
+	// job per object (engine/runtime.WritePump).
+	PlainWrites bool
+
 	// Logger is the structured logger used by all components.
 	Logger logr.Logger
 }
@@ -79,6 +86,10 @@ type Runtime struct {
 	// Auth state, populated when cfg.Auth != nil.
 	privateKey *rsa.PrivateKey
 }
+
+// PlainWrites reports whether the plant-writing consumers run as the plain
+// actuator (see Config.PlainWrites).
+func (r *Runtime) PlainWrites() bool { return r.cfg.PlainWrites }
 
 // New creates a new Kubernetes runtime and initialises all configured components.
 // Start must be called to actually run the cache and any optional API server.

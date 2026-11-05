@@ -26,12 +26,18 @@ function runHelp() {
   console.log("      [--no-violation-views]        drop the Violation view objects (the");
   console.log("                                    complete set served by the extension");
   console.log("                                    API server; one object per violation)");
-  console.log("      [--mode reconciler|open|smith|sotw] control-loop architecture");
-  console.log("                                    (default reconciler: incremental +");
-  console.log("                                    reconciler; open: incremental without");
-  console.log("                                    the reconciler; smith: incremental +");
-  console.log("                                    the Smith dead-time compensator;");
-  console.log("                                    sotw: snapshot execution)");
+  console.log("      [--mode reconciler|open|smith|sotw]");
+  console.log("                                    control-loop architecture (default");
+  console.log("                                    reconciler: incremental + reconciler;");
+  console.log("                                    open: incremental without the reconciler;");
+  console.log("                                    smith: incremental + the dual-rate Smith");
+  console.log("                                    compensator; sotw: snapshot execution)");
+  console.log("      [--writer absorb|plain]       the actuator: absorb (default) composes");
+  console.log("                                    re-emitted changes into one write per");
+  console.log("                                    object, plain writes every emitted change");
+  console.log("      [--qps <n>] [--burst <n>]     k8s client budget (default 50/100); low");
+  console.log("                                    values throttle the controller's writes,");
+  console.log("                                    stretching the feedback dead time");
   console.log("      [--smith-window <ms>]         the dual-rate Smith compensation window");
   console.log("                                    in wall time (smith mode; default 10000)");
   console.log("      [--tick-period <ms>]          the window read-out clock's period, the");
@@ -53,7 +59,20 @@ function runController() {
   // view object per violation).
   const violationViews = argv["violation-views"] !== false;
 
-  kubernetes.runtime.start();
+  // The client budget (the feedback dead time's lever) and the actuator:
+  // absorb (default) composes re-emitted changes into one write per
+  // object, plain writes every emitted change as it arrives.
+  const clientOpts = {};
+  if (argv.qps !== undefined) {
+    clientOpts.qps = Number(argv.qps);
+    clientOpts.burst = argv.burst !== undefined ? Number(argv.burst) : 2 * clientOpts.qps;
+  } else if (argv.burst !== undefined) {
+    clientOpts.burst = Number(argv.burst);
+  }
+  if (argv.writer !== undefined) {
+    clientOpts.writer = String(argv.writer);
+  }
+  kubernetes.runtime.start(clientOpts);
 
   const loopMode = String(argv.mode || "reconciler");
   if (!["reconciler", "open", "smith", "sotw"].includes(loopMode)) {

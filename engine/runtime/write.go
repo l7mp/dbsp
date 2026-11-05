@@ -209,13 +209,25 @@ type job struct {
 	old, new any
 }
 
-// queue holds the outstanding jobs, at most one per plant key. It is the
-// only state the write path keeps, and it is empty whenever the plant is
-// reachable and the pipeline is quiet.
+// keyedJob is one job with the plant key it addresses: the unit of the
+// plain actuator's queue.
+type keyedJob struct {
+	key string
+	job
+}
+
+// queue holds the outstanding jobs. Composing (the default), it keeps at
+// most one per plant key; plain, it keeps every job in arrival order and
+// composes nothing. It is the only state the write path keeps, and it is
+// empty whenever the plant is reachable and the pipeline is quiet.
 type queue struct {
 	mu    sync.Mutex
 	equal func(a, b any) bool
 	jobs  map[string]job
+	// plain selects the plain actuator: fifo holds the jobs in arrival
+	// order and jobs is unused.
+	plain bool
+	fifo  []keyedJob
 	// inflight counts the jobs taken out of the map and handed to the
 	// plant, so that "nothing outstanding" can be told apart from
 	// "nothing left to take".
@@ -231,10 +243,45 @@ func (q *queue) absorb(key string, j job) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if q.plain {
+		if !q.identity(j) {
+			q.fifo = append(q.fifo, keyedJob{key: key, job: j})
+		}
+		return
+	}
 	if cur, ok := q.jobs[key]; ok {
 		j = job{old: cur.old, new: j.new}
 	}
 	q.store(key, j)
+}
+
+// pop takes the oldest job of the plain actuator's queue.
+func (q *queue) pop() (keyedJob, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.fifo) == 0 {
+		return keyedJob{}, false
+	}
+	kj := q.fifo[0]
+	q.fifo = q.fifo[1:]
+	q.inflight++
+	return kj, true
+}
+
+// unpop puts back a job whose write did not reach the plant, at the head:
+// the plain actuator retries in order.
+func (q *queue) unpop(kj keyedJob) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.inflight--
+	q.fifo = append([]keyedJob{kj}, q.fifo...)
+}
+
+// identity reports whether a job owes the plant nothing (see store).
+func (q *queue) identity(j job) bool {
+	return (j.old == nil && j.new == nil) || (j.old != nil && j.new != nil && q.equal(j.old, j.new))
 }
 
 // restore takes back a job whose write did not reach the plant. It is the
@@ -258,14 +305,11 @@ func (q *queue) restore(key string, j job) {
 // cancellation the Z-set performs by content hash, recovered in the key
 // domain.
 func (q *queue) store(key string, j job) {
-	switch {
-	case j.old == nil && j.new == nil:
-	case j.old != nil && j.new != nil && q.equal(j.old, j.new):
-	default:
-		q.jobs[key] = j
+	if q.identity(j) {
+		delete(q.jobs, key)
 		return
 	}
-	delete(q.jobs, key)
+	q.jobs[key] = j
 }
 
 // keys returns the outstanding keys in order: the drain sequence.
@@ -310,7 +354,7 @@ func (q *queue) idle() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	return len(q.jobs) == 0 && q.inflight == 0
+	return len(q.jobs) == 0 && len(q.fifo) == 0 && q.inflight == 0
 }
 
 // len returns the number of outstanding jobs.
@@ -318,12 +362,18 @@ func (q *queue) len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	return len(q.jobs)
+	return len(q.jobs) + len(q.fifo)
 }
 
 // WritePumpConfig configures a WritePump.
 type WritePumpConfig struct {
 	Adapter
+
+	// Plain selects the plain actuator: every emitted change is written as
+	// it arrives, in order, and nothing is composed across emissions, so a
+	// re-emitted correction costs a second write. The default composes
+	// re-emissions into one outstanding job per plant object.
+	Plain bool
 
 	// Report receives errors the emitter cannot return to a caller:
 	// refused writes and emitter faults. Required.
@@ -363,7 +413,7 @@ func NewWritePump(cfg WritePumpConfig) *WritePump {
 
 	return &WritePump{
 		adapter:    cfg.Adapter,
-		queue:      &queue{equal: cfg.Adapter.Equal, jobs: map[string]job{}},
+		queue:      &queue{equal: cfg.Adapter.Equal, jobs: map[string]job{}, plain: cfg.Plain},
 		wake:       make(chan struct{}, 1),
 		report:     cfg.Report,
 		log:        log,
@@ -450,6 +500,9 @@ func (p *WritePump) Run(ctx context.Context) error {
 // into the queue, composed under anything absorbed while it was in
 // flight.
 func (p *WritePump) drain(ctx context.Context) (time.Duration, bool) {
+	if p.queue.plain {
+		return p.drainPlain(ctx)
+	}
 	for _, key := range p.queue.keys() {
 		if ctx.Err() != nil {
 			return 0, false
@@ -481,4 +534,35 @@ func (p *WritePump) drain(ctx context.Context) (time.Duration, bool) {
 	}
 
 	return 0, false
+}
+
+// drainPlain is drain for the plain actuator: the jobs are written in
+// arrival order, and a job that did not reach the plant goes back to the
+// head of the queue.
+func (p *WritePump) drainPlain(ctx context.Context) (time.Duration, bool) {
+	for {
+		if ctx.Err() != nil {
+			return 0, false
+		}
+		kj, ok := p.queue.pop()
+		if !ok {
+			return 0, false
+		}
+		outcome, err := p.adapter.Apply(ctx, kj.key, kj.old, kj.new)
+		switch outcome {
+		case Applied:
+			p.queue.done()
+		case Unreachable:
+			p.queue.unpop(kj)
+			p.log.V(1).Info("plant unreachable, write pending", "object", kj.key, "error", err)
+			var ra RetryAfter
+			if errors.As(err, &ra) {
+				return ra.RetryAfter(), true
+			}
+			return 0, true
+		default:
+			p.queue.done()
+			p.report(err)
+		}
+	}
 }

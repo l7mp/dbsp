@@ -35,6 +35,7 @@ type k8sRuntimeStartConfig struct {
 	QPS        float32                    `json:"qps,omitempty"`
 	Burst      int                        `json:"burst,omitempty"`
 	UserAgent  string                     `json:"userAgent,omitempty"`
+	Writer     string                     `json:"writer,omitempty"`
 	APIServer  *k8sRuntimeAPIServerConfig `json:"apiServer,omitempty"`
 	Auth       *k8sRuntimeAuthConfig      `json:"auth,omitempty"`
 }
@@ -59,6 +60,7 @@ type k8sRuntimeConfigInput struct {
 	QPS        float64                   `json:"qps"`
 	Burst      int                       `json:"burst"`
 	UserAgent  string                    `json:"userAgent"`
+	Writer     string                    `json:"writer"`
 	APIServer  *k8sRuntimeAPIServerInput `json:"apiServer"`
 	Auth       *k8sRuntimeAuthInput      `json:"auth"`
 }
@@ -449,6 +451,7 @@ func normalizeK8sRuntimeConfig(in k8sRuntimeConfigInput) (k8sRuntimeStartConfig,
 		QPS:        float32(in.QPS),
 		Burst:      in.Burst,
 		UserAgent:  strings.TrimSpace(in.UserAgent),
+		Writer:     strings.TrimSpace(in.Writer),
 	}
 	if in.QPS < 0 || in.Burst < 0 {
 		return k8sRuntimeStartConfig{}, fmt.Errorf("qps and burst must be non-negative")
@@ -566,9 +569,18 @@ func (v *VM) startK8sRuntime(cfg k8sRuntimeStartConfig) error {
 		}
 	}
 
+	// The actuator: "absorb" (the default) composes re-emitted changes
+	// into one outstanding write per object, "plain" writes every emitted
+	// change as it arrives.
+	switch cfg.Writer {
+	case "", "absorb", "plain":
+	default:
+		return fmt.Errorf("unknown writer %q: use absorb or plain", cfg.Writer)
+	}
 	k8sCfg := k8sruntime.Config{
-		RESTConfig: restCfg,
-		Logger:     v.logger.WithName("kubernetes-runtime"),
+		RESTConfig:  restCfg,
+		PlainWrites: cfg.Writer == "plain",
+		Logger:      v.logger.WithName("kubernetes-runtime"),
 	}
 	if cfg.APIServer != nil {
 		apiCfg, err := k8sruntime.NewDefaultAPIServerConfig(

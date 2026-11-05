@@ -25,6 +25,8 @@ type Deps struct {
 	GVK     schema.GroupVersionKind
 	Runtime *dbspruntime.Runtime
 	Logger  logr.Logger
+	// PlainWrites selects the plain actuator (see Config.PlainWrites).
+	PlainWrites bool
 }
 
 // NewFromSpec builds the consumer subscribed to topic for the given verb
@@ -35,12 +37,13 @@ func NewFromSpec(topic, verb string, spec Spec, deps Deps) (dbspruntime.Runnable
 		consumerKind = "patcher"
 	}
 	cfg := Config{
-		Client:     deps.Client,
-		Name:       fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, topic, strings.ToLower(deps.GVK.String())),
-		OutputName: topic,
-		TargetGVK:  deps.GVK,
-		Runtime:    deps.Runtime,
-		Logger:     deps.Logger,
+		Client:      deps.Client,
+		Name:        fmt.Sprintf("kubernetes-consumer-%s-%s-%s", consumerKind, topic, strings.ToLower(deps.GVK.String())),
+		OutputName:  topic,
+		TargetGVK:   deps.GVK,
+		Runtime:     deps.Runtime,
+		Logger:      deps.Logger,
+		PlainWrites: deps.PlainWrites,
 	}
 	switch verb {
 	case "patch":

@@ -290,6 +290,51 @@ var _ = Describe("Write queue", func() {
 })
 
 var _ = Describe("WritePump", func() {
+	It("as the plain actuator writes every emitted change, in order", func() {
+		plant := newPlant()
+		var reported []error
+		p := NewWritePump(WritePumpConfig{
+			Adapter:    plant,
+			Plain:      true,
+			Report:     func(e error) { reported = append(reported, e) },
+			NewBackoff: func() Backoff { return &fixedBackoff{d: time.Millisecond} },
+			Logger:     logr.Discard(),
+		})
+
+		// The same correction emitted three times before any write: three
+		// writes, where the composing pump makes one.
+		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+		Expect(p.Outstanding()).To(Equal(3))
+		p.drain(context.Background())
+		Expect(plant.log()).To(Equal([]string{"a:-->1", "a:-->1", "a:-->1"}))
+		Expect(p.Idle()).To(BeTrue())
+		Expect(reported).To(BeEmpty())
+
+		// An unreachable plant keeps the order: the failed write is retried
+		// first.
+		plant.refuseNext(1, Unreachable)
+		Expect(p.Feed(delta(obj("b", "1"), 1))).To(Succeed())
+		Expect(p.Feed(delta(obj("c", "1"), 1))).To(Succeed())
+		_, stalled := p.drain(context.Background())
+		Expect(stalled).To(BeTrue())
+		Expect(p.Outstanding()).To(Equal(2))
+		p.drain(context.Background())
+		Expect(plant.log()[3:]).To(Equal([]string{"b:-->1", "c:-->1"}))
+	})
+
+	It("composes re-emissions into one write per object", func() {
+		plant := newPlant()
+		p, _ := newPump(plant)
+		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+		Expect(p.Outstanding()).To(Equal(1))
+		p.drain(context.Background())
+		Expect(plant.log()).To(Equal([]string{"a:-->1"}))
+	})
+
 	It("feeds and emits one change per plant object", func() {
 		plant := newPlant()
 		p, reported := newPump(plant)
