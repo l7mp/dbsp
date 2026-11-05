@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 
@@ -187,7 +188,14 @@ func (c *Circuit) Start(ctx context.Context) error {
 			continue
 		}
 
+		// The step counters count every executed step, an empty one
+		// included, which no output topic shows: steps_started and steps
+		// differ while a step runs, and step_ns is the time spent stepping.
+		c.rt.CountStat("circuit." + c.name + ".steps_started")
+		start := time.Now()
 		outs, err := c.Execute(inputs)
+		c.rt.AddStat("circuit."+c.name+".step_ns", time.Since(start).Nanoseconds())
+		c.rt.CountStat("circuit." + c.name + ".steps")
 		if err != nil {
 			c.rt.ReportError(c.name, err)
 			continue
