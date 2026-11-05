@@ -11,7 +11,7 @@
 
 const minimist = require("minimist");
 
-const argv = minimist(process.argv.slice(2));
+const argv = minimist(process.argv.slice(2), { boolean: ["plain-k8s-connector"] });
 const mode = String(argv._?.[0] || "help").toLowerCase();
 
 function runHelp() {
@@ -32,9 +32,10 @@ function runHelp() {
   console.log("                                    open: incremental without the reconciler;");
   console.log("                                    smith: incremental + the dual-rate Smith");
   console.log("                                    compensator; sotw: snapshot execution)");
-  console.log("      [--writer absorb|plain]       the actuator: absorb (default) composes");
-  console.log("                                    re-emitted changes into one write per");
-  console.log("                                    object, plain writes every emitted change");
+  console.log("      [--plain-k8s-connector]       write every emitted change as it arrives;");
+  console.log("                                    the default composes re-emitted changes");
+  console.log("                                    into one write per object and absorbs the");
+  console.log("                                    re-emissions of a write already issued");
   console.log("      [--qps <n>] [--burst <n>]     k8s client budget (default 50/100); low");
   console.log("                                    values throttle the controller's writes,");
   console.log("                                    stretching the feedback dead time");
@@ -66,8 +67,9 @@ function runController() {
   const violationViews = argv["violation-views"] !== false;
 
   // The client budget (the feedback dead time's lever) and the actuator:
-  // absorb (default) composes re-emitted changes into one write per
-  // object, plain writes every emitted change as it arrives.
+  // the default composes re-emitted changes into one write per object and
+  // absorbs the re-emissions of a write already issued, the plain
+  // connector writes every emitted change as it arrives.
   const clientOpts = {};
   if (argv.qps !== undefined) {
     clientOpts.qps = Number(argv.qps);
@@ -75,8 +77,8 @@ function runController() {
   } else if (argv.burst !== undefined) {
     clientOpts.burst = Number(argv.burst);
   }
-  if (argv.writer !== undefined) {
-    clientOpts.writer = String(argv.writer);
+  if (argv["plain-k8s-connector"]) {
+    clientOpts.plainWrites = true;
   }
   kubernetes.runtime.start(clientOpts);
 

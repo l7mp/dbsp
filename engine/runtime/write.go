@@ -29,11 +29,18 @@ import (
 //	absorb   the pair is composed into the outstanding job for that key
 //	emit     the outstanding job is handed to the connector
 //	settle   applied jobs leave, refused jobs are reported, unreachable
-//	         jobs return to the queue and arm the backoff
+//	         jobs return to the queue and pause the emitter
+//
+// Documents are compared by content hash throughout, the identity the
+// Z-set already carries, so no step of the path compares objects. A
+// closed loop re-emits its whole outstanding correction every step until
+// the plant's feedback confirms it; every document of such a re-emission
+// is one the path has sent, and the sent records index them by hash, so a
+// re-emission is paired and absorbed without adapting a single document.
 
 // ApplyResult classifies the result of one write against the plant: Applied
 // means an object is accepted by the plant and the connector can forget about
-// it; Unreachable failures lack an ack and MUST be retried with backoff;
+// it; Unreachable failures lack an ack and MUST be retried after a pause;
 // Refused failures MUST NOT be retried because the plant refused to accept the
 // object, so the command is reported and dropped.
 type ApplyResult int
@@ -62,21 +69,11 @@ func (r ApplyResult) String() string {
 	return "unknown"
 }
 
-// Backoff schedules the retries of a write that did not reach the plant:
-// Step returns the delay to wait before the next attempt and advances the
-// schedule. A connector supplies its own, because how long a plant wants
-// to be left alone is the connector's knowledge;
-// k8s.io/apimachinery/pkg/util/wait.Backoff is one, and the Kubernetes
-// connector passes exactly that.
-type Backoff interface {
-	Step() time.Duration
-}
-
 // RetryAfter is implemented by errors carrying a delay the plant asked for
 // before the next attempt, such as an HTTP 429 Retry-After. The emitter
-// stretches its backoff to honour it. This is how a plant-specific status
-// crosses the connector boundary without the write path having to know
-// the plant's error types.
+// stretches its retry pause to honour it. This is how a plant-specific
+// status crosses the connector boundary without the write path having to
+// know the plant's error types.
 type RetryAfter interface {
 	RetryAfter() time.Duration
 }
@@ -115,6 +112,9 @@ type AdaptFunc func(doc datamodel.Document) (key string, obj any, err error)
 type Pair struct {
 	Key      string
 	Old, New any
+	// OldHash and NewHash are the content hashes of the retracted and
+	// the asserted document, empty where the document is absent.
+	OldHash, NewHash string
 }
 
 // PairByKey re-indexes one delta from content identity to plant identity,
@@ -131,8 +131,12 @@ type Pair struct {
 // omitted. Repairing that is the pipeline's job (the keyed Distincter
 // selects a representative), never the connector's.
 func PairByKey(z zset.ZSet, adapt AdaptFunc) ([]Pair, []KeyError) {
+	type adapted struct {
+		obj  any
+		hash string
+	}
 	type group struct {
-		neg, pos []any
+		neg, pos []adapted
 	}
 	groups := map[string]*group{}
 	var errs []KeyError
@@ -148,10 +152,11 @@ func PairByKey(z zset.ZSet, adapt AdaptFunc) ([]Pair, []KeyError) {
 			g = &group{}
 			groups[k] = g
 		}
+		a := adapted{obj: obj, hash: e.Document.Hash()}
 		if e.Weight < 0 {
-			g.neg = append(g.neg, obj)
+			g.neg = append(g.neg, a)
 		} else {
-			g.pos = append(g.pos, obj)
+			g.pos = append(g.pos, a)
 		}
 	}
 
@@ -174,10 +179,10 @@ func PairByKey(z zset.ZSet, adapt AdaptFunc) ([]Pair, []KeyError) {
 		}
 		p := Pair{Key: k}
 		if len(g.neg) == 1 {
-			p.Old = g.neg[0]
+			p.Old, p.OldHash = g.neg[0].obj, g.neg[0].hash
 		}
 		if len(g.pos) == 1 {
-			p.New = g.pos[0]
+			p.New, p.NewHash = g.pos[0].obj, g.pos[0].hash
 		}
 		pairs = append(pairs, p)
 	}
@@ -192,11 +197,6 @@ type Adapter interface {
 	// object and the plant key a write to it addresses.
 	Adapt(doc datamodel.Document) (key string, obj any, err error)
 
-	// Equal reports whether two native objects leave the plant in the same
-	// state. It is the test that lets an outstanding job cancel itself
-	// when the pipeline takes a change back before it was written.
-	Equal(a, b any) bool
-
 	// Apply performs one write. Exactly one of old and new may be nil: a
 	// nil old asserts a new object, a nil new retracts it. Both are
 	// objects this Adapter produced.
@@ -204,34 +204,78 @@ type Adapter interface {
 }
 
 // job is one outstanding change for one plant object: the object we last
-// asserted and the one we want to assert now.
+// asserted and the one we want to assert now, each with the content hash
+// of the document it was adapted from (empty where absent). The hashes
+// are the identity of the job: two documents of one hash leave the plant
+// in the same state.
 type job struct {
-	old, new any
+	old, new         any
+	oldHash, newHash string
 }
 
-// keyedJob is one job with the plant key it addresses: the unit of the
-// plain actuator's queue.
+// keyedJob is one job with the plant key it addresses: what the emitter
+// takes from the queue.
 type keyedJob struct {
 	key string
 	job
 }
 
-// queue holds the outstanding jobs. Composing (the default), it keeps at
-// most one per plant key; plain, it keeps every job in arrival order and
-// composes nothing. It is the only state the write path keeps, and it is
-// empty whenever the plant is reachable and the pipeline is quiet.
+// queue holds the outstanding jobs. Absorbing (the default), it keeps at
+// most one job per plant key, in the order the keys arrived; plain, it
+// keeps every job in arrival order and composes nothing. Besides the jobs
+// it keeps only the sent records, which age out, so it is empty whenever
+// the plant is reachable and the pipeline has been quiet for a hold.
 type queue struct {
-	mu    sync.Mutex
-	equal func(a, b any) bool
-	jobs  map[string]job
-	// plain selects the plain actuator: fifo holds the jobs in arrival
-	// order and jobs is unused.
+	mu sync.Mutex
+	// plain selects the plain actuator: fifo holds every change in
+	// arrival order, and the absorbing fields are unused.
 	plain bool
 	fifo  []keyedJob
-	// inflight counts the jobs taken out of the map and handed to the
+	// The absorbing queue: jobs is the one job per key, order the keys
+	// with a slot in arrival order, one slot per key (queued marks the
+	// keys holding one). A key whose job composed to identity keeps its
+	// slot until the slot is popped and skipped.
+	jobs   map[string]job
+	order  []string
+	queued map[string]bool
+	// inflight counts the jobs taken out of the queue and handed to the
 	// plant, so that "nothing outstanding" can be told apart from
 	// "nothing left to take".
 	inflight int
+	// sent remembers, per key, the last job taken for the plant and when
+	// it was taken; hold is how long that record absorbs re-emissions of
+	// the same job (zero: never). known indexes the documents of the sent
+	// records by content hash, so a re-emitted document is paired without
+	// being adapted again. now is the clock.
+	sent  map[string]sent
+	known map[string]knownDoc
+	hold  time.Duration
+	now   func() time.Time
+}
+
+// sent is the record of the last write taken for one key: the job and the
+// time it was taken, whatever the plant answered afterwards.
+type sent struct {
+	job
+	at time.Time
+}
+
+// knownDoc is what adapting a document of a sent record produced.
+type knownDoc struct {
+	key string
+	obj any
+}
+
+func newQueue(plain bool, hold time.Duration) *queue {
+	return &queue{
+		plain:  plain,
+		jobs:   map[string]job{},
+		queued: map[string]bool{},
+		sent:   map[string]sent{},
+		known:  map[string]knownDoc{},
+		hold:   hold,
+		now:    time.Now,
+	}
 }
 
 // absorb composes an arriving pair onto the outstanding job for its key.
@@ -239,6 +283,16 @@ type queue struct {
 // earliest source we still owe a diff from, the latest target we want.
 // This is what makes a re-emitted correction idempotent and a superseded
 // one harmless.
+//
+// A pair for a key with no outstanding job is dropped when it is the job
+// the plant was sent for that key less than hold ago, source and target
+// alike: the write is in flight or acked, and the pair is the circuit
+// re-emitting it until the plant's own feedback confirms it. A pair with
+// another source is a correction of something the plant did behind our
+// back, and is queued however recent the record: the plant's feedback
+// retracts what we wrote and asserts what it holds, so the loop's next
+// emission names that as the source. Past the hold a re-emission is
+// written again, and that is the circuit's reconciliation doing its job.
 func (q *queue) absorb(key string, j job) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -249,95 +303,138 @@ func (q *queue) absorb(key string, j job) {
 		}
 		return
 	}
-	if cur, ok := q.jobs[key]; ok {
-		j = job{old: cur.old, new: j.new}
+	cur, ok := q.jobs[key]
+	if !ok {
+		if s, sent := q.sent[key]; sent && q.now().Sub(s.at) < q.hold && s.oldHash == j.oldHash && s.newHash == j.newHash {
+			return
+		}
+	} else {
+		j = job{old: cur.old, oldHash: cur.oldHash, new: j.new, newHash: j.newHash}
 	}
-	q.store(key, j)
+	if q.store(key, j) && !q.queued[key] {
+		q.queued[key] = true
+		q.order = append(q.order, key)
+	}
 }
 
-// pop takes the oldest job of the plain actuator's queue.
+// adapted returns what adapting the document of the given hash produced,
+// if the document is one of a sent record.
+func (q *queue) adapted(hash string) (knownDoc, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	d, ok := q.known[hash]
+	return d, ok
+}
+
+// forget drops the sent record of a key and its documents from the index.
+func (q *queue) forget(key string) {
+	s, ok := q.sent[key]
+	if !ok {
+		return
+	}
+	delete(q.known, s.oldHash)
+	delete(q.known, s.newHash)
+	delete(q.sent, key)
+}
+
+// sweep forgets the sent records older than hold: a record past the hold
+// absorbs nothing, so this only bounds the memory of a long-running pump.
+func (q *queue) sweep() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	for key, s := range q.sent {
+		if q.now().Sub(s.at) >= q.hold {
+			q.forget(key)
+		}
+	}
+}
+
+// pop takes the oldest outstanding job. A taken job counts as in flight
+// until it is settled or put back, and on the absorbing queue it is the
+// key's sent record from this moment on.
 func (q *queue) pop() (keyedJob, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	if len(q.fifo) == 0 {
-		return keyedJob{}, false
+	if q.plain {
+		if len(q.fifo) == 0 {
+			return keyedJob{}, false
+		}
+		kj := q.fifo[0]
+		q.fifo = q.fifo[1:]
+		q.inflight++
+		return kj, true
 	}
-	kj := q.fifo[0]
-	q.fifo = q.fifo[1:]
-	q.inflight++
-	return kj, true
+	for len(q.order) > 0 {
+		key := q.order[0]
+		q.order = q.order[1:]
+		delete(q.queued, key)
+		j, ok := q.jobs[key]
+		if !ok {
+			// The job composed to identity after the key took its slot.
+			continue
+		}
+		delete(q.jobs, key)
+		q.inflight++
+		if q.hold > 0 {
+			q.forget(key)
+			q.sent[key] = sent{job: j, at: q.now()}
+			if j.old != nil {
+				q.known[j.oldHash] = knownDoc{key: key, obj: j.old}
+			}
+			if j.new != nil {
+				q.known[j.newHash] = knownDoc{key: key, obj: j.new}
+			}
+		}
+		return keyedJob{key: key, job: j}, true
+	}
+	return keyedJob{}, false
 }
 
-// unpop puts back a job whose write did not reach the plant, at the head:
-// the plain actuator retries in order.
+// unpop puts back a job whose write did not reach the plant, at the head,
+// so it is retried in order. On the absorbing queue it is the same
+// composition as absorb with the arguments reversed: what comes back is
+// older than anything absorbed while the write was in flight, and the job
+// keeps the slot that arrival took.
 func (q *queue) unpop(kj keyedJob) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	q.inflight--
-	q.fifo = append([]keyedJob{kj}, q.fifo...)
+	if q.plain {
+		q.fifo = append([]keyedJob{kj}, q.fifo...)
+		return
+	}
+	j := kj.job
+	if cur, ok := q.jobs[kj.key]; ok {
+		j = job{old: j.old, oldHash: j.oldHash, new: cur.new, newHash: cur.newHash}
+	}
+	if q.store(kj.key, j) && !q.queued[kj.key] {
+		q.queued[kj.key] = true
+		q.order = append([]string{kj.key}, q.order...)
+	}
 }
 
 // identity reports whether a job owes the plant nothing (see store).
 func (q *queue) identity(j job) bool {
-	return (j.old == nil && j.new == nil) || (j.old != nil && j.new != nil && q.equal(j.old, j.new))
+	return j.oldHash == j.newHash
 }
 
-// restore takes back a job whose write did not reach the plant. It is the
-// same composition with the arguments reversed: what comes back is older
-// than anything absorbed while the write was in flight.
-func (q *queue) restore(key string, j job) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	q.inflight--
-	if cur, ok := q.jobs[key]; ok {
-		j = job{old: j.old, new: cur.new}
-	}
-	q.store(key, j)
-}
-
-// store records a composed job, dropping one that composed to identity.
-// Identity has two shapes: a change whose target is the object we last
-// asserted owes the plant nothing, and so does one that asserts an object
-// and retracts it again before either reached the plant. This is the
-// cancellation the Z-set performs by content hash, recovered in the key
-// domain.
-func (q *queue) store(key string, j job) {
+// store records a composed job and reports whether one is outstanding,
+// dropping one that composed to identity. Identity has two shapes: a
+// change whose target is the object we last asserted owes the plant
+// nothing, and so does one that asserts an object and retracts it again
+// before either reached the plant. This is the cancellation the Z-set
+// performs by content hash, recovered in the key domain.
+func (q *queue) store(key string, j job) bool {
 	if q.identity(j) {
 		delete(q.jobs, key)
-		return
+		return false
 	}
 	q.jobs[key] = j
-}
-
-// keys returns the outstanding keys in order: the drain sequence.
-func (q *queue) keys() []string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	keys := make([]string, 0, len(q.jobs))
-	for k := range q.jobs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// take removes the job for key and reports whether one was outstanding.
-// A taken job counts as in flight until it is settled or restored.
-func (q *queue) take(key string) (job, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	j, ok := q.jobs[key]
-	if !ok {
-		return job{}, false
-	}
-	delete(q.jobs, key)
-	q.inflight++
-	return j, true
+	return true
 }
 
 // done marks an in-flight job settled.
@@ -371,18 +468,29 @@ type WritePumpConfig struct {
 
 	// Plain selects the plain actuator: every emitted change is written as
 	// it arrives, in order, and nothing is composed across emissions, so a
-	// re-emitted correction costs a second write. The default composes
-	// re-emissions into one outstanding job per plant object.
+	// re-emitted correction costs a second write. The default is the
+	// absorbing queue: re-emissions compose into one outstanding job per
+	// plant object, and the re-emissions of a write already issued are
+	// absorbed for the Hold.
 	Plain bool
+
+	// Hold is how long a written object absorbs re-emissions of the same
+	// change: a pair arriving within Hold of the write that carried
+	// exactly that pair is dropped, whether the write is still in flight
+	// or acked and awaiting the plant's feedback. Zero holds nothing; the
+	// plain actuator ignores it.
+	Hold time.Duration
+
+	// Timeout bounds one write against the plant; a write that does not
+	// answer in time counts as unreachable and is retried like one. It is
+	// also the pause before an unreachable plant is tried again, so a
+	// plant that is down costs one attempt per Timeout. Zero means no
+	// bound and a pause of one second.
+	Timeout time.Duration
 
 	// Report receives errors the emitter cannot return to a caller:
 	// refused writes and emitter faults. Required.
 	Report func(error)
-
-	// NewBackoff returns a fresh retry schedule for a plant that stopped
-	// answering. The emitter asks for a new one every time the plant
-	// answers again, which is how the schedule resets. Required.
-	NewBackoff func() Backoff
 
 	logr.Logger
 }
@@ -397,12 +505,12 @@ type WritePump struct {
 	wake    chan struct{}
 	report  func(error)
 	log     logr.Logger
-
-	// backoff is the current retry schedule and newBackoff makes a fresh
-	// one; both are touched by the emitter only.
-	newBackoff func() Backoff
-	backoff    Backoff
+	timeout time.Duration
 }
+
+// retryPause is how long the emitter waits after an unreachable write
+// when no Timeout bounds the writes.
+const retryPause = time.Second
 
 // NewWritePump creates a write pump for a connector's adapter.
 func NewWritePump(cfg WritePumpConfig) *WritePump {
@@ -412,13 +520,12 @@ func NewWritePump(cfg WritePumpConfig) *WritePump {
 	}
 
 	return &WritePump{
-		adapter:    cfg.Adapter,
-		queue:      &queue{equal: cfg.Adapter.Equal, jobs: map[string]job{}, plain: cfg.Plain},
-		wake:       make(chan struct{}, 1),
-		report:     cfg.Report,
-		log:        log,
-		newBackoff: cfg.NewBackoff,
-		backoff:    cfg.NewBackoff(),
+		adapter: cfg.Adapter,
+		queue:   newQueue(cfg.Plain, cfg.Hold),
+		wake:    make(chan struct{}, 1),
+		report:  cfg.Report,
+		log:     log,
+		timeout: cfg.Timeout,
 	}
 }
 
@@ -426,11 +533,18 @@ func NewWritePump(cfg WritePumpConfig) *WritePump {
 // plant, so an unreachable plant cannot stall the circuit that publishes
 // here. Documents that cannot be adapted and keys carrying several
 // distinct documents are returned as errors; everything else is absorbed.
+// A document of a sent record is paired from the record, not adapted
+// again.
 func (p *WritePump) Feed(z zset.ZSet) error {
-	pairs, kerrs := PairByKey(z, p.adapter.Adapt)
+	pairs, kerrs := PairByKey(z, func(doc datamodel.Document) (string, any, error) {
+		if d, ok := p.queue.adapted(doc.Hash()); ok {
+			return d.key, d.obj, nil
+		}
+		return p.adapter.Adapt(doc)
+	})
 
 	for _, pr := range pairs {
-		p.queue.absorb(pr.Key, job{old: pr.Old, new: pr.New})
+		p.queue.absorb(pr.Key, job{old: pr.Old, oldHash: pr.OldHash, new: pr.New, newHash: pr.NewHash})
 	}
 
 	select {
@@ -453,17 +567,25 @@ func (p *WritePump) Outstanding() int { return p.queue.len() }
 func (p *WritePump) Idle() bool { return p.queue.idle() }
 
 // Run is the emitter. It drains the outstanding jobs into the plant, waits
-// for a feed when there is nothing owed, and waits out the backoff after a
-// write that did not reach the plant, so an unreachable plant costs one
-// attempt per backoff step. A feed arriving during the backoff does not
-// shorten it: the job it absorbed will be written by the attempt that is
-// already scheduled.
+// for a feed when there is nothing owed, and pauses one timeout after a
+// write that did not reach the plant, or as long as the plant asked for,
+// so an unreachable plant costs one attempt per pause. A feed arriving
+// during the pause does not shorten it: the job it absorbed will be
+// written by the attempt that is already scheduled. Once per hold it also
+// forgets the sent records that have expired.
 func (p *WritePump) Run(ctx context.Context) error {
 	retry := time.NewTimer(time.Hour)
 	if !retry.Stop() {
 		<-retry.C
 	}
 	defer retry.Stop()
+
+	var sweep <-chan time.Time
+	if p.queue.hold > 0 && !p.queue.plain {
+		ticker := time.NewTicker(p.queue.hold)
+		defer ticker.Stop()
+		sweep = ticker.C
+	}
 
 	for {
 		if ctx.Err() != nil {
@@ -472,7 +594,10 @@ func (p *WritePump) Run(ctx context.Context) error {
 
 		suggested, stalled := p.drain(ctx)
 		if stalled {
-			delay := p.backoff.Step()
+			delay := p.timeout
+			if delay == 0 {
+				delay = retryPause
+			}
 			if suggested > delay {
 				delay = suggested
 			}
@@ -485,61 +610,22 @@ func (p *WritePump) Run(ctx context.Context) error {
 			continue
 		}
 
-		p.backoff = p.newBackoff()
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-p.wake:
+		case <-sweep:
+			p.queue.sweep()
 		}
 	}
 }
 
-// drain applies the outstanding jobs in key order. The first write that
-// does not reach the plant ends the cycle: the plant is not answering, so
-// the remaining jobs would only repeat the failure. That job goes back
-// into the queue, composed under anything absorbed while it was in
+// drain writes the outstanding jobs in order. The first write that does
+// not reach the plant ends the cycle: the plant is not answering, so the
+// remaining jobs would only repeat the failure. That job goes back to the
+// head of the queue, composed under anything absorbed while it was in
 // flight.
 func (p *WritePump) drain(ctx context.Context) (time.Duration, bool) {
-	if p.queue.plain {
-		return p.drainPlain(ctx)
-	}
-	for _, key := range p.queue.keys() {
-		if ctx.Err() != nil {
-			return 0, false
-		}
-
-		j, ok := p.queue.take(key)
-		if !ok {
-			continue
-		}
-
-		outcome, err := p.adapter.Apply(ctx, key, j.old, j.new)
-		switch outcome {
-		case Applied:
-			p.queue.done()
-		case Unreachable:
-			p.queue.restore(key, j)
-			p.log.V(1).Info("plant unreachable, write pending", "object", key, "error", err)
-			var ra RetryAfter
-			if errors.As(err, &ra) {
-				return ra.RetryAfter(), true
-			}
-			return 0, true
-		default:
-			// Refused, and anything an adapter returns that is not one
-			// of the three: the plant decided, so report and drop.
-			p.queue.done()
-			p.report(err)
-		}
-	}
-
-	return 0, false
-}
-
-// drainPlain is drain for the plain actuator: the jobs are written in
-// arrival order, and a job that did not reach the plant goes back to the
-// head of the queue.
-func (p *WritePump) drainPlain(ctx context.Context) (time.Duration, bool) {
 	for {
 		if ctx.Err() != nil {
 			return 0, false
@@ -548,7 +634,7 @@ func (p *WritePump) drainPlain(ctx context.Context) (time.Duration, bool) {
 		if !ok {
 			return 0, false
 		}
-		outcome, err := p.adapter.Apply(ctx, kj.key, kj.old, kj.new)
+		outcome, err := p.apply(ctx, kj.key, kj.job)
 		switch outcome {
 		case Applied:
 			p.queue.done()
@@ -561,8 +647,20 @@ func (p *WritePump) drainPlain(ctx context.Context) (time.Duration, bool) {
 			}
 			return 0, true
 		default:
+			// Refused, and anything an adapter returns that is not one
+			// of the three: the plant decided, so report and drop.
 			p.queue.done()
 			p.report(err)
 		}
 	}
+}
+
+// apply performs one write under the pump's timeout.
+func (p *WritePump) apply(ctx context.Context, key string, j job) (ApplyResult, error) {
+	if p.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.timeout)
+		defer cancel()
+	}
+	return p.adapter.Apply(ctx, key, j.old, j.new)
 }

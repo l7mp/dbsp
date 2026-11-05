@@ -55,11 +55,6 @@ func (c *baseConsumer) Adapt(doc datamodel.Document) (string, any, error) {
 	return client.ObjectKeyFromObject(target).String(), target, nil
 }
 
-// Equal reports whether two objects leave the plant in the same state.
-func (c *baseConsumer) Equal(a, b any) bool {
-	return kobject.DeepEqual(a.(kobject.Object), b.(kobject.Object))
-}
-
 // Apply writes one outstanding change. The pair shape picks the edge: a
 // full pair is an update, a bare assertion is a create (owner) or a
 // first-decoration patch, a bare retraction is a delete (owner) or a

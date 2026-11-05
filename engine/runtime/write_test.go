@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -31,6 +32,10 @@ type testPlant struct {
 	fail    ApplyResult
 	failing int
 	suggest time.Duration
+	// block makes every write hang until its context expires.
+	block bool
+	// adapts counts the documents adapted.
+	adapts atomic.Int64
 }
 
 func newPlant() *testPlant {
@@ -39,6 +44,7 @@ func newPlant() *testPlant {
 
 // Adapt implements Adapter: a document must carry a name to be writable.
 func (p *testPlant) Adapt(doc datamodel.Document) (string, any, error) {
+	p.adapts.Add(1)
 	fields := doc.Fields()
 	name, ok := fields["name"].(string)
 	if !ok || name == "" {
@@ -48,18 +54,30 @@ func (p *testPlant) Adapt(doc datamodel.Document) (string, any, error) {
 	return name, &testObject{name: name, v: v}, nil
 }
 
-// Equal implements Adapter.
-func (p *testPlant) Equal(a, b any) bool {
-	oa, okA := a.(*testObject)
-	ob, okB := b.(*testObject)
-	return okA && okB && *oa == *ob
+// tj builds a job between two test objects, hashed as their documents
+// would be.
+func tj(old, new *testObject) job {
+	j := job{}
+	if old != nil {
+		j.old, j.oldHash = old, obj(old.name, old.v).Hash()
+	}
+	if new != nil {
+		j.new, j.newHash = new, obj(new.name, new.v).Hash()
+	}
+	return j
 }
 
 // Apply implements Adapter: an assertion writes, a retraction deletes.
-func (p *testPlant) Apply(_ context.Context, key string, old, new any) (ApplyResult, error) {
+func (p *testPlant) Apply(ctx context.Context, key string, old, new any) (ApplyResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.block {
+		p.mu.Unlock()
+		<-ctx.Done()
+		p.mu.Lock()
+		return Unreachable, ctx.Err()
+	}
 	if p.failing > 0 {
 		p.failing--
 		err := fmt.Errorf("plant %s: %s", p.fail, key)
@@ -101,18 +119,6 @@ func (p *testPlant) refuseNext(n int, outcome ApplyResult) {
 	p.failing, p.fail = n, outcome
 }
 
-// fixedBackoff is a deterministic retry schedule: the tests assert on
-// what the emitter does, never on how long a real schedule waits.
-type fixedBackoff struct {
-	d     time.Duration
-	steps int
-}
-
-func (b *fixedBackoff) Step() time.Duration {
-	b.steps++
-	return b.d
-}
-
 // delayedError carries a plant-suggested retry delay.
 type delayedError struct {
 	error
@@ -134,29 +140,22 @@ func delta(entries ...any) zset.ZSet {
 	return z
 }
 
-// newPump builds a pump over a plant, collecting reported errors.
+// newPump builds a pump over a plant with a millisecond timeout (and so
+// retry pause), collecting reported errors.
 func newPump(plant *testPlant) (*WritePump, *[]error) {
-	p, reported, _ := newPumpWithBackoff(plant, time.Millisecond)
-	return p, reported
-}
-
-// newPumpWithBackoff builds a pump over a plant with a schedule the test
-// can inspect.
-func newPumpWithBackoff(plant *testPlant, delay time.Duration) (*WritePump, *[]error, *fixedBackoff) {
 	var mu sync.Mutex
 	reported := &[]error{}
-	schedule := &fixedBackoff{d: delay}
 	p := NewWritePump(WritePumpConfig{
 		Adapter: plant,
+		Timeout: time.Millisecond,
 		Report: func(e error) {
 			mu.Lock()
 			defer mu.Unlock()
 			*reported = append(*reported, e)
 		},
-		NewBackoff: func() Backoff { return schedule },
-		Logger:     logr.Discard(),
+		Logger: logr.Discard(),
 	})
-	return p, reported, schedule
+	return p, reported
 }
 
 var _ = Describe("PairByKey", func() {
@@ -224,66 +223,85 @@ var _ = Describe("PairByKey", func() {
 
 var _ = Describe("Write queue", func() {
 	It("composes an arriving change onto the outstanding job", func() {
-		plant := newPlant()
-		q := &queue{equal: plant.Equal, jobs: map[string]job{}}
+		q := newQueue(false, 0)
 
-		q.absorb("a", job{old: &testObject{"a", "1"}, new: &testObject{"a", "2"}})
-		q.absorb("a", job{old: &testObject{"a", "2"}, new: &testObject{"a", "3"}})
+		q.absorb("a", tj(&testObject{"a", "1"}, &testObject{"a", "2"}))
+		q.absorb("a", tj(&testObject{"a", "2"}, &testObject{"a", "3"}))
 		Expect(q.len()).To(Equal(1), "two changes to one object are one job")
 
-		j, ok := q.take("a")
+		kj, ok := q.pop()
 		Expect(ok).To(BeTrue())
-		Expect(j.old.(*testObject).v).To(Equal("1"), "the earliest source we still owe a diff from")
-		Expect(j.new.(*testObject).v).To(Equal("3"), "the latest target we want")
+		Expect(kj.old.(*testObject).v).To(Equal("1"), "the earliest source we still owe a diff from")
+		Expect(kj.new.(*testObject).v).To(Equal("3"), "the latest target we want")
+	})
+
+	It("pops the keys in arrival order, skipping a slot whose job cancelled", func() {
+		q := newQueue(false, 0)
+
+		q.absorb("b", tj(nil, &testObject{"b", "1"}))
+		q.absorb("a", tj(nil, &testObject{"a", "1"}))
+		q.absorb("c", tj(nil, &testObject{"c", "1"}))
+		q.absorb("a", tj(&testObject{"a", "1"}, nil))
+		Expect(q.len()).To(Equal(2))
+
+		kj, ok := q.pop()
+		Expect(ok).To(BeTrue())
+		Expect(kj.key).To(Equal("b"))
+		kj, ok = q.pop()
+		Expect(ok).To(BeTrue())
+		Expect(kj.key).To(Equal("c"), "the cancelled key's slot is skipped")
+		_, ok = q.pop()
+		Expect(ok).To(BeFalse())
+
+		q.absorb("a", tj(nil, &testObject{"a", "2"}))
+		kj, ok = q.pop()
+		Expect(ok).To(BeTrue())
+		Expect(kj.key).To(Equal("a"), "a key takes a fresh slot once its old one is gone")
 	})
 
 	It("drops a job that composes to identity", func() {
-		plant := newPlant()
-		q := &queue{equal: plant.Equal, jobs: map[string]job{}}
+		q := newQueue(false, 0)
 
-		q.absorb("a", job{old: &testObject{"a", "1"}, new: &testObject{"a", "2"}})
-		q.absorb("a", job{old: &testObject{"a", "2"}, new: &testObject{"a", "1"}})
+		q.absorb("a", tj(&testObject{"a", "1"}, &testObject{"a", "2"}))
+		q.absorb("a", tj(&testObject{"a", "2"}, &testObject{"a", "1"}))
 		Expect(q.len()).To(BeZero())
 	})
 
 	It("drops an assertion the pipeline retracts before the plant sees it", func() {
-		plant := newPlant()
-		q := &queue{equal: plant.Equal, jobs: map[string]job{}}
+		q := newQueue(false, 0)
 
-		q.absorb("a", job{new: &testObject{"a", "1"}})
-		q.absorb("a", job{old: &testObject{"a", "1"}})
+		q.absorb("a", tj(nil, &testObject{"a", "1"}))
+		q.absorb("a", tj(&testObject{"a", "1"}, nil))
 		Expect(q.len()).To(BeZero(), "creating and deleting an object the plant never saw is no work")
 	})
 
-	It("composes a restored job under what arrived while it was in flight", func() {
-		plant := newPlant()
-		q := &queue{equal: plant.Equal, jobs: map[string]job{}}
+	It("composes a put-back job under what arrived while it was in flight", func() {
+		q := newQueue(false, 0)
 
-		q.absorb("a", job{old: &testObject{"a", "1"}, new: &testObject{"a", "2"}})
-		j, _ := q.take("a")
-		q.absorb("a", job{old: &testObject{"a", "1"}, new: &testObject{"a", "3"}})
-		q.restore("a", j)
+		q.absorb("a", tj(&testObject{"a", "1"}, &testObject{"a", "2"}))
+		kj, _ := q.pop()
+		q.absorb("a", tj(&testObject{"a", "1"}, &testObject{"a", "3"}))
+		q.unpop(kj)
 
-		got, ok := q.take("a")
+		got, ok := q.pop()
 		Expect(ok).To(BeTrue())
 		Expect(got.old.(*testObject).v).To(Equal("1"), "the returned job is the older source")
 		Expect(got.new.(*testObject).v).To(Equal("3"), "the target absorbed meanwhile still wins")
 	})
 
 	It("is idle only when nothing is queued and nothing is in flight", func() {
-		plant := newPlant()
-		q := &queue{equal: plant.Equal, jobs: map[string]job{}}
+		q := newQueue(false, 0)
 		Expect(q.idle()).To(BeTrue())
 
-		q.absorb("a", job{new: &testObject{"a", "1"}})
+		q.absorb("a", tj(nil, &testObject{"a", "1"}))
 		Expect(q.idle()).To(BeFalse())
 
-		j, _ := q.take("a")
+		kj, _ := q.pop()
 		Expect(q.len()).To(BeZero())
 		Expect(q.idle()).To(BeFalse(), "a taken job is still owed until it settles")
 
-		q.restore("a", j)
-		_, _ = q.take("a")
+		q.unpop(kj)
+		_, _ = q.pop()
 		q.done()
 		Expect(q.idle()).To(BeTrue())
 	})
@@ -294,15 +312,14 @@ var _ = Describe("WritePump", func() {
 		plant := newPlant()
 		var reported []error
 		p := NewWritePump(WritePumpConfig{
-			Adapter:    plant,
-			Plain:      true,
-			Report:     func(e error) { reported = append(reported, e) },
-			NewBackoff: func() Backoff { return &fixedBackoff{d: time.Millisecond} },
-			Logger:     logr.Discard(),
+			Adapter: plant,
+			Plain:   true,
+			Report:  func(e error) { reported = append(reported, e) },
+			Logger:  logr.Discard(),
 		})
 
 		// The same correction emitted three times before any write: three
-		// writes, where the composing pump makes one.
+		// writes, where the absorbing pump makes one.
 		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
 		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
 		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
@@ -406,7 +423,7 @@ var _ = Describe("WritePump", func() {
 
 	It("waits out the plant's own suggested delay", func() {
 		plant := newPlant()
-		p, _, _ := newPumpWithBackoff(plant, time.Millisecond)
+		p, _ := newPump(plant)
 		plant.refuseNext(1, Unreachable)
 		plant.suggest = 300 * time.Millisecond
 
@@ -416,25 +433,11 @@ var _ = Describe("WritePump", func() {
 
 		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
 
-		// The schedule alone would retry within a millisecond; the plant
+		// The pause alone would retry within a millisecond; the plant
 		// asked to be left alone for longer, and that wins.
 		Consistently(p.Idle, 100*time.Millisecond, 10*time.Millisecond).Should(BeFalse())
 		Eventually(p.Idle, 2*time.Second, 10*time.Millisecond).Should(BeTrue())
 		Expect(plant.get("a")).To(Equal("1"))
-	})
-
-	It("takes a fresh schedule once the plant answers", func() {
-		plant := newPlant()
-		p, _, schedule := newPumpWithBackoff(plant, time.Millisecond)
-		plant.refuseNext(2, Unreachable)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go func() { _ = p.Run(ctx) }()
-
-		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
-		Eventually(p.Idle, time.Second, 5*time.Millisecond).Should(BeTrue())
-		Expect(schedule.steps).To(Equal(2), "one step per attempt that did not reach the plant")
 	})
 
 	It("drains on its own until the plant answers", func() {
@@ -468,6 +471,170 @@ var _ = Describe("WritePump", func() {
 
 		Expect(plant.log()).To(Equal([]string{"a:1->2"}), "delivered many times, written once")
 		Expect(*reported).To(BeEmpty())
+	})
+
+	Context("with a hold", func() {
+		// A pump whose clock the test advances, holding for a minute.
+		var (
+			plant *testPlant
+			p     *WritePump
+			now   time.Time
+			rep   *[]error
+		)
+		BeforeEach(func() {
+			plant = newPlant()
+			now = time.Unix(1000, 0)
+			var mu sync.Mutex
+			rep = &[]error{}
+			p = NewWritePump(WritePumpConfig{
+				Adapter: plant,
+				Hold:    time.Minute,
+				Report: func(e error) {
+					mu.Lock()
+					defer mu.Unlock()
+					*rep = append(*rep, e)
+				},
+				Logger: logr.Discard(),
+			})
+			p.queue.now = func() time.Time { return now }
+		})
+
+		It("absorbs a re-emission of a written object within the hold", func() {
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			p.drain(context.Background())
+			Expect(plant.log()).To(Equal([]string{"a:-->1"}))
+
+			// The circuit re-emits the correction until its feedback
+			// confirms it: nothing is queued, nothing is written.
+			now = now.Add(30 * time.Second)
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(BeZero())
+			Expect(p.Idle()).To(BeTrue())
+
+			// Past the hold the same re-emission is written again.
+			now = now.Add(31 * time.Second)
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(Equal(1))
+			p.drain(context.Background())
+			Expect(plant.log()).To(Equal([]string{"a:-->1", "a:-->1"}))
+		})
+
+		It("absorbs the re-emission of an in-flight write and queues a different target", func() {
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			_, ok := p.queue.pop()
+			Expect(ok).To(BeTrue(), "the write is in flight")
+
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(BeZero(), "the in-flight target, re-emitted, is absorbed")
+
+			Expect(p.Feed(delta(obj("a", "1"), -1, obj("a", "2"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(Equal(1), "a new target is owed")
+			p.queue.done()
+			p.drain(context.Background())
+			Expect(plant.log()).To(Equal([]string{"a:1->2"}))
+		})
+
+		It("absorbs a retraction it has sent, not an assertion after it", func() {
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			p.drain(context.Background())
+			Expect(p.Feed(delta(obj("a", "1"), -1))).To(Succeed())
+			p.drain(context.Background())
+			Expect(plant.log()).To(Equal([]string{"a:-->1", "a:1->-"}))
+
+			Expect(p.Feed(delta(obj("a", "1"), -1))).To(Succeed())
+			Expect(p.Outstanding()).To(BeZero(), "the retraction re-emitted")
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(Equal(1), "the object asserted anew")
+		})
+
+		It("writes a correction whose source moved under the hold", func() {
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			p.drain(context.Background())
+
+			// The plant was overwritten behind our back: the loop's next
+			// emission retracts what the plant holds and asserts our
+			// target again. Same target, another source: not ours to
+			// absorb.
+			Expect(p.Feed(delta(obj("a", "x"), -1, obj("a", "1"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(Equal(1))
+			p.drain(context.Background())
+			Expect(plant.log()).To(Equal([]string{"a:-->1", "a:x->1"}))
+		})
+
+		It("keeps absorbing a refused target for the hold", func() {
+			plant.refuseNext(1, Refused)
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			p.drain(context.Background())
+			Expect(*rep).To(HaveLen(1))
+
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(BeZero(), "the refused object, re-emitted, costs no second write")
+			Expect(p.Feed(delta(obj("a", "1"), -1, obj("a", "2"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(Equal(1), "a repaired object is written")
+		})
+
+		It("composes onto a restored job rather than absorbing it", func() {
+			plant.refuseNext(1, Unreachable)
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			_, stalled := p.drain(context.Background())
+			Expect(stalled).To(BeTrue())
+
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			Expect(p.Outstanding()).To(Equal(1), "the job is back in the queue, so the re-emission composes onto it")
+			p.drain(context.Background())
+			Expect(plant.log()).To(Equal([]string{"a:-->1"}))
+		})
+
+		It("pairs the documents of a sent record without adapting them", func() {
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			p.drain(context.Background())
+			adapts := plant.adapts.Load()
+
+			Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+			Expect(plant.adapts.Load()).To(Equal(adapts), "the re-emission is known by hash")
+			Expect(p.Feed(delta(obj("a", "1"), -1, obj("a", "2"), 1))).To(Succeed())
+			Expect(plant.adapts.Load()).To(Equal(adapts+1), "only the new target is adapted")
+			Expect(p.Outstanding()).To(Equal(1))
+		})
+
+		It("sweeps the expired sent records", func() {
+			Expect(p.Feed(delta(obj("a", "1"), 1, obj("b", "1"), 1))).To(Succeed())
+			p.drain(context.Background())
+			Expect(p.queue.sent).To(HaveLen(2))
+
+			now = now.Add(30 * time.Second)
+			Expect(p.Feed(delta(obj("b", "1"), -1, obj("b", "2"), 1))).To(Succeed())
+			p.drain(context.Background())
+			now = now.Add(31 * time.Second)
+			p.queue.sweep()
+			Expect(p.queue.sent).To(HaveKey("b"))
+			Expect(p.queue.sent).NotTo(HaveKey("a"))
+			Expect(p.queue.known).To(HaveLen(2), "the swept record's documents leave the index with it")
+		})
+	})
+
+	It("bounds one write by the timeout and retries it", func() {
+		plant := newPlant()
+		plant.block = true
+		p := NewWritePump(WritePumpConfig{
+			Adapter: plant,
+			Timeout: 20 * time.Millisecond,
+			Report:  func(error) {},
+			Logger:  logr.Discard(),
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() { _ = p.Run(ctx) }()
+
+		Expect(p.Feed(delta(obj("a", "1"), 1))).To(Succeed())
+		Consistently(p.Idle, 50*time.Millisecond, 5*time.Millisecond).Should(BeFalse())
+
+		plant.mu.Lock()
+		plant.block = false
+		plant.mu.Unlock()
+		Eventually(p.Idle, time.Second, 5*time.Millisecond).Should(BeTrue())
+		Expect(plant.get("a")).To(Equal("1"))
 	})
 
 	It("stops when the context is cancelled", func() {

@@ -12,7 +12,7 @@
 
 const minimist = require("minimist");
 
-const argv = minimist(process.argv.slice(2));
+const argv = minimist(process.argv.slice(2), { boolean: ["plain-k8s-connector"] });
 const mode = String(argv._?.[0] || "help").toLowerCase();
 
 function runHelp() {
@@ -27,9 +27,10 @@ function runHelp() {
   console.log("                               without the reconciler; sotw: full recompute;");
   console.log("                               smith: incremental + the dual-rate Smith");
   console.log("                               compensator)");
-  console.log("      [--writer absorb|plain]  the actuator: absorb (default) composes re-emitted");
-  console.log("                               changes into one write per object, plain writes");
-  console.log("                               every emitted change as it arrives");
+  console.log("      [--plain-k8s-connector]  write every emitted change as it arrives; the");
+  console.log("                               default composes re-emitted changes into one");
+  console.log("                               write per object and absorbs the re-emissions");
+  console.log("                               of a write already issued");
   console.log("      [--debug]                attach layer observers (events on stdout)");
   console.log("      [--address-pool <cidr>]  assign each gateway a loopback data-plane");
   console.log("                               address from this /16 pool (local runs)");
@@ -64,8 +65,8 @@ function runController() {
   } else if (argv.burst !== undefined) {
     clientOpts.burst = Number(argv.burst);
   }
-  if (argv.writer !== undefined) {
-    clientOpts.writer = String(argv.writer);
+  if (argv["plain-k8s-connector"]) {
+    clientOpts.plainWrites = true;
   }
   kubernetes.runtime.start(clientOpts);
 

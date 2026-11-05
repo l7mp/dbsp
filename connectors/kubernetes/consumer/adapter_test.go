@@ -1,7 +1,6 @@
 package consumer
 
 import (
-	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -78,27 +77,5 @@ var _ = Describe("Consumer adapters", func() {
 			_, _, err := adapterFor(g).Adapt(doc)
 			Expect(err).To(HaveOccurred(), "case %q must be reported", name)
 		}
-	})
-
-	It("compares objects by content", func() {
-		bc := adapterFor(g)
-		doc := map[string]any{
-			"metadata": map[string]any{"name": "n", "namespace": "ns"},
-			"spec":     map[string]any{"replicas": int64(3)},
-		}
-		other := map[string]any{
-			"metadata": map[string]any{"name": "n", "namespace": "ns"},
-			"spec":     map[string]any{"replicas": int64(4)},
-		}
-
-		_, a, err := bc.Adapt(dbspunstructured.New(doc))
-		Expect(err).NotTo(HaveOccurred())
-		_, b, err := bc.Adapt(dbspunstructured.New(kruntime.DeepCopyJSON(doc)))
-		Expect(err).NotTo(HaveOccurred())
-		_, c, err := bc.Adapt(dbspunstructured.New(other))
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(bc.Equal(a, b)).To(BeTrue())
-		Expect(bc.Equal(a, c)).To(BeFalse())
 	})
 })

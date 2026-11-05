@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"syscall"
 	"time"
@@ -17,7 +16,6 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	viewv1a1 "github.com/l7mp/dbsp/connectors/kubernetes/runtime/api/view/v1alpha1"
@@ -27,18 +25,16 @@ import (
 	dbspruntime "github.com/l7mp/dbsp/engine/runtime"
 )
 
-// Retry schedule for unreachable-plant failures: exponential with jitter
-// from the initial delay to the cap, the same shape the producer's watch
-// reconnect uses. The jitter keeps the consumers of a throttled apiserver
-// from retrying in lockstep. Assigning the template copies it, so every
-// stall starts from a fresh schedule.
-var retryBackoff = wait.Backoff{
-	Duration: time.Second,
-	Factor:   2,
-	Jitter:   0.1,
-	Cap:      30 * time.Second,
-	Steps:    math.MaxInt32,
-}
+// writeHold is how long a written object absorbs re-emissions of the same
+// change (see dbspruntime.WritePumpConfig.Hold): longer than a write
+// timeout plus the watch delay of a healthy apiserver, short enough that
+// a lost write costs one extra write within seconds. writeTimeout bounds
+// one request, the client's rate-limiter wait included, and is the pause
+// before an unreachable apiserver is tried again.
+const (
+	writeHold    = 5 * time.Second
+	writeTimeout = 2 * time.Second
+)
 
 // Config configures Kubernetes consumers.
 type Config struct {
@@ -139,12 +135,10 @@ func newBase(cfg Config, consumerType string) (*baseConsumer, error) {
 	b.pump = dbspruntime.NewWritePump(dbspruntime.WritePumpConfig{
 		Adapter: b,
 		Plain:   cfg.PlainWrites,
+		Hold:    writeHold,
+		Timeout: writeTimeout,
 		Report:  b.HandleError,
-		NewBackoff: func() dbspruntime.Backoff {
-			schedule := retryBackoff
-			return &schedule
-		},
-		Logger: log,
+		Logger:  log,
 	})
 
 	return b, nil
