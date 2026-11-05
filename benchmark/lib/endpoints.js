@@ -20,6 +20,9 @@
 // product (predicate evaluated on every pair) to the indexed equi-join.
 
 const OBSERVED = "observed";
+// TICK is the dual-rate Smith window clock: the driver pulses it once per
+// round in smith mode.
+const TICK = "tick";
 const OUTPUT = "endpoints";
 
 const JOIN_PRED = {
@@ -99,13 +102,15 @@ function compile(opts) {
       c.transform([{ name: "Incrementalizer" }, { name: "Reconciler", pairs: [[OBSERVED, OUTPUT]] }]);
       break;
     case "smith": {
-      // The SmithPredictor's known dead time in circuit steps: the loop
-      // model, distinct from the plant's actual dead time.
+      // The dual-rate Smith: the compensation window is k ticks of the TICK
+      // input, which the driver pulses once per round (one empty document
+      // asserted per tick, the Tick source's pulse contract), so the window
+      // is k rounds against the plant's dead time in rounds.
       const k = Number(opts.smithK);
-      if (!Number.isInteger(k) || k < 2) {
-        throw new Error(`mode smith needs an integer dead time smithK >= 2, got ${opts.smithK}`);
+      if (!Number.isInteger(k) || k < 1) {
+        throw new Error(`mode smith needs an integer window smithK >= 1 ticks, got ${opts.smithK}`);
       }
-      c.transform([{ name: "Incrementalizer" }, { name: "SmithPredictor", pairs: [[OBSERVED, OUTPUT]], k }]);
+      c.transform([{ name: "Incrementalizer" }, { name: "DualRateSmith", pairs: [[OBSERVED, OUTPUT]], k, tick: TICK }]);
       break;
     }
     default:
@@ -120,4 +125,4 @@ function compile(opts) {
   return { circuit: c, output: OUTPUT, observed: closed ? OBSERVED : null };
 }
 
-module.exports = { compile, OUTPUT, OBSERVED };
+module.exports = { compile, OUTPUT, OBSERVED, TICK };

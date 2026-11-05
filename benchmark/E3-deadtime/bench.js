@@ -4,44 +4,41 @@
 //
 // The plant that closes a reconciliation loop does not confirm a write the
 // instant it lands: the apiserver admits it, a watch re-lists it, the event
-// propagates. That round trip is a dead time of k steps. The plain
-// desired-state Reconciler re-emits the whole outstanding correction U on
-// every step until the echo confirms it, so a dead time of k turns one
-// logical change into O(k) redundant applies. The SmithPredictor emits each
-// correction exactly once - it retires the loop's own echoes by content
-// against the delayed integral z^-1 U - so k appears nowhere in its
-// actuation volume.
+// propagates. That round trip is a dead time, here --dt rounds of the
+// driver's clock. The plain desired-state Reconciler re-emits the whole
+// outstanding correction U on every step until the echo confirms it, so a
+// dead time of dt turns one logical change into O(dt) redundant applies.
+// The dual-rate Smith holds every emitted correction in a window of --k
+// ticks (the driver pulses the window clock once per round, so k ticks are
+// k rounds) and retires the echo against it: a window that covers the dead
+// time actuates every correction exactly once, a shorter one re-emits what
+// it released before the echo, and the plain Reconciler is the window of
+// zero. The sweep is the ladder from no window (--mode=reconciled) up to
+// the first window that absorbs the dead time.
 //
-// The sweep variable is the loop's MODEL of the dead time, not the dead
-// time itself: the plant runs at a fixed dead time --dt, and the
-// SmithPredictor runs with an assumed window --k. A matched model (k = dt)
-// actuates every correction exactly once; an under-modeled loop (k < dt)
-// re-emits for the dt - k steps its model cannot cover, degenerating to
-// the plain Reconciler as k -> 1 (the Reconciler IS the k = 1 endpoint of
-// the sweep and stands in for it, since the predictor requires k >= 2).
-//
-// Two experiments:
+// Three experiments:
 //
 //   --exp=amp   actuation amplification: a fixed churn workload runs for R
 //               rounds at plant dead time dt; we count the entries the
 //               plant applier receives (the actuation volume - every one is
-//               a would-be apiserver write). Swept over the model k at
-//               fixed dt: emission load vs model quality.
-//
-//   --exp=osc   the oscillation the theory warns about, and why Kubernetes
-//               never shows it. A single disturbance hits at dead time dt
-//               against three (plant, loop) configurations; we trace the
-//               net weight the plant holds for the disturbed object.
+//               a would-be apiserver write). Swept over the window k at
+//               fixed dt: writes per correction vs the window.
 //
 //   --exp=rec   recovery under write loss: each round churns one pod and
 //               measures the ticks until the new state lands in the plant,
 //               with every correction entry dropped with probability
 //               --drop (actuated but lost). The reconciler re-emits U
 //               every step, so a lost write is re-actuated on the next
-//               step; the smith loop retires corrections against its
-//               k-step echo window, so re-assertion waits for the window
-//               to drain: recovery latency grows with k - the price of
-//               the silence the amp experiment buys.
+//               step; the smith loop re-asserts only when the window
+//               releases the correction unconfirmed, so recovery latency
+//               grows with k - the price of the silence the amp
+//               experiment buys. The two experiments together are the
+//               window's price at both ends.
+//
+//   --exp=osc   the oscillation the theory warns about, and why Kubernetes
+//               never shows it. A single disturbance hits at dead time dt
+//               against three (plant, loop) configurations; we trace the
+//               net weight the plant holds for the disturbed object.
 //
 // Usage:
 //   dbsp bench.js --exp=amp --mode=<reconciled|smith> --dt=<DT> [--k=<K>]
@@ -81,8 +78,8 @@ const cfg = {
   exp: argv.exp,
   mode: argv.mode, // circuit transform: reconciled | smith
   plant: argv.plant || argv.mode, // plant apply semantics; defaults to mode
-  dt: Number(argv.dt), // the plant's actual feedback dead time
-  k: Number(argv.k) || Number(argv.dt), // the Smith model's dead time (smith mode)
+  dt: Number(argv.dt), // the plant's actual feedback dead time, in rounds
+  k: Number(argv.k) || Number(argv.dt), // the Smith window, in ticks (smith mode)
   n: Number(argv.n),
   rounds: Number(argv.rounds),
   drop: Number(argv.drop), // write-loss probability (rec experiment)
@@ -112,8 +109,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DRAIN_MS = 15;
 const drain = () => sleep(DRAIN_MS);
 
+// advance ends a round: the plant's feedback clock ticks, releasing the
+// echoes whose dead time expired, and in smith mode the window clock is
+// pulsed, releasing the corrections whose window expired. The echo lands
+// first, so a window of exactly the dead time still retires it.
+async function advance(plant) {
+  plant.tick();
+  await drain();
+  if (cfg.mode === "smith") {
+    publish(endpoints.TICK, [[{}, 1]]);
+    await drain();
+  }
+}
+
 // build compiles the (circuit, plant) pair: the plant runs at dead time
-// dt, the smith loop models it with window k.
+// dt, the smith loop runs with window k.
 function build(dt) {
   const compiled = endpoints.compile({ case: "pair", mode: cfg.mode, smithK: cfg.k });
   const collector = new Collector(compiled.output);
@@ -140,8 +150,7 @@ async function amp() {
   publish("services", b.services.map((d) => [d, 1]));
   await drain();
   for (let i = 0; i <= cfg.dt; i++) {
-    plant.tick();
-    await drain();
+    await advance(plant);
   }
 
   const ip = new Map();
@@ -149,7 +158,7 @@ async function amp() {
     ip.set(i, fixtures.podIP(i));
   }
 
-  const modelTag = cfg.mode === "smith" ? `k${cfg.k}` : "k1";
+  const modelTag = cfg.mode === "smith" ? `k${cfg.k}` : "k0";
   const tracePath = `${cfg.out}/E3-trace-${cfg.mode}-dt${cfg.dt}-${modelTag}.csv`;
   if (fs.existsSync(tracePath)) {
     fs.rmSync(tracePath);
@@ -170,9 +179,7 @@ async function amp() {
     ip.set(i, newIP);
     publish("pods", [[oldPod, -1], [newPod, 1]]);
     await drain();
-
-    plant.tick();
-    await drain();
+    await advance(plant);
 
     const applied = plant.applied - before;
     perRound.push(applied);
@@ -181,8 +188,7 @@ async function amp() {
 
   // Flush the last dt rounds' echoes so writes settle (not measured).
   for (let i = 0; i <= cfg.dt; i++) {
-    plant.tick();
-    await drain();
+    await advance(plant);
   }
 
   // Steady state: mean over the second half, past the k-round fill.
@@ -192,8 +198,8 @@ async function amp() {
   // Minimal actuation is two entries per round (retract old, insert new).
   const minimal = 2;
 
-  // The model column: the Reconciler is the k = 1 endpoint of the sweep.
-  const model = cfg.mode === "smith" ? cfg.k : 1;
+  // The window column: the Reconciler is the window of zero.
+  const model = cfg.mode === "smith" ? cfg.k : 0;
   csvAppend(
     `${cfg.out}/E3-amp-${cfg.mode}.csv`,
     ["dt", "k", "applied_per_round", "total_applied", "amplification"],
@@ -236,8 +242,7 @@ async function osc() {
   publish("services", b.services.map((d) => [d, 1]));
   await drain();
   for (let i = 0; i <= dt; i++) {
-    plant.tick();
-    await drain();
+    await advance(plant);
   }
   const ip = new Map();
   for (let i = 1; i <= n; i++) {
@@ -268,7 +273,7 @@ async function osc() {
     return plant.store.has("svc-ghost") ? 1 : 0;
   };
 
-  const oscModel = cfg.mode === "smith" ? `k${cfg.k}` : "k1";
+  const oscModel = cfg.mode === "smith" ? `k${cfg.k}` : "k0";
   const tracePath = `${cfg.out}/E3-osc-${cfg.plant}-${cfg.mode}-dt${dt}-${oscModel}.csv`;
   if (fs.existsSync(tracePath)) {
     fs.rmSync(tracePath);
@@ -290,8 +295,7 @@ async function osc() {
     if (t >= 1) {
       await churn(); // keep the circuit stepping through the dead window
     }
-    plant.tick();
-    await drain();
+    await advance(plant);
 
     const w = weightOfD();
     trace.push(w);
@@ -302,7 +306,7 @@ async function osc() {
   const settled = trace[trace.length - 1];
   const rang = trace.some((x) => x < 0) || peak > 1;
   console.log(
-    `E3 osc plant=${cfg.plant} loop=${cfg.mode} dt=${dt} k=${cfg.mode === "smith" ? cfg.k : 1}: peak|w|=${peak} ` +
+    `E3 osc plant=${cfg.plant} loop=${cfg.mode} dt=${dt} k=${cfg.mode === "smith" ? cfg.k : 0}: peak|w|=${peak} ` +
       `final=${settled} ${rang ? "RINGS" : "clamped"}`,
   );
 }
@@ -320,8 +324,7 @@ async function rec() {
   publish("services", b.services.map((d) => [d, 1]));
   await drain();
   for (let i = 0; i <= cfg.dt + 2; i++) {
-    plant.tick();
-    await drain();
+    await advance(plant);
   }
   plant.dropP = cfg.drop;
 
@@ -356,7 +359,7 @@ async function rec() {
     return false;
   };
 
-  const model = cfg.mode === "smith" ? cfg.k : 1;
+  const model = cfg.mode === "smith" ? cfg.k : 0;
   const cap = 3 * model + 2 * cfg.dt + 20;
   const lat = [];
   let capped = 0;
@@ -372,8 +375,7 @@ async function rec() {
     let ticks = 0;
     while (!plantHasIP(newIP) && ticks < cap) {
       await clock();
-      plant.tick();
-      await drain();
+      await advance(plant);
       ticks++;
     }
     if (ticks >= cap && !plantHasIP(newIP)) {

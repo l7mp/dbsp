@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# E3 sweep: actuation under feedback dead time, as a Smith-K model sweep.
+# E3 sweep: actuation under feedback dead time, the window ladder in the
+# clean plant.
 #
-# The plant runs at a fixed dead time DT; the SmithPredictor is swept over
-# its model window K. K = DT is the matched model (every correction
-# actuated exactly once), K < DT under-models and re-emits for the
-# uncovered DT - K steps, and the plain Reconciler is the K = 1 endpoint
-# of the sweep (the predictor itself requires K >= 2).
+# The plant runs at a fixed dead time DT rounds; the dual-rate Smith is
+# swept over its window K (ticks, one per round) from the plain Reconciler
+# (K = 0, no window) up past the first window that absorbs the dead time:
+# K >= DT actuates every correction exactly once, K < DT releases
+# corrections before their echo and re-emits them.
 #
 #   ./run.sh            fast profile
 #   SCALE=full ./run.sh longer traces, denser K grid
@@ -22,13 +23,13 @@ RENDER="${RENDER:-yes}"
 rm -f results/*.csv
 mkdir -p results
 
-DT="${DT:-10}"
+DT="${DT:-4}"
 if [ "$SCALE" = full ]; then
     N="${N:-100}" ROUNDS="${ROUNDS:-400}"
-    KS="${KS:-2 3 4 5 6 8 10}"
+    KS="${KS:-1 2 3 4 5 6}"
 else
     N="${N:-30}" ROUNDS="${ROUNDS:-150}"
-    KS="${KS:-2 3 5 10}"
+    KS="${KS:-1 2 4 6}"
 fi
 
 run() {
@@ -36,9 +37,8 @@ run() {
     "$DBSP" bench.js "$@" 2>&1 | grep -iE "E3 |STATS |error" || true
 }
 
-# --- Amplification: actuation volume vs. the loop's dead-time model. The
-# Reconciler contributes the K=1 endpoint; the SmithPredictor is swept
-# over K up to the matched model K=DT. ---
+# --- Amplification: actuation volume vs. the window. The Reconciler is the
+# K = 0 rung; the dual-rate Smith is swept over K past the dead time. ---
 run --exp=amp --mode=reconciled --dt="$DT" --n="$N" --rounds="$ROUNDS"
 for k in $KS; do
     run --exp=amp --mode=smith --dt="$DT" --k="$k" --n="$N" --rounds="$ROUNDS"
@@ -46,9 +46,9 @@ done
 
 # --- Recovery under write loss: every correction entry is dropped with
 # probability DROP (actuated but lost). The Reconciler re-emits U on the
-# next step; the smith loop retires corrections against its k-step echo
-# window and re-asserts only once the window drains, so recovery latency
-# grows with K - the price of the silence the amplification sweep buys. ---
+# next step; the smith loop re-asserts only when the window releases the
+# correction unconfirmed, so recovery latency grows with K - the price of
+# the silence the amplification sweep buys. ---
 DROP="${DROP:-0.1}"
 ROUNDS_REC=$((ROUNDS / 2))
 run --exp=rec --mode=reconciled --dt="$DT" --drop="$DROP" --n="$N" --rounds="$ROUNDS_REC"
@@ -57,7 +57,7 @@ for k in $KS; do
 done
 
 # --- Oscillation: one disturbance at dead time dt=2 against three
-# (plant, loop) configurations, the smith loop model-matched (k = dt).
+# (plant, loop) configurations, the smith window matched to the dead time.
 # The additive plant + Reconciler is unstable; the trace is cut at
 # ROUNDS_OSC rounds while it is still legible (it diverges thereafter).
 # (No additive+smith config: the compensated loop's internal dist models
@@ -69,10 +69,10 @@ for cfg in "additive reconciled" "idempotent reconciled" "idempotent smith"; do
     run --exp=osc --plant="$1" --mode="$2" --dt=2 --k=2 --n=8 --rounds="$ROUNDS_OSC"
 done
 
-# --- Disturbance rejection vs. the model: the same single disturbance at
-# the full plant dead time DT, swept over K on the idempotent plant. An
-# under-modeled loop keeps re-correcting for DT - K extra rounds; the
-# matched model retires the correction once. ---
+# --- Disturbance rejection vs. the window: the same single disturbance at
+# the full plant dead time DT, swept over K on the idempotent plant. A
+# short window keeps re-correcting until its release catches the echo; a
+# window of the dead time retires the correction once. ---
 ROUNDS_REJ=$((3 * DT))
 run --exp=osc --plant=idempotent --mode=reconciled --dt="$DT" --n=8 --rounds="$ROUNDS_REJ"
 for k in $KS; do
