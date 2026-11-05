@@ -92,7 +92,7 @@ MODES=gk NS=1000 PS=10 WORKLOADS=w1,w3 ./run.sh
 
 Knobs (env): `MODES`, `NS`, `PS`, `REPS`, `WORKLOADS`, `AUDIT_INTERVAL`
 (Gatekeeper's cycle, seconds), `IDLE_SECS`, `LIFETIMES`, `RATES`, `EVENTS`;
-`SUT_WRITER` (plain|absorb), `SMITH_K_DEFAULT`, `SMITH_KS`; `W2_PS` (the P
+`SUT_PLAIN_K8S` (non-empty: the plain connector; empty: the absorbing default), `SMITH_K_DEFAULT`, `SMITH_KS`; `W2_PS` (the P
 values whose points run the idle workload), `W4_PS` (the P values of the w4
 density points); `LADDER_N`, `LADDER_P`, `LADDER_QPS`, `LADDER_REPS` (the
 congestion ladder); `COLD_NS`, `COLD_TIMEOUT` (the cold-start points).

@@ -76,10 +76,12 @@ LADDER_REPS="${LADDER_REPS:-$REPS}"
 # SWITCH_QUIET ms; the driver waits the switch out before the workloads.
 # BENCH_BOOTSTRAP=auto starts it with the loop closed from the first
 # write: the cold-start points of phase 0, baseline only, at COLD_NS.
-# The actuator dpolicy writes through: plain (the paper's) or absorb.
-# dpolicy-smith is the dual-rate Smith at SMITH_K_DEFAULT seconds of
-# window; SMITH_KS is the ladder of phase 1.
-SUT_WRITER="${SUT_WRITER:-plain}"
+# The actuator dpolicy writes through: the plain Kubernetes connector (the
+# paper's) unless SUT_PLAIN_K8S is empty, which leaves the production
+# default (re-emissions composed and absorbed). dpolicy-smith is the
+# dual-rate Smith at SMITH_K_DEFAULT seconds of window; SMITH_KS is the
+# ladder of phase 1.
+SUT_PLAIN_K8S="${SUT_PLAIN_K8S-yes}"
 SWITCH_QUIET="${SWITCH_QUIET:-20000}"
 COLD_NS="${COLD_NS:-$NS}"
 # A cold start runs to this convergence timeout (ms); the first size that
@@ -158,7 +160,7 @@ run_point() {
             --constraint-kinds "$CONSTRAINT_KINDS" --mode "$loop" \
             ${k:+--smith-window "$((k * 1000))"} \
             ${SUT_QPS:+--qps "$SUT_QPS"} ${SUT_BURST:+--burst "$SUT_BURST"} \
-            --bootstrap "$BENCH_BOOTSTRAP" --switch-quiet-ms "$SWITCH_QUIET" --writer "$SUT_WRITER" \
+            --bootstrap "$BENCH_BOOTSTRAP" --switch-quiet-ms "$SWITCH_QUIET" ${SUT_PLAIN_K8S:+--plain-k8s-connector} \
             --no-violation-views > "/tmp/e6-$mode-$n-$p.log" 2>&1 &
         SUT_PID=$!
     else

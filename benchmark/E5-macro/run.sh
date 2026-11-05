@@ -89,12 +89,13 @@ fi
 # least 15 s. SHOP=yes adds the sock-shop sweeps.
 SUT_BOOTSTRAP="${SUT_BOOTSTRAP:-manual}"
 SHOP="${SHOP:-no}"
-# The actuator the dgw contenders write through: plain (every emitted
-# change is a write; the paper's actuator) or absorb (re-emissions composed
-# into one write per object, the production default). smith is the
-# dual-rate Smith: SMITH_KS is the window ladder of the disturbance and
+# The actuator the dgw contenders write through: the plain Kubernetes
+# connector (every emitted change is a write; the paper's actuator) unless
+# SUT_PLAIN_K8S is empty, which leaves the production default (re-emissions
+# composed into one write per object and absorbed once written). smith is
+# the dual-rate Smith: SMITH_KS is the window ladder of the disturbance and
 # congestion phases (seconds), SMITH_K_DEFAULT the window everywhere else.
-SUT_WRITER="${SUT_WRITER:-plain}"
+SUT_PLAIN_K8S="${SUT_PLAIN_K8S-yes}"
 # The dgw contenders' client budget during the disturbance and congestion
 # phases: client-go's default 5 QPS with an equal burst, the realistic
 # regime where dead time is seconds (the grid and the cold start keep the
@@ -239,7 +240,7 @@ start_sut() {
             --mode "$sysmode" --xds-address "$XDS_ADDR" \
             ${SUT_QPS:+--qps "$SUT_QPS"} ${SUT_BURST:+--burst "$SUT_BURST"} ${SUT_SMITH_K:+--smith-window "$((SUT_SMITH_K * 1000))"} \
             ${SUT_TICK:+--tick-period "$SUT_TICK"} \
-            --bootstrap "$SUT_BOOTSTRAP" --switch-quiet-ms "$(switch_quiet)" --writer "$SUT_WRITER" \
+            --bootstrap "$SUT_BOOTSTRAP" --switch-quiet-ms "$(switch_quiet)" ${SUT_PLAIN_K8S:+--plain-k8s-connector} \
             > "/tmp/e5-dgw-$label.log" 2>&1 &
         SUT_PID=$!
         sleep 2
